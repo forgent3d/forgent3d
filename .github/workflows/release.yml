@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            electron_builder_args: --win
+            python_version: '3.13'
+            artifact_globs: dist/*.exe
+          - os: macos-latest
+            electron_builder_args: --mac --arm64
+            python_version: '3.13'
+            artifact_globs: dist/*.dmg dist/*.zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+
+      - name: Inspect pip config
+        run: |
+          python -m pip --version
+          python -m pip config debug
+
+      - name: Upgrade pip tooling
+        env:
+          PIP_INDEX_URL: https://pypi.org/simple
+        run: python -m pip install --upgrade pip setuptools wheel
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build renderer
+        run: pnpm run build:renderer
+
+      - name: Build embedded export runner
+        env:
+          PIP_INDEX_URL: https://pypi.org/simple
+        run: pnpm run build:runner
+
+      - name: Package app artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: pnpm exec electron-builder ${{ matrix.electron_builder_args }} --publish never
+
+      - name: Ensure GitHub Release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --notes ""
+          fi
+
+      - name: Upload artifacts to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(${{ matrix.artifact_globs }})
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No release files found under dist/"
+            exit 1
+          fi
+          gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --clobber

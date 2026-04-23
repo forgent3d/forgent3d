@@ -1,0 +1,85 @@
+{
+  "name": "aicad-preview",
+  "version": "0.1.0",
+  "description": "Forgent3D companion previewer - watch build123d Python changes and render 3D in real time",
+  "main": "electron/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev:renderer": "vite",
+    "dev:electron": "wait-on tcp:5173 && cross-env NODE_ENV=development electron .",
+    "dev:electron:watch": "wait-on tcp:5173 && cross-env NODE_ENV=development electronmon .",
+    "dev": "concurrently -k -n RENDERER,ELECTRON -c cyan,magenta \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "build:renderer": "vite build",
+    "build:runner": "node scripts/build-embedded-runner.js",
+    "start": "electron .",
+    "mcp:curl-test": "bash scripts/mcp-curl-test.sh",
+    "build": "npm run build:renderer && npm run build:runner && electron-builder",
+    "rebuild:native": "electron-rebuild -f -w node-pty"
+  },
+  "keywords": [
+    "electron",
+    "cad",
+    "build123d",
+    "three.js",
+    "cursor-ai"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^9.0.1",
+    "cross-env": "^7.0.3",
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0",
+    "electron-rebuild": "^3.2.9",
+    "electronmon": "^2.0.4",
+    "vite": "^5.4.0",
+    "wait-on": "^8.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-unicode11": "^0.9.0",
+    "@xterm/xterm": "^6.0.0",
+    "chokidar": "^3.6.0",
+    "node-pty": "^1.1.0",
+    "occt-import-js": "^0.0.23",
+    "three": "^0.168.0",
+    "zod": "^4.3.6"
+  },
+  "build": {
+    "appId": "com.aicad.preview",
+    "productName": "Forgent3D Preview",
+    "files": [
+      "electron/**",
+      "dist/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/export-runner",
+        "to": "export-runner",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "publish": {
+      "provider": "github",
+      "releaseType": "release"
+    }
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild",
+      "node-pty"
+    ]
+  },
+  "electronmon": {
+    "patterns": [
+      "electron/**",
+      "!node_modules/**",
+      "!dist/**"
+    ]
+  }
+}

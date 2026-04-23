@@ -1,0 +1,16 @@
+node_modules
+dist
+dist-electron
+release
+*.log
+.DS_Store
+.vscode
+.idea
+build-cache
+vendor/export-runner/*/
+!vendor/export-runner/README.md
+
+# Generated model files (in user workspace)
+output.glb
+__pycache__
+*.pyc
