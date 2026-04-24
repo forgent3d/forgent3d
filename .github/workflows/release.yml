@@ -44,6 +44,17 @@ jobs:
           node-version: '20'
           cache: 'pnpm'
 
+      - name: Sync package version from tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [[ -z "$version" || "$version" == "$GITHUB_REF_NAME" ]]; then
+            echo "Tag must be in form v<semver>, got: $GITHUB_REF_NAME"
+            exit 1
+          fi
+          pnpm version "$version" --no-git-tag-version
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
