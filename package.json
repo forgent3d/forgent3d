@@ -57,7 +57,9 @@
       ]
     },
     "mac": {
-      "icon": "assets/images/logo.png"
+      "icon": "assets/images/logo.png",
+      "identity": "-",
+      "hardenedRuntime": false
     },
     "linux": {
       "icon": "assets/images/logo.png"

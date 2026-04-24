@@ -84,7 +84,6 @@ jobs:
       - name: Package app artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: pnpm exec electron-builder ${{ matrix.electron_builder_args }} --publish never
 
       - name: Ensure GitHub Release exists
