@@ -10,6 +10,7 @@ export function initUI(viewer) {
     statusText: document.getElementById('status-text'),
     spinner: document.getElementById('status-spinner'),
     modelNameBadge: document.getElementById('model-name-badge'),
+    viewCubeHost: document.getElementById('viewcube-host'),
     btnToggleLeft: document.getElementById('btn-toggle-left'),
     btnToggleRight: document.getElementById('btn-toggle-right'),
     btnToggleLeftHandle: document.getElementById('btn-toggle-left-handle'),
@@ -116,6 +117,10 @@ export function initUI(viewer) {
   let leftSidebarVisible = false;
   let rightRailVisible = true;
 
+  if (el.viewCubeHost && typeof viewer.mountViewCube === 'function') {
+    viewer.mountViewCube(el.viewCubeHost);
+  }
+
   function applyLayoutVisibility() {
     const hasProject = !!currentProject;
     el.app.classList.toggle('left-collapsed', !leftSidebarVisible);
@@ -157,6 +162,17 @@ export function initUI(viewer) {
     el.modelNameBadge.classList.remove('hidden');
   }
 
+  function renderViewCube() {
+    if (!el.viewCubeHost) return;
+    const hasProject = !!currentProject;
+    const hasModel = typeof viewer.hasModel === 'function' ? viewer.hasModel() : !!activePart;
+    el.viewCubeHost.classList.toggle('hidden', !hasProject);
+    el.viewCubeHost.classList.toggle('disabled', !hasModel);
+    if (typeof viewer.setViewCubeEnabled === 'function') {
+      viewer.setViewCubeEnabled(hasModel);
+    }
+  }
+
   function setProject(p, meta = null) {
     currentProject = p;
     currentKernel = meta?.kernel || null;
@@ -170,6 +186,7 @@ export function initUI(viewer) {
     applyLayoutVisibility();
     renderModelNameBadge();
     syncExportControls();
+    renderViewCube();
   }
 
   /* ---------------- Parts List ---------------- */
@@ -363,7 +380,6 @@ export function initUI(viewer) {
       applyLayoutVisibility();
     });
   }
-
   /* ============================================================
      Embedded terminal panel
      ============================================================ */
@@ -833,6 +849,7 @@ export function initUI(viewer) {
             setStatus(
               `${partLabel}Model ready${sizeKB ? ' · ' + sizeKB : ''} · ${tail}`
             );
+            renderViewCube();
             // Send part info and single-view screenshots back to main process (MCP cache)
             try {
               // Wait one frame so OrbitControls and renderer.setSize first frame is stable
@@ -857,6 +874,7 @@ export function initUI(viewer) {
           .catch((e) => {
             setStatus('Model load failed');
             appendLog(`${partLabel}Failed to load BREP: ${e.message || e}`, 'error');
+            renderViewCube();
           });
         break;
       }
