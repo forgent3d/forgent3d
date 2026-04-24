@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Use curl over Streamable HTTP: initialize -> notifications/initialized -> tools/call list_parts
+# Use curl over Streamable HTTP: initialize -> notifications/initialized -> tools/call list_models
 # Usage: start Forgent3D Previewer first (default MCP port 41234), then run at repo root:
 #   bash scripts/mcp-curl-test.sh
 # Or: MCP_URL=http://127.0.0.1:41234/mcp bash scripts/mcp-curl-test.sh
@@ -47,14 +47,14 @@ echo "HTTP $CODE (expected 202)" >&2
 
 HDR3="$TMP/h3.txt"
 BODY3="$TMP/b3.txt"
-echo "POST tools/call list_parts" >&2
+echo "POST tools/call list_models" >&2
 curl -sS -D "$HDR3" -o "$BODY3" -X POST "$URL" \
   -H "$H_ACCEPT" -H "$H_JSON" \
   -H "mcp-session-id: $SESSION" \
   -H "mcp-protocol-version: $PROTO" \
-  --data-binary '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_parts","arguments":{}}}'
+  --data-binary '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_models","arguments":{}}}'
 
-echo "--- list_parts response body (SSE) ---" >&2
+echo "--- list_models response body (SSE) ---" >&2
 cat "$BODY3" >&2
 echo "" >&2
 

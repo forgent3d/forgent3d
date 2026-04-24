@@ -5,7 +5,7 @@ module.exports = {
   validationPolicyLines: `
 - Do **not** run \`python part.py\`, \`python asm.py\`, \`python -m\`, \`python -c\`, \`pytest\`, \`uv run\`, or \`poetry run\` for generated code validation.
 - Local Python/CadQuery/OCP environments may be missing and produce misleading results outside viewer flow.
-- The only valid path is: edit code -> \`rebuild_part\` -> inspect \`ok / stderr\` -> optional \`screenshot_part\` / \`get_part_info\`.
+- The only valid path is: edit code -> \`rebuild_model\` -> inspect \`ok / stderr\` -> optional \`screenshot_model\` / \`get_model_info\`.
 - If MCP is unavailable, ask the user to start AI CAD Companion Viewer instead of manual Python fallback.
 `,
   mustFollowLines: `
@@ -19,7 +19,7 @@ module.exports = {
 6. Keep parameters simple: use flat variables or simple dicts/classes. Do not over-engineer with \`namedtuple\` unless strictly necessary.
 7. Explicitly declare the coordinate frame before detailed geometry (e.g. +X right, +Y back, +Z up).
 8. For simple parts, write geometry in a single pass. For complex models, use two passes (Pass 1 for primary structure, Pass 2 for details).
-9. Geometry edits must stay inside \`# === Geometry ===\`.
+    9. Geometry edits must stay inside \`# === Geometry ===\`. Do not hardcode dimensions here.
 10. Do not generate a README file unless the user explicitly requests one for a complex model.
 
 ## Mental Model & Troubleshooting (CadQuery)
@@ -74,9 +74,6 @@ module.exports = {
     ].join('\n');
   },
   modelReadmeFaceNote() {
-    return [
-      '## Notes',
-      '- Add modeling constraints and verification notes here.'
-    ].join('\n');
+    return '';
   }
 };

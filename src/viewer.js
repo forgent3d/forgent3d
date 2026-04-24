@@ -360,7 +360,7 @@ export function createViewer(host) {
   camera.position.set(80, 60, 100);
 
   // preserveDrawingBuffer is required for stable canvas.toDataURL snapshots,
-  // used by MCP screenshot_part tool
+  // used by MCP screenshot_model tool
   const renderer = new THREE.WebGLRenderer({
     antialias: true,
     alpha: false,

@@ -6,10 +6,10 @@ The viewer exposes MCP server **aicad** on a local HTTP endpoint. Your IDE/agent
 
 | Tool | Purpose |
 |---|---|
-| \`list_parts()\` | List all models and the current active model |
-| \`get_part_info({ part })\` | Bounding box (mm), face count, and cache state |
-| \`screenshot_part({ part, view? })\` | Single-view PNG (\`iso/front/side/top\`, default \`iso\`) |
-| \`rebuild_part({ part })\` | Synchronous build with ok/stderr/faceCount/cacheSize |
+| \`list_models()\` | List all models and the current active model |
+| \`get_model_info({ model })\` | Bounding box (mm), face count, and cache state |
+| \`screenshot_model({ model, view? })\` | Single-view PNG (\`iso/front/side/top\`, default \`iso\`) |
+| \`rebuild_model({ model })\` | Synchronous build with ok/stderr/faceCount/cacheSize |
 
 Suggested workflow:
 \`\`\`
@@ -18,7 +18,7 @@ if visual style matters:
     # silhouette, proportions, symmetry, edge language, signature motifs
     ->
 for a new Python model:
-    create scaffold in models/<name>/{sourceFileHint} + models/<name>/README.md
+    create scaffold in models/<name>/{sourceFileHint}
     ->
     route the task
     # asm => body-first
@@ -31,9 +31,9 @@ for a new Python model:
     ->
     Pass 1: generate only the primary structure
     ->
-    rebuild_part({ part: name })
+    rebuild_model({ model: "<model_name>" })
     ->
-    screenshot_part({ part: name, view: "iso" })
+    screenshot_model({ model: "<model_name>", view: "iso" })
     ->
     if Pass 1 read is unclear:
         reroute once before adding detail
@@ -42,22 +42,22 @@ for a new Python model:
     ->
 edit models/<name>/{sourceFileHint}
     ->
-rebuild_part({ part: name })    # if failed, fix using stderr then retry
+rebuild_model({ model: "<model_name>" })    # if failed, fix using stderr then retry
     ->
-screenshot_part({ part: name, view: "iso" }) # visual verification
+screenshot_model({ model: "<model_name>", view: "iso" }) # visual verification
     ->
-if needed: get_part_info        # numeric checks
+if needed: get_model_info        # numeric checks
     ->
-final answer: include a short style self-check based on screenshot_part / get_part_info / rebuild_part
+final answer: Just say "Model generated" and show the preview. Do not narrate internal checks.
 \`\`\``;
 
 // Do not create or depend on models/README.md. The file tree and UI already provide project overview.
 
-const CODEX_MCP_QUICK_BLOCK = '\n> **Codex / MCP**: keep **AI CAD Companion Viewer** running while using MCP tools; launch Codex from the viewer so repo config stays in sync.\n';
+const CODEX_MCP_QUICK_BLOCK = '\n> **Agent / MCP**: keep **AI CAD Companion Viewer** running while using MCP tools; launch your agent from the viewer so repo config stays in sync.\n';
 
-const CODEX_INSTRUCTION_META = `## OpenAI Codex
+const CODEX_INSTRUCTION_META = `## AI Agent Instructions
 
-Use Codex's documented flows for project instructions and MCP ([AGENTS.md](https://developers.openai.com/codex/guides/agents-md), [MCP](https://developers.openai.com/codex/mcp)). This repo's **aicad** server is available once the viewer is running and you started Codex from it.
+Use your documented flows for project instructions and MCP. This repo's **aicad** server is available once the viewer is running and you started the agent from it.
 `;
 
 module.exports = {

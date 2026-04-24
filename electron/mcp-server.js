@@ -2,7 +2,7 @@
  * Built-in MCP server for the AI CAD companion previewer
  * ------------------------------------------
  * - transport: Streamable HTTP on fixed localhost port
- * - 4 tools: list_parts / get_part_info / screenshot_part / rebuild_part
+ * - 4 tools: list_models / get_model_info / screenshot_model / rebuild_model
  * - ctx is injected from electron/main.js; all runtime state is accessed via callbacks
  * - Each MCP client (Cursor / curl) gets isolated McpServer + Transport on initialize,
  *   then POST/GET/DELETE is routed by Mcp-Session-Id so curl testing does not break Cursor sessions.
@@ -41,7 +41,7 @@ function buildMcpServer(ctx, { McpServer, z }) {
   });
 
   server.registerTool(
-    'list_parts',
+    'list_models',
     {
       title: 'List all models in the current project',
       description: [
@@ -57,20 +57,20 @@ function buildMcpServer(ctx, { McpServer, z }) {
   );
 
   server.registerTool(
-    'get_part_info',
+    'get_model_info',
     {
       title: 'Get quantitative geometry info for a model',
       description: [
         'Purpose: return bbox, faceCount, cacheStale, kind, sourceFile, and description for numerical geometry verification.',
-        'Prerequisite: recommended to call list_parts first to confirm model name and kernel type.',
-        'If failed: call rebuild_part first; if still failing, call list_parts to verify model name and active state, then retry.'
+        'Prerequisite: recommended to call list_models first to confirm model name and kernel type.',
+        'If failed: call rebuild_model first; if still failing, call list_models to verify model name and active state, then retry.'
       ].join('\n'),
       inputSchema: {
-        part: z.string().describe('Model directory name, for example "bracket"')
+        model: z.string().describe('Model directory name, for example "bracket"')
       }
     },
-    async ({ part }) => {
-      const info = await ctx.getPartInfo(part);
+    async ({ model }) => {
+      const info = await ctx.getPartInfo(model);
       const isError = !!info.error;
       return {
         isError,
@@ -80,31 +80,31 @@ function buildMcpServer(ctx, { McpServer, z }) {
   );
 
   server.registerTool(
-    'screenshot_part',
+    'screenshot_model',
     {
       title: 'Get a 3D screenshot (PNG) for a model',
       description: [
         'Purpose: return the latest PNG for the requested view; the active model will switch during the call.',
-        'Prerequisite: recommended to run rebuild_part successfully first to avoid stale screenshots.',
-        'If failed: run rebuild_part first; if the screenshot is still missing, call list_parts to confirm the model exists and retry.'
+        'Prerequisite: recommended to run rebuild_model successfully first to avoid stale screenshots.',
+        'If failed: run rebuild_model first; if the screenshot is still missing, call list_models to confirm the model exists and retry.'
       ].join('\n'),
       inputSchema: {
-        part: z.string().describe('Model directory name'),
+        model: z.string().describe('Model directory name'),
         view: z.enum(['iso', 'front', 'side', 'top']).optional().describe('Screenshot view, defaults to iso')
       }
     },
-    async ({ part, view }) => {
+    async ({ model, view }) => {
       const actualView = view || 'iso';
-      const png = await ctx.getPartScreenshot(part, actualView);
+      const png = await ctx.getPartScreenshot(model, actualView);
       if (!png) {
         return {
           isError: true,
           content: [{
             type: 'text',
             text:
-              `No screenshot cache for model "${part}" (view: ${actualView}).\n` +
-              `Next: call rebuild_part({"part":"${part}"}).\n` +
-              `If it still fails, call list_parts to confirm "${part}" exists and name is correct, then call screenshot_part again.`
+              `No screenshot cache for model "${model}" (view: ${actualView}).\n` +
+              `Next: call rebuild_model({"model":"${model}"}).\n` +
+              `If it still fails, call list_models to confirm "${model}" exists and name is correct, then call screenshot_model again.`
           }]
         };
       }
@@ -114,7 +114,7 @@ function buildMcpServer(ctx, { McpServer, z }) {
           {
             type: 'text',
             text:
-              `${actualView} screenshot for model "${part}". ` +
+              `${actualView} screenshot for model "${model}". ` +
               `If another angle is needed, trigger the latest render through the model tools first, then call this tool again.`
           }
         ]
@@ -123,20 +123,20 @@ function buildMcpServer(ctx, { McpServer, z }) {
   );
 
   server.registerTool(
-    'rebuild_part',
+    'rebuild_model',
     {
       title: 'Force rebuild a model and wait for completion',
       description: [
         'Purpose: synchronously rebuild the model and return ok/stderr/cacheSize/faceCount/kernel; this is the only trusted verification entry.',
         'Prerequisite: the model must exist under models/<name>/ and the latest code must be saved.',
-        'If failed: make minimal fix based on stderr and retry; after success call get_part_info/screenshot_part.'
+        'If failed: make minimal fix based on stderr and retry; after success call get_model_info/screenshot_model.'
       ].join('\n'),
       inputSchema: {
-        part: z.string()
+        model: z.string()
       }
     },
-    async ({ part }) => {
-      const result = await ctx.rebuildPartSync(part);
+    async ({ model }) => {
+      const result = await ctx.rebuildPartSync(model);
       return {
         isError: !result.ok,
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]

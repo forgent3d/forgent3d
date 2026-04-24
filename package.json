@@ -49,6 +49,15 @@
   "build": {
     "appId": "com.aicad.preview",
     "productName": "Forgent3D Preview",
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
     "files": [
       "electron/**",
       "dist/**",

@@ -23,10 +23,6 @@ contextBridge.exposeInMainWorld('aicad', {
   mcpTestListParts: () => ipcRenderer.invoke('mcp:testListParts'),
 
   pythonStatus: () => ipcRenderer.invoke('python:status'),
-  pickPython: () => ipcRenderer.invoke('python:pick'),
-  clearPythonPath: () => ipcRenderer.invoke('python:clearPath'),
-  condaAvailable: () => ipcRenderer.invoke('python:condaAvailable'),
-  createCondaEnv: (opts) => ipcRenderer.invoke('python:createCondaEnv', opts),
 
   terminalCreate: (agent, projectPath, cols, rows) =>
     ipcRenderer.invoke('terminal:create', { agent, projectPath, cols, rows }),

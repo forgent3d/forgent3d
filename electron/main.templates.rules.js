@@ -37,8 +37,8 @@ When user says "make a gear" / "make a bracket", the deliverable is {language} g
 ## Accuracy Contract (mandatory)
 
 1. **Evidence before conclusion**: cite MCP tool output before any geometric claim.
-2. **Build before validation**: after editing the active model source, \`rebuild_part\` must pass first.
-3. **Traceability**: explicitly mention tool evidence (at least one from \`rebuild_part\` + \`get_part_info\` / \`screenshot_part\`).
+2. **Build before validation**: after editing the active model source, \`rebuild_model\` must pass first.
+3. **Traceability**: explicitly mention tool evidence (at least one from \`rebuild_model\` + \`get_model_info\` / \`screenshot_model\`).
 4. **No guesswork**: never claim dimensions/structure are correct without tool evidence.
 5. **Keep it Simple**: For simple parts (flanges, brackets, primitives), write geometry directly and concisely without over-analyzing.
 
@@ -56,30 +56,30 @@ When user says "make a gear" / "make a bracket", the deliverable is {language} g
 5. For Python kernels, geometry implementation belongs in \`# === Geometry ===\`.
 6. Before detailed geometry, explicitly declare the model coordinate frame and viewing orientation: origin meaning, +X, +Y, +Z.
 7. The coordinate frame must be screenshot-friendly: front / side / top / iso views should expose the key features.
-8. Conflict priority: if "fix rebuild" and "parameterization refactor" conflict, restore \`rebuild_part\` success first.
+8. Conflict priority: if "fix rebuild" and "parameterization refactor" conflict, restore \`rebuild_model\` success first.
 
 ## Generation Protocol
 
 - **Simple Models:** Generate all geometry in a single pass (e.g. cylinder + hole + polar array of holes) and rebuild.
-- **Complex Models (Two-Pass):** When creating heavily detailed models, build primary structure in Pass 1, verify with rebuild_part and screenshot_part, then add secondary features (fillets, chamfers, small cutouts) in Pass 2.
+- **Complex Models (Two-Pass):** When creating heavily detailed models, build primary structure in Pass 1, verify with rebuild_model and screenshot_model, then add secondary features (fillets, chamfers, small cutouts) in Pass 2.
 
 ## Phased Workflow
 
 1. Understand requirements: target geometry, dimensions, constraints.
 2. Plan parameters first, declare the coordinate frame and viewing orientation.
 3. Generate the structure (use single pass for simple parts, two passes for complex).
-4. Build with \`rebuild_part({ part })\`; if it fails, follow failure recovery.
+4. Build with \`rebuild_model({ model })\`; if it fails, follow failure recovery.
 5. Validate with screenshots and numeric checks silently.
 6. In the final answer, be extremely brief. Do not summarize your internal self-checks.
 
-## Failure Recovery (when rebuild_part fails)
+## Failure Recovery (when rebuild_model fails)
 
 Follow this exact order:
 1. Read \`stderr\` and locate the first deterministic error.
 2. Apply the smallest possible fix (no unrelated refactor).
-3. Immediately run \`rebuild_part({ part })\` again.
+3. Immediately run \`rebuild_model({ model })\` again.
 4. If parameterization cleanup conflicts with rebuild fix, prioritize rebuild success first and postpone refactor.
-5. After success, then re-check with \`get_part_info\` / \`screenshot_part\` before final answer and style self-check.
+5. After success, then re-check with \`get_model_info\` / \`screenshot_model\` before final answer and style self-check.
 
 ## Validation Policy (important)
 
@@ -147,11 +147,15 @@ function coreRulesMarkdown(agentHint, kernel) {
 }
 
 function agentsMdTemplate(kernel) {
-  return coreRulesMarkdown('OpenAI Codex', kernel) + CODEX_INSTRUCTION_META;
+  return coreRulesMarkdown('AI Agent', kernel) + CODEX_INSTRUCTION_META;
 }
 
 function claudeMdTemplate(kernel) {
   return coreRulesMarkdown('Claude Code', kernel);
+}
+
+function geminiMdTemplate(kernel) {
+  return coreRulesMarkdown('Gemini CLI', kernel);
 }
 
 function copilotInstructionsTemplate(kernel) {
@@ -163,5 +167,6 @@ module.exports = {
   cursorRulesTemplate,
   agentsMdTemplate,
   claudeMdTemplate,
+  geminiMdTemplate,
   copilotInstructionsTemplate
 };

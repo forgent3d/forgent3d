@@ -22,7 +22,8 @@ const {
   CURSOR_PROJECT_RULE_FILE,
   cursorRulesTemplate,
   agentsMdTemplate,
-  claudeMdTemplate
+  claudeMdTemplate,
+  geminiMdTemplate
 } = require('./main.templates.index');
 const { EXPORT_RUNNER_PYTHON } = require('./main.templates.export-runner');
 
@@ -171,16 +172,14 @@ async function getBuildRuntimeStatus(kernel = currentKernel) {
     };
   }
 
-  const status = await pyenv.getPythonStatus();
-  if (!status.ok && prefersBundledBuildRuntime(targetKernel)) {
-    return {
-      ...status,
-      message: app.isPackaged
-        ? 'Bundled build123d runtime is missing from the app package, and no fallback Python was detected.'
-        : 'No bundled build123d runtime found. Run `npm run build:runner`, or configure a system Python with build123d.'
-    };
-  }
-  return status;
+  return {
+    ok: false,
+    kind: 'bundled-runner',
+    source: 'bundled',
+    message: app.isPackaged
+      ? 'Bundled build123d runtime is missing from the app package.'
+      : 'No bundled build123d runtime found. Run `npm run build:runner` to generate it.'
+  };
 }
 
 async function detectBuildRuntime(kernel = currentKernel) {
@@ -189,10 +188,7 @@ async function detectBuildRuntime(kernel = currentKernel) {
   if (bundled) {
     return { kind: 'bundled-runner', source: 'bundled', cmd: bundled, args: [], version: 'internal' };
   }
-  const py = await pyenv.detectPython({
-    requireBuild123d: prefersBundledBuildRuntime(targetKernel)
-  });
-  return py ? { kind: 'python', ...py } : null;
+  return null;
 }
 
 function buildRuntimeSpawn(runtime, runnerArgs) {
@@ -207,9 +203,9 @@ function missingRuntimeMessage(kernel = currentKernel) {
   if (prefersBundledBuildRuntime(kernel)) {
     return app.isPackaged
       ? 'Bundled build123d runtime is missing from the app package.'
-      : 'No bundled build123d runtime found, and no system Python with build123d is configured.';
+      : 'No bundled build123d runtime found. Run `npm run build:runner` to generate it.';
   }
-  return 'No usable Python interpreter was detected. Configure one in the Python Environment panel.';
+  return 'No usable build runtime was detected.';
 }
 
 function ensureElectronExportRunner() {
@@ -259,7 +255,7 @@ function readProjectKernel(projectPath) {
 
 /* Per-model runtime info reported by the renderer and exposed to MCP. */
 const partInfoCache = new Map();   // name -> { faceCount, bbox, faces:[{index, centroid, normal}], capturedAt }
-/* Synchronous waiters for rebuild_part: name -> Array<resolve> */
+/* Synchronous waiters for rebuild_model: name -> Array<resolve> */
 const buildWaiters = new Map();
 /* Synchronous waiters for viewer cache refresh: name -> Array<resolve> */
 const partLoadedWaiters = new Map();
@@ -464,7 +460,7 @@ app.whenReady().then(async () => {
   registerIpc();
   terminalManager.init(ipcMain, (type, payload) => sendToRenderer(type, payload), {
     onBeforeTerminalCreate: async ({ agent, projectPath }) => {
-      if (agent === 'codex' || agent === 'claude' || agent === 'cli') {
+      if (agent === 'codex' || agent === 'claude' || agent === 'cli' || agent === 'gemini') {
         bootstrapAgentWorkspace(projectPath, agent);
       }
     }
@@ -569,6 +565,9 @@ function bootstrapAgentWorkspace(projectPath, agent) {
     case 'claude':
       writeIfChanged(path.join(projectPath, '.mcp.json'), claudeMcpJson(MCP_PORT));
       writeIfMissing(path.join(projectPath, 'CLAUDE.md'), claudeMdTemplate(k));
+      break;
+    case 'gemini':
+      writeIfMissing(path.join(projectPath, 'GEMINI.md'), geminiMdTemplate(k));
       break;
     default:
       throw new Error(`Unknown agent: ${agent}`);
@@ -703,7 +702,7 @@ function registerIpc() {
 
   ipcMain.handle('mcp:status', () => getMcpStatusPayload());
 
-  /** Same data source as the MCP list_parts tool, useful for UI validation. */
+  /** Same data source as the MCP list_models tool, useful for UI validation. */
   ipcMain.handle('mcp:testListParts', () => buildMcpContext().listParts());
 
   ipcMain.handle('dialog:chooseDirectory', async () => {
@@ -845,48 +844,9 @@ function registerIpc() {
     });
   });
 
-  /* ---- Python / Conda environment ---- */
+  /* ---- Python runtime status ---- */
 
   ipcMain.handle('python:status', async () => getBuildRuntimeStatus());
-
-  ipcMain.handle('python:pick', async () => {
-    const filters = process.platform === 'win32'
-      ? [{ name: 'Python', extensions: ['exe'] }]
-      : [{ name: 'All Files', extensions: ['*'] }];
-    const res = await dialog.showOpenDialog(mainWindow, {
-      title: 'Choose a Python interpreter',
-      properties: ['openFile'],
-      filters
-    });
-    if (res.canceled || res.filePaths.length === 0) return null;
-    const result = await pyenv.setPythonPath(res.filePaths[0]);
-    sendLog(`Python interpreter set: ${res.filePaths[0]} (v${result.version})`);
-    return await getBuildRuntimeStatus();
-  });
-
-  ipcMain.handle('python:clearPath', async () => {
-    await pyenv.setPythonPath(null);
-    sendLog('Cleared custom Python path. Falling back to system PATH.');
-    return await getBuildRuntimeStatus();
-  });
-
-  ipcMain.handle('python:condaAvailable', async () => pyenv.detectConda());
-
-  ipcMain.handle('python:createCondaEnv', async (_evt, opts) => {
-    try {
-      const pyPath = await pyenv.createCondaEnv({
-        envName: opts?.envName,
-        pythonVersion: opts?.pythonVersion,
-        installBuild123d: opts?.installBuild123d !== false,
-        onLog: (msg, level = 'info') => sendLog(msg, level)
-      });
-      const status = await getBuildRuntimeStatus();
-      return { ok: true, pythonPath: pyPath, status };
-    } catch (e) {
-      sendLog(`Conda environment creation failed: ${e.message}`, 'error');
-      throw e;
-    }
-  });
 
 }
 
@@ -1390,7 +1350,7 @@ function buildMcpContext() {
           kernel: currentKernel,
           error:
             `Geometry info for "${name}" is not cached yet. ` +
-            `Run rebuild_part({"part":"${name}"}) first, then verify status with list_parts and try again.`,
+            `Run rebuild_model({"model":"${name}"}) first, then verify status with list_models and try again.`,
           cacheStale
         };
       }

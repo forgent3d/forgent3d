@@ -33,45 +33,6 @@
           <ul id="parts-list" class="parts-list"></ul>
         </section>
 
-        <section class="panel debug-only hidden">
-          <div class="panel-title">
-            <span>Python Environment</span>
-            <button id="btn-refresh-python" class="link">Refresh</button>
-          </div>
-          <div id="python-status" class="py-status">
-            <div class="py-indicator">
-              <span class="py-dot" data-state="unknown"></span>
-              <span id="py-line1" class="py-line1">Detecting...</span>
-            </div>
-            <div id="py-line2" class="py-line2 muted"></div>
-          </div>
-          <button id="btn-pick-python" class="btn">Select python.exe</button>
-          <button id="btn-conda-create" class="btn">Create environment with Conda</button>
-          <button id="btn-clear-python" class="btn btn-ghost" style="font-size:11px">Clear custom path</button>
-        </section>
-
-        <section class="panel debug-only hidden">
-          <div class="panel-title">
-            <span>MCP Server</span>
-            <button id="btn-refresh-mcp" class="link" type="button">Refresh</button>
-          </div>
-          <div id="mcp-status" class="py-status">
-            <div class="py-indicator">
-              <span id="mcp-dot" class="py-dot" data-state="unknown"></span>
-              <span id="mcp-line1" class="py-line1">Detecting...</span>
-            </div>
-            <div id="mcp-line2" class="py-line2 muted" style="user-select:text;word-break:break-all"></div>
-          </div>
-          <button id="btn-mcp-test-list-parts" class="btn btn-ghost" type="button" style="margin-top:8px;font-size:11px;width:100%">
-            Test list_parts
-          </button>
-          <p class="muted" style="margin-top:8px;font-size:11px;line-height:1.45">
-            Test HTTP MCP with curl in terminal (app must be running):
-            <code style="font-size:10px;user-select:all">npm run mcp:curl-test</code>
-            or <code style="font-size:10px;user-select:all">bash scripts/mcp-curl-test.sh</code>
-          </p>
-        </section>
-
       </aside>
 
       <main class="viewport">
@@ -153,35 +114,15 @@
               <span class="agent-btn-cmd">agent</span>
             </span>
           </button>
+          <button class="agent-btn" data-agent="gemini" disabled>
+            <span class="agent-btn-icon">✦</span>
+            <span class="agent-btn-body">
+              <span class="agent-btn-name">Gemini CLI</span>
+              <span class="agent-btn-cmd">gemini</span>
+            </span>
+          </button>
         </div>
         <span class="agent-bar-hint" id="agent-bar-hint">Available after opening a project</span>
-      </div>
-    </div>
-
-    <!-- Conda environment creation modal -->
-    <div id="modal-conda" class="modal hidden">
-      <div class="modal-body">
-        <h3>Create Environment with Conda</h3>
-        <p class="muted" style="font-size:12px;margin:-6px 0 8px 0">
-          Miniconda / Anaconda must be installed locally. After creation, this environment's
-          Python path will be saved to config as the default interpreter.
-        </p>
-        <label>Environment name</label>
-        <input id="input-conda-name" type="text" value="aicad" />
-        <label>Python version</label>
-        <input id="input-conda-pyver" type="text" value="3.11" />
-        <label style="display:flex;align-items:center;gap:8px;margin-top:14px;text-transform:none;letter-spacing:normal;font-size:13px;color:#d7dbe3">
-          <input id="input-conda-b123d" type="checkbox" checked style="width:auto" />
-          Also install <code>build123d</code> (via pip)
-        </label>
-        <div id="conda-working" class="muted hidden" style="margin-top:10px;font-size:12px">
-          <span class="spinner" style="display:inline-block;vertical-align:-2px;margin-right:6px"></span>
-          Creating environment, please check "Build Logs" on the right...
-        </div>
-        <div class="modal-footer">
-          <button id="btn-conda-cancel" class="btn btn-ghost">Cancel</button>
-          <button id="btn-conda-confirm" class="btn btn-primary">Create</button>
-        </div>
       </div>
     </div>
 

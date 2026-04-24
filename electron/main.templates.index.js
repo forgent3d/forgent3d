@@ -24,6 +24,7 @@ const {
   cursorRulesTemplate,
   agentsMdTemplate,
   claudeMdTemplate,
+  geminiMdTemplate,
   copilotInstructionsTemplate
 } = require('./main.templates.rules');
 
@@ -45,6 +46,7 @@ module.exports = {
   cursorRulesTemplate,
   agentsMdTemplate,
   claudeMdTemplate,
+  geminiMdTemplate,
   copilotInstructionsTemplate,
   exportRunnerTemplate,
   exportRunnerFilename

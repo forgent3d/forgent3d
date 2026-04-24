@@ -21,30 +21,6 @@ export function initUI(viewer) {
     btnEmptyOpenProject: document.getElementById('btn-empty-open-project'),
     debugTools: document.querySelectorAll('.debug-only'),
 
-    // Python panel
-    btnRefreshPython: document.getElementById('btn-refresh-python'),
-    btnPickPython: document.getElementById('btn-pick-python'),
-    btnCondaCreate: document.getElementById('btn-conda-create'),
-    btnClearPython: document.getElementById('btn-clear-python'),
-    pyDot: document.querySelector('#python-status .py-dot'),
-    pyLine1: document.getElementById('py-line1'),
-    pyLine2: document.getElementById('py-line2'),
-
-    btnRefreshMcp: document.getElementById('btn-refresh-mcp'),
-    btnMcpTestListParts: document.getElementById('btn-mcp-test-list-parts'),
-    mcpDot: document.getElementById('mcp-dot'),
-    mcpLine1: document.getElementById('mcp-line1'),
-    mcpLine2: document.getElementById('mcp-line2'),
-
-    // Conda modal
-    modalConda: document.getElementById('modal-conda'),
-    inputCondaName: document.getElementById('input-conda-name'),
-    inputCondaPyver: document.getElementById('input-conda-pyver'),
-    inputCondaB123d: document.getElementById('input-conda-b123d'),
-    condaWorking: document.getElementById('conda-working'),
-    btnCondaCancel: document.getElementById('btn-conda-cancel'),
-    btnCondaConfirm: document.getElementById('btn-conda-confirm'),
-
     modal: document.getElementById('modal-new'),
     inputName: document.getElementById('input-project-name'),
     inputParent: document.getElementById('input-parent-dir'),
@@ -387,7 +363,8 @@ export function initUI(viewer) {
   const AGENT_LABELS = {
     codex:    '⚡ Codex',
     claude:   '◆ Claude Code',
-    cli:      '▷ Cursor CLI'
+    cli:      '▷ Cursor CLI',
+    gemini:   '✦ Gemini CLI'
   };
 
   let termPanel = null;      // instance returned by createTerminalPanel
@@ -634,151 +611,6 @@ export function initUI(viewer) {
 
   /* Receive terminal data / exit events (handled in main onEvent switch) */
 
-  /* ---------------- Python Environment Panel ---------------- */
-  function renderPythonStatus(s) {
-    if (!s) {
-      el.pyDot.dataset.state = 'unknown';
-      el.pyLine1.textContent = 'Detecting...';
-      el.pyLine2.textContent = '';
-      return;
-    }
-    if (!s.ok) {
-      el.pyDot.dataset.state = 'fail';
-      el.pyLine1.textContent = 'No available runtime detected';
-      el.pyLine2.textContent = s.message || '';
-      return;
-    }
-    if (s.kind === 'bundled-runner' || s.source === 'bundled') {
-      el.pyDot.dataset.state = 'ok';
-      el.pyLine1.innerHTML = 'Bundled build123d runtime · <span style="color:#4ade80">ready</span>';
-      el.pyLine2.textContent = s.cmd || '';
-      return;
-    }
-    const src = s.source === 'user'
-      ? 'Custom'
-      : s.source === 'conda'
-        ? (s.condaEnv ? `Conda env ${s.condaEnv}` : 'Conda')
-        : 'System PATH';
-    el.pyDot.dataset.state = s.hasBuild123d ? 'ok' : 'partial';
-    el.pyLine1.innerHTML = `Python <b>${escapeHtml(s.version)}</b> · ${src}` +
-      (s.hasBuild123d ? ' · <span style="color:#4ade80">build123d installed</span>'
-                      : ' · <span style="color:#f5c04c">build123d not installed (placeholder cube will be used)</span>');
-    el.pyLine2.textContent = `${s.cmd} ${(s.args || []).join(' ')}`.trim();
-  }
-
-  function renderMcpStatus(s) {
-    if (!el.mcpDot || !el.mcpLine1 || !el.mcpLine2) return;
-    if (!s) {
-      el.mcpDot.dataset.state = 'unknown';
-      el.mcpLine1.textContent = 'Detecting...';
-      el.mcpLine2.textContent = '';
-      return;
-    }
-    if (s.running) {
-      el.mcpDot.dataset.state = 'ok';
-      el.mcpLine1.textContent = `Running · Port ${s.port}`;
-      el.mcpLine2.textContent = s.url || '';
-    } else {
-      el.mcpDot.dataset.state = 'fail';
-      el.mcpLine1.textContent = 'Not started';
-      const lines = [s.url || ''].filter(Boolean);
-      if (s.error) lines.push(s.error);
-      el.mcpLine2.textContent = lines.join('\n');
-    }
-  }
-
-  async function refreshMcpStatus() {
-    if (!el.mcpDot || !el.mcpLine1) return;
-    el.mcpDot.dataset.state = 'busy';
-    el.mcpLine1.textContent = 'Refreshing...';
-    try {
-      renderMcpStatus(await api.mcpStatus());
-    } catch (e) {
-      appendLog(`Failed to read MCP status: ${e.message}`, 'error');
-    }
-  }
-
-  async function refreshPythonStatus() {
-    el.pyDot.dataset.state = 'busy';
-    el.pyLine1.textContent = 'Detecting...';
-    try {
-      renderPythonStatus(await api.pythonStatus());
-    } catch (e) {
-      appendLog(`Python status detection failed: ${e.message}`, 'error');
-    }
-  }
-
-  el.btnRefreshPython.addEventListener('click', refreshPythonStatus);
-  if (el.btnRefreshMcp) el.btnRefreshMcp.addEventListener('click', refreshMcpStatus);
-  if (el.btnMcpTestListParts) {
-    el.btnMcpTestListParts.addEventListener('click', async () => {
-      try {
-        appendLog('[MCP test] Calling list_parts ...', 'info');
-        const data = await api.mcpTestListParts();
-        appendLog(`[MCP test] list_parts result:\n${JSON.stringify(data, null, 2)}`, 'info');
-        showToast('list_parts executed, see "Build Logs" on the right');
-      } catch (e) {
-        appendLog(`[MCP test] list_parts failed: ${e.message}`, 'error');
-      }
-    });
-  }
-  el.btnPickPython.addEventListener('click', async () => {
-    try {
-      const status = await api.pickPython();
-      if (status) {
-        renderPythonStatus(status);
-        if (currentProject) api.rebuild();
-      }
-    } catch (e) {
-      appendLog(e.message, 'error');
-      alert(e.message);
-    }
-  });
-  el.btnClearPython.addEventListener('click', async () => {
-    try { renderPythonStatus(await api.clearPythonPath()); }
-    catch (e) { appendLog(e.message, 'error'); }
-  });
-
-  /* Conda environment creation modal */
-  el.btnCondaCreate.addEventListener('click', async () => {
-    el.modalConda.classList.remove('hidden');
-    el.condaWorking.classList.add('hidden');
-    el.btnCondaConfirm.disabled = false;
-    try {
-      const conda = await api.condaAvailable();
-      if (!conda) {
-        if (!confirm('Conda was not detected (not in PATH).\n\nOpen the modal anyway?\n(You can install Miniconda first and try again)')) {
-          el.modalConda.classList.add('hidden');
-        }
-      }
-    } catch {}
-  });
-  el.btnCondaCancel.addEventListener('click', () => el.modalConda.classList.add('hidden'));
-  el.btnCondaConfirm.addEventListener('click', async () => {
-    const envName = el.inputCondaName.value.trim();
-    const pythonVersion = el.inputCondaPyver.value.trim();
-    const installBuild123d = el.inputCondaB123d.checked;
-    if (!envName) { alert('Please enter an environment name'); return; }
-    el.condaWorking.classList.remove('hidden');
-    el.btnCondaConfirm.disabled = true;
-    el.pyDot.dataset.state = 'busy';
-    el.pyLine1.textContent = `Creating conda environment "${envName}" ...`;
-    el.pyLine2.textContent = '';
-    try {
-      const res = await api.createCondaEnv({ envName, pythonVersion, installBuild123d });
-      renderPythonStatus(res.status);
-      el.modalConda.classList.add('hidden');
-      showToast(`Conda environment <code>${escapeHtml(envName)}</code> created and set as default`);
-      if (currentProject) api.rebuild();
-    } catch (e) {
-      appendLog(e.message, 'error');
-      alert(`Creation failed: ${e.message}`);
-      el.condaWorking.classList.add('hidden');
-      el.btnCondaConfirm.disabled = false;
-      refreshPythonStatus();
-    }
-  });
-
   /* ---------------- Main Process Events ---------------- */
   api.onEvent(({ type, payload }) => {
     switch (type) {
@@ -821,12 +653,6 @@ export function initUI(viewer) {
       case 'PART_BUILT':
         // Refresh cache size/time in parts list only
         refreshParts();
-        break;
-      case 'PYTHON_STATUS':
-        renderPythonStatus(payload);
-        break;
-      case 'MCP_STATUS':
-        renderMcpStatus(payload);
         break;
       case 'MODEL_UPDATED': {
         if (payload?.part) {
@@ -918,6 +744,4 @@ export function initUI(viewer) {
   syncExportControls();
 
   setStatus('Waiting for project...');
-  refreshPythonStatus();
-  refreshMcpStatus();
 }

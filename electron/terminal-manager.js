@@ -27,14 +27,16 @@ const path = require('path');
 const AGENT_CMDS = {
   codex:  'codex',
   claude: 'claude',
-  cli:    'agent'
+  cli:    'agent',
+  gemini: 'gemini'
 };
 
 /** Friendly name + official install/setup docs when the executable is missing from PATH */
 const AGENT_CLI_DOCS = {
   cli:    { label: 'Cursor CLI', url: 'https://cursor.com/cli' },
   claude: { label: 'Claude Code', url: 'https://code.claude.com/docs/en/setup' },
-  codex:  { label: 'OpenAI Codex CLI', url: 'https://developers.openai.com/codex/cli' }
+  codex:  { label: 'OpenAI Codex CLI', url: 'https://developers.openai.com/codex/cli' },
+  gemini: { label: 'Gemini CLI', url: 'https://github.com/google-gemini/gemini-cli' }
 };
 
 function buildProcessEnvWithWindowsPathFixes(baseEnv = process.env) {
