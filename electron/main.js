@@ -105,6 +105,31 @@ function projectMetaPath(projectPath) {
   return path.join(projectPath, PROJECT_META_DIR, PROJECT_META_FILE);
 }
 
+function loadAppConfig() {
+  return pyenv.loadConfig?.() || {};
+}
+
+function saveAppConfig(cfg) {
+  pyenv.saveConfig?.(cfg || {});
+}
+
+function saveLastProjectPath(projectPath) {
+  const cfg = loadAppConfig();
+  const normalized = typeof projectPath === 'string' && projectPath.trim()
+    ? path.resolve(projectPath)
+    : null;
+  if (normalized) cfg.lastProjectPath = normalized;
+  else delete cfg.lastProjectPath;
+  saveAppConfig(cfg);
+}
+
+function clearLastProjectPath() {
+  const cfg = loadAppConfig();
+  if (!cfg.lastProjectPath) return;
+  delete cfg.lastProjectPath;
+  saveAppConfig(cfg);
+}
+
 function runtimeKernel(kernel = currentKernel) {
   return kernel || 'build123d';
 }
@@ -271,6 +296,11 @@ function createWindow() {
     }
     broadcastMcpStatus();
     sendToRenderer('MENU_TOGGLE_DEBUG_TOOLS', { visible: debugToolsVisible });
+    try {
+      await restoreLastProjectIfAvailable();
+    } catch (e) {
+      sendLog(`Last project restore failed: ${e.message}`, 'warn');
+    }
   });
 
   mainWindow.on('closed', () => {
@@ -395,6 +425,25 @@ async function openProjectByDialog() {
   if (!fs.existsSync(projectPath)) throw new Error(`Path does not exist: ${projectPath}`);
   await openProject(projectPath, { runImmediately: true });
   return projectPath;
+}
+
+async function restoreLastProjectIfAvailable() {
+  const lastProjectPath = String(loadAppConfig().lastProjectPath || '').trim();
+  if (!lastProjectPath) return false;
+  if (!fs.existsSync(lastProjectPath)) {
+    clearLastProjectPath();
+    sendLog(`Last project no longer exists, cleared saved path: ${lastProjectPath}`, 'warn');
+    return false;
+  }
+  try {
+    await openProject(lastProjectPath, { runImmediately: true });
+    sendLog(`Restored last project: ${lastProjectPath}`);
+    return true;
+  } catch (e) {
+    clearLastProjectPath();
+    sendLog(`Failed to restore last project (${lastProjectPath}): ${e.message}`, 'warn');
+    return false;
+  }
 }
 
 async function handleExportFromMenu(format) {
@@ -851,23 +900,26 @@ function sanitizePartName(name) {
 /* ---------------- Project and Watchers ---------------- */
 
 async function openProject(projectPath, { runImmediately = false } = {}) {
+  const resolvedProjectPath = path.resolve(projectPath);
+  const nextKernel = readProjectKernel(resolvedProjectPath);
+  ensureRuntimeDirs(resolvedProjectPath);
+
   stopWatcher();
-  currentProjectPath = projectPath;
+  currentProjectPath = resolvedProjectPath;
+  currentKernel = nextKernel;
   partInfoCache.clear();
   buildWaiters.clear();
   partLoadedWaiters.clear();
 
-  // Only valid AI CAD projects have .aicad/project.json.
-  currentKernel = readProjectKernel(projectPath);
-  ensureRuntimeDirs(projectPath);
+  saveLastProjectPath(resolvedProjectPath);
   sendLog(`Project kernel: ${kernelMeta(currentKernel).label} (${currentKernel})`);
 
   // Select the first model as the active model.
-  const parts = listPartsRaw(projectPath, currentKernel);
+  const parts = listPartsRaw(resolvedProjectPath, currentKernel);
   activePart = parts.length ? parts[0].name : null;
 
   sendToRenderer('PROJECT_OPENED', {
-    path: projectPath,
+    path: resolvedProjectPath,
     kernel: currentKernel,
     kernelLabel: kernelMeta(currentKernel).label,
     sourceFile: kernelMeta(currentKernel).sourceFile,
@@ -880,7 +932,7 @@ async function openProject(projectPath, { runImmediately = false } = {}) {
 
   // Watch both part.* and asm.* source files for the current kernel.
   const globs = MODEL_KINDS.map((kind) =>
-    path.join(projectPath, MODELS_DIR, '*', modelSourceFilename(currentKernel, kind)).replace(/\\/g, '/')
+    path.join(resolvedProjectPath, MODELS_DIR, '*', modelSourceFilename(currentKernel, kind)).replace(/\\/g, '/')
   );
   watcher = chokidar.watch(globs, {
     ignoreInitial: true,
