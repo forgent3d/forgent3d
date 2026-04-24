@@ -59,7 +59,9 @@
     "mac": {
       "icon": "assets/images/logo.png",
       "identity": "-",
-      "hardenedRuntime": false
+      "hardenedRuntime": true,
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.plist"
     },
     "linux": {
       "icon": "assets/images/logo.png"
