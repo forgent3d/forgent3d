@@ -8,5 +8,8 @@ Forgent3D is a desktop application (built with Electron) that transforms code ge
 ## ✨ Core Concept
 Breaking down the barriers of traditional 3D modeling. Powered by the robust **build123d** engine under the hood, you can seamlessly integrate with AI coding assistants like **Cursor**, **Claude**, **Code**, or **Codex** to generate and write model code. Forgent3D takes care of the instant rendering, allowing you to intuitively see the final 3D result.
 
+## ⬇️ Download
+Download the latest release here: [https://github.com/forgent3d/forgent3d/releases/](https://github.com/forgent3d/forgent3d/releases/)
+
 ## 📄 License
 This project is open source and available under the [MIT License](LICENSE).
