@@ -49,10 +49,18 @@
   "build": {
     "appId": "com.aicad.preview",
     "productName": "Forgent3D Preview",
+    "icon": "assets/images/logo.png",
     "win": {
+      "icon": "assets/images/logo.png",
       "target": [
         "nsis"
       ]
+    },
+    "mac": {
+      "icon": "assets/images/logo.png"
+    },
+    "linux": {
+      "icon": "assets/images/logo.png"
     },
     "nsis": {
       "oneClick": false,
@@ -61,6 +69,7 @@
     "files": [
       "electron/**",
       "dist/**",
+      "assets/**",
       "package.json"
     ],
     "extraResources": [

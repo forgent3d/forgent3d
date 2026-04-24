@@ -71,6 +71,10 @@ const BUNDLED_RUNNER_NAME = process.platform === 'win32'
   ? 'aicad-export-runner.exe'
   : 'aicad-export-runner';
 
+function appIconPath() {
+  return path.join(__dirname, '..', 'assets', 'images', 'logo.png');
+}
+
 function modelDir(projectPath, name) { return path.join(projectPath, MODELS_DIR, name); }
 function sourceExt(kernel = currentKernel) { return path.extname(kernelMeta(kernel).sourceFile); }
 function modelSourceFilename(kernel = currentKernel, kind = 'part') {
@@ -268,6 +272,7 @@ function createWindow() {
     minWidth: 1040,
     minHeight: 640,
     title: 'AI CAD Companion Preview',
+    icon: appIconPath(),
     backgroundColor: '#0b0d12',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
