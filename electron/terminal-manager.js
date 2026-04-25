@@ -31,6 +31,10 @@ const AGENT_CMDS = {
   gemini: 'gemini'
 };
 
+const AGENT_FALLBACK_SHELL_CMDS = {
+  claude: 'npx -y @anthropic-ai/claude-code'
+};
+
 /** Friendly name + official install/setup docs when the executable is missing from PATH */
 const AGENT_CLI_DOCS = {
   cli:    { label: 'Cursor CLI', url: 'https://cursor.com/cli' },
@@ -114,6 +118,29 @@ let _sendToRenderer = null;
 let nodePty = null;
 let fixedSpawnHelper = false;
 
+// Cached PATH resolved from the user's login shell (computed once, async-safely).
+let _loginShellPath = null;
+
+function getLoginShellPath() {
+  if (_loginShellPath !== null) return _loginShellPath;
+  const shell = process.env.SHELL || '/bin/zsh';
+  try {
+    const r = spawnSync(shell, ['-lc', 'echo "$PATH"'], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8',
+      env: process.env,
+      timeout: 5000
+    });
+    if (r.status === 0 && r.stdout.trim()) {
+      _loginShellPath = r.stdout.trim();
+    }
+  } catch {
+    // Fall through to process.env.PATH.
+  }
+  _loginShellPath = _loginShellPath || process.env.PATH || '';
+  return _loginShellPath;
+}
+
 function hasCommandOnWindows(command) {
   try {
     const r = spawnSync('where', [command], {
@@ -125,6 +152,30 @@ function hasCommandOnWindows(command) {
   } catch {
     return false;
   }
+}
+
+function hasCommand(command) {
+  if (!command) return false;
+  if (process.platform === 'win32') return hasCommandOnWindows(command);
+  return hasCommandOnUnix(command);
+}
+
+function resolveAgentCommand(agent) {
+  const primary = AGENT_CMDS[agent];
+  if (!primary) throw new Error(`Unknown agent: ${agent}`);
+  if (hasCommand(primary)) return primary;
+
+  const fallbackShellCmd = AGENT_FALLBACK_SHELL_CMDS[agent];
+  if (!fallbackShellCmd) {
+    throw new Error(missingCliErrorMessage(agent, primary));
+  }
+
+  // Fallback shell commands may be compound commands (e.g. npx ...),
+  // so we only check whether the executable exists on PATH.
+  const fallbackExecutable = fallbackShellCmd.trim().split(/\s+/)[0];
+  if (hasCommand(fallbackExecutable)) return fallbackShellCmd;
+
+  throw new Error(missingCliErrorMessage(agent, primary));
 }
 
 function pickWindowsShell() {
@@ -149,9 +200,11 @@ function pickCwd(projectPath) {
 function hasCommandOnUnix(command) {
   if (!command) return false;
   try {
-    const r = spawnSync('/bin/sh', ['-lc', `command -v ${command}`], {
+    const shell = process.env.SHELL || '/bin/zsh';
+    const loginPath = getLoginShellPath();
+    const r = spawnSync(shell, ['-lc', `command -v ${command}`], {
       stdio: 'ignore',
-      env: process.env
+      env: { ...process.env, PATH: loginPath }
     });
     return r.status === 0;
   } catch {
@@ -228,16 +281,7 @@ function init(ipcMain, sendToRenderer, hooks = {}) {
 
   ipcMain.handle('terminal:create', async (_evt, { agent, projectPath, cols = 120, rows = 30 }) => {
     const pty = tryLoadPty();
-
-    const cmd = AGENT_CMDS[agent];
-    if (!cmd) throw new Error(`Unknown agent: ${agent}`);
-    if (process.platform === 'win32') {
-      if (!hasCommandOnWindows(cmd)) {
-        throw new Error(missingCliErrorMessage(agent, cmd));
-      }
-    } else if (!hasCommandOnUnix(cmd)) {
-      throw new Error(missingCliErrorMessage(agent, cmd));
-    }
+    const cmd = resolveAgentCommand(agent);
     if (onBeforeTerminalCreate) {
       await onBeforeTerminalCreate({ agent, projectPath });
     }
@@ -285,6 +329,10 @@ function init(ipcMain, sendToRenderer, hooks = {}) {
     try {
       const mergedEnv = buildProcessEnvWithWindowsPathFixes({
         ...process.env,
+        // On macOS/Linux the packaged app may inherit a minimal PATH when launched from
+        // the Finder/Dock rather than a terminal.  Expand it using the login shell so
+        // tools like `claude` and `codex` (installed via npm/brew) are discoverable.
+        ...(process.platform !== 'win32' && { PATH: getLoginShellPath() }),
         TERM:             'xterm-256color',
         COLORTERM:        'truecolor',
         // Force Python tools to use UTF-8
