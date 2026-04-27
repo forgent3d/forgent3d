@@ -35,6 +35,7 @@ export function initUI(viewer) {
     modalPart: document.getElementById('modal-part'),
     inputPartName: document.getElementById('input-part-name'),
     inputPartDesc: document.getElementById('input-part-desc'),
+    selectModelKind: document.getElementById('select-model-kind'),
     btnPartCancel: document.getElementById('btn-part-cancel'),
     btnPartConfirm: document.getElementById('btn-part-confirm'),
 
@@ -171,7 +172,7 @@ export function initUI(viewer) {
     if (!partsCache.length) {
       const empty = document.createElement('li');
       empty.className = 'part-empty muted';
-      empty.textContent = 'No parts yet. Click + in the top-right to create one';
+      empty.textContent = 'No models yet. Click + in the top-right to create one';
       el.partsList.appendChild(empty);
       return;
     }
@@ -184,7 +185,7 @@ export function initUI(viewer) {
       main.className = 'part-main';
       const title = document.createElement('div');
       title.className = 'part-title';
-      title.textContent = p.name;
+      title.textContent = p.kind === 'asm' ? `${p.name} (assembly)` : p.name;
       if (p.building) {
         const dot = document.createElement('span');
         dot.className = 'part-busy';
@@ -243,7 +244,7 @@ export function initUI(viewer) {
   if (el.btnExportActive) {
     el.btnExportActive.addEventListener('click', async () => {
       if (!activePart) {
-        showToast('Please select a part on the left first');
+        showToast('Please select a model on the left first');
         return;
       }
       const fmt = (el.selectExportFormat?.value || 'stl').toLowerCase();
@@ -261,22 +262,9 @@ export function initUI(viewer) {
   }
 
   el.btnPartCancel.addEventListener('click', () => el.modalPart.classList.add('hidden'));
-  el.btnPartConfirm.addEventListener('click', async () => {
-    const name = el.inputPartName.value.trim();
-    const desc = el.inputPartDesc.value.trim();
-    if (!name) { alert('Please enter a part name'); return; }
-    if (!/^[a-zA-Z0-9_\-]+$/.test(name)) {
-      alert('Part name can only contain letters, numbers, underscores, and hyphens');
-      return;
-    }
-    try {
-      await api.createPart(name, desc);
-      el.modalPart.classList.add('hidden');
-      showToast(`Part <code>${escapeHtml(name)}</code> has been created`);
-    } catch (e) {
-      appendLog(`Failed to create part: ${e.message}`, 'error');
-      alert(e.message);
-    }
+  el.btnPartConfirm.addEventListener('click', () => {
+    el.modalPart.classList.add('hidden');
+    showToast('Model creation from UI is disabled');
   });
 
   /* ---------------- Button Events ---------------- */
@@ -661,7 +649,10 @@ export function initUI(viewer) {
         }
         const partLabel = payload.part ? `[${payload.part}] ` : '';
         const fmt = (payload.format || 'BREP').toUpperCase();
-        setStatus(`${partLabel}${fmt === 'STL' ? 'Parsing STL' : 'OCCT parsing BREP'} ...`, true);
+        setStatus(
+          `${partLabel}${fmt === 'URDF' ? 'Parsing URDF' : (fmt === 'STL' ? 'Parsing STL' : 'OCCT parsing BREP')} ...`,
+          true
+        );
         const sizeKB = payload.size ? (payload.size / 1024).toFixed(1) + ' KB' : '';
         const url = payload.url;
         if (!url) {
@@ -671,7 +662,9 @@ export function initUI(viewer) {
         viewer.loadModel(url, (msg) => appendLog(msg), { format: fmt })
           .then(async (partInfo) => {
             const { faceCount } = partInfo;
-            const tail = fmt === 'STL' ? 'STL mesh' : `${faceCount} BREP faces`;
+            const tail = fmt === 'URDF'
+              ? 'URDF assembly'
+              : (fmt === 'STL' ? 'STL mesh' : `${faceCount} BREP faces`);
             setStatus(
               `${partLabel}Model ready${sizeKB ? ' · ' + sizeKB : ''} · ${tail}`
             );
@@ -699,7 +692,7 @@ export function initUI(viewer) {
           })
           .catch((e) => {
             setStatus('Model load failed');
-            appendLog(`${partLabel}Failed to load BREP: ${e.message || e}`, 'error');
+            appendLog(`${partLabel}Failed to load ${fmt}: ${e.message || e}`, 'error');
             renderViewCube();
           });
         break;

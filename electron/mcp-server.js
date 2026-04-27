@@ -2,7 +2,7 @@
  * Built-in MCP server for the AI CAD companion previewer
  * ------------------------------------------
  * - transport: Streamable HTTP on fixed localhost port
- * - 4 tools: list_models / get_model_info / screenshot_model / rebuild_model
+ * - 5 tools: list_models / get_model_info / screenshot_model / rebuild_model / build_stl
  * - ctx is injected from electron/main.js; all runtime state is accessed via callbacks
  * - Each MCP client (Cursor / curl) gets isolated McpServer + Transport on initialize,
  *   then POST/GET/DELETE is routed by Mcp-Session-Id so curl testing does not break Cursor sessions.
@@ -139,6 +139,29 @@ function buildMcpServer(ctx, { McpServer, z }) {
       const result = await ctx.rebuildPartSync(model);
       return {
         isError: !result.ok,
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+      };
+    }
+  );
+
+  server.registerTool(
+    'build_stl',
+    {
+      title: 'Build STL for a model',
+      description: [
+        'Purpose: export a model to STL and return output path/size.',
+        'Prerequisite: model must exist and be buildable (part.py models only).',
+        'If failed: call rebuild_model first, then retry build_stl.'
+      ].join('\n'),
+      inputSchema: {
+        model: z.string().describe('Model directory name'),
+        output: z.string().optional().describe('Optional project-relative output path, for example "models/bracket/bracket.stl"')
+      }
+    },
+    async ({ model, output }) => {
+      const result = await ctx.buildStl(model, output || null);
+      return {
+        isError: !result?.ok,
         content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
       };
     }

@@ -10,8 +10,6 @@ contextBridge.exposeInMainWorld('aicad', {
   revealInFolder: () => ipcRenderer.invoke('project:revealInFolder'),
 
   listParts: () => ipcRenderer.invoke('parts:list'),
-  createPart: (name, description) =>
-    ipcRenderer.invoke('parts:create', { name, description }),
   selectPart: (name) => ipcRenderer.invoke('parts:select', name),
   rebuildPart: (name) => ipcRenderer.invoke('parts:rebuild', name),
   revealPart: (name) => ipcRenderer.invoke('parts:reveal', name),

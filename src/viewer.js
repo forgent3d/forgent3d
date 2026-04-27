@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import URDFLoader from 'urdf-loader';
 import occtImportJs from 'occt-import-js';
 // Vite treats wasm as an asset and returns the final bundled URL
 import occtWasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
@@ -415,10 +416,14 @@ export function createViewer(host) {
   const axes = new THREE.AxesHelper(30);
   axes.material.depthTest = false;
   axes.renderOrder = 999;
+  axes.visible = false;
   scene.add(axes);
 
   /* ---- State ---- */
   let currentRoot = null;         // three.Group for current BREP model
+  let currentUrdfRobot = null;
+  let urdfJointDrivers = [];
+  let urdfAnimTime = 0;
   let currentViewKey = 'iso';
   const VIEW_CYCLE = ['iso', 'front', 'side', 'top'];
   const _viewBox = new THREE.Box3();
@@ -427,8 +432,63 @@ export function createViewer(host) {
 
   /* ---- Animation ---- */
   let running = true;
+  let lastFrameTs = performance.now();
+  function hashName(name) {
+    let h = 0;
+    const s = String(name || '');
+    for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    return Math.abs(h);
+  }
+  function buildUrdfJointDrivers(robot) {
+    const jointEntries = Object.entries(robot?.joints || {});
+    return jointEntries
+      .filter(([, joint]) => !!joint?.setJointValue)
+      .map(([jointKey, joint]) => {
+        const type = String(joint.jointType || '').toLowerCase();
+        const name = String(joint.name || jointKey || '');
+        const lower = Number(joint?.limit?.lower);
+        const upper = Number(joint?.limit?.upper);
+        const hasFiniteLimits = Number.isFinite(lower) && Number.isFinite(upper) && upper > lower;
+        const isSpinner = /(prop|rotor|wheel|fan|spin)/i.test(name);
+        if (type === 'continuous' || (type === 'revolute' && isSpinner)) {
+          const speed = isSpinner ? 9 : 5;
+          const direction = (hashName(name) % 2 === 0) ? 1 : -1;
+          return { joint, mode: 'spin', speed: speed * direction };
+        }
+        if (type === 'revolute' || type === 'prismatic') {
+          const center = hasFiniteLimits ? (lower + upper) * 0.5 : 0;
+          const span = hasFiniteLimits ? (upper - lower) : (type === 'prismatic' ? 0.12 : 0.8);
+          const amplitude = Math.max(1e-4, span * 0.35);
+          const phase = (hashName(name) % 360) * Math.PI / 180;
+          const freq = 0.5 + (hashName(name) % 7) * 0.08;
+          return { joint, mode: 'osc', center, amplitude, phase, freq };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }
+  function animateUrdfJoints(dt) {
+    if (!currentUrdfRobot || !urdfJointDrivers.length) return;
+    urdfAnimTime += Math.max(0, dt || 0);
+    for (const driver of urdfJointDrivers) {
+      try {
+        if (driver.mode === 'spin') {
+          driver.joint.setJointValue(urdfAnimTime * driver.speed);
+        } else if (driver.mode === 'osc') {
+          const value = driver.center + Math.sin(urdfAnimTime * driver.freq * Math.PI * 2 + driver.phase) * driver.amplitude;
+          driver.joint.setJointValue(value);
+        }
+      } catch {
+        // Ignore one-off joint update failures to keep viewer responsive.
+      }
+    }
+  }
   (function loop() {
     if (!running) return;
+    const now = performance.now();
+    const dt = Math.min(0.05, Math.max(0, (now - lastFrameTs) / 1000));
+    lastFrameTs = now;
+    animateUrdfJoints(dt);
     controls.update();
     updateDirectionalLights(camera, controls.target);
     renderer.render(scene, camera);
@@ -476,6 +536,11 @@ export function createViewer(host) {
       disposeObject(currentRoot);
       currentRoot = null;
     }
+    currentUrdfRobot = null;
+    urdfJointDrivers = [];
+    urdfAnimTime = 0;
+    controls.target.set(0, 0, 0);
+    controls.update();
     currentViewKey = 'iso';
     if (viewCube) viewCube.setEnabled(false);
   }
@@ -780,10 +845,19 @@ export function createViewer(host) {
     return Number.isFinite(distance) && distance > 1e-3 ? distance : 120;
   }
 
-  function getFittedViewDistance() {
-    if (!currentRoot) return getViewDistance();
+  function getCurrentModelSphere() {
+    if (!currentRoot) return null;
     _viewBox.setFromObject(currentRoot).getBoundingSphere(_viewSphere);
-    const radius = Math.max(_viewSphere.radius, 1);
+    return _viewSphere.clone();
+  }
+
+  function getFittedViewDistance(target = controls.target) {
+    const sphere = getCurrentModelSphere();
+    if (!sphere) return getViewDistance(target);
+    // If target drifts away from model center (common in URDF updates),
+    // include that offset in fit radius so camera framing stays stable.
+    const targetOffset = sphere.center.distanceTo(target);
+    const radius = Math.max(sphere.radius + targetOffset, 1);
     const verticalHalfFov = THREE.MathUtils.degToRad(camera.fov * 0.5);
     const horizontalHalfFov = Math.atan(Math.tan(verticalHalfFov) * Math.max(camera.aspect, 1e-3));
     const fitHeight = radius / Math.sin(Math.max(verticalHalfFov, 1e-3));
@@ -807,7 +881,12 @@ export function createViewer(host) {
   }
 
   function fitView(viewInput = 'iso') {
-    return setView(viewInput, { distance: getFittedViewDistance() });
+    const sphere = getCurrentModelSphere();
+    if (sphere) {
+      controls.target.copy(sphere.center);
+    }
+    const distance = getFittedViewDistance(controls.target);
+    return setView(viewInput, { distance });
   }
 
   function cycleView() {
@@ -1134,14 +1213,147 @@ export function createViewer(host) {
     };
   }
 
+  function resolveUrdfMeshUrl(urdfUrl, meshPath) {
+    const raw = String(meshPath || '').trim();
+    if (!raw) return null;
+    if (/^(https?:|aicad:)/i.test(raw)) return raw;
+    let normalized = raw.replace(/^package:\/\//i, '');
+    if (/^[A-Za-z]:[\\/]/.test(normalized)) {
+      normalized = normalized.replace(/\\/g, '/');
+    }
+    try {
+      return new URL(normalized, urdfUrl).toString();
+    } catch {
+      return null;
+    }
+  }
+
+  async function loadUrdf(url, onLog = () => {}) {
+    onLog('URDF parsing ...');
+    clearModel();
+    const manager = new THREE.LoadingManager();
+    const baseForRelative = String(url).split('?')[0];
+    manager.setURLModifier((resourceUrl) => resolveUrdfMeshUrl(baseForRelative, resourceUrl) || resourceUrl);
+
+    const urdfLoader = new URDFLoader(manager);
+    urdfLoader.parseVisual = true;
+    urdfLoader.parseCollision = false;
+    urdfLoader.loadMeshCb = (path, _manager, done) => {
+      const resolved = resolveUrdfMeshUrl(baseForRelative, path);
+      if (!resolved) {
+        done(new Error(`Unsupported URDF mesh path: ${path}`));
+        return;
+      }
+      const lower = resolved.toLowerCase();
+      if (lower.endsWith('.stl')) {
+        const stlLoader = new STLLoader(manager);
+        stlLoader.load(
+          resolved,
+          (geometry) => {
+            geometry.computeVertexNormals();
+            done(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xb0b0b0 })));
+          },
+          undefined,
+          (err) => done(err || new Error(`Failed to load STL mesh: ${resolved}`))
+        );
+        return;
+      }
+      done(new Error(`Unsupported URDF mesh extension: ${path}`));
+    };
+
+    const robot = await new Promise((resolve, reject) => {
+      urdfLoader.load(url, resolve, undefined, reject);
+    });
+    if (!robot) throw new Error('URDF loader returned empty scene');
+
+    // Normalize URDF mesh materials to avoid black-looking assemblies.
+    robot.traverse((child) => {
+      if (!child?.isMesh) return;
+      child.geometry?.computeVertexNormals?.();
+      const applyMaterial = (m) => {
+        if (!m) return m;
+        const roughness = Number.isFinite(m.roughness) ? m.roughness : 0.65;
+        const metalness = Number.isFinite(m.metalness) ? m.metalness : 0.1;
+        if (!m.isMeshStandardMaterial) {
+          return new THREE.MeshStandardMaterial({
+            color: m.color?.clone?.() || new THREE.Color(0xb6c0cf),
+            roughness,
+            metalness,
+            side: THREE.DoubleSide
+          });
+        }
+        m.roughness = roughness;
+        m.metalness = metalness;
+        m.side = THREE.DoubleSide;
+        return m;
+      };
+      if (Array.isArray(child.material)) {
+        child.material = child.material.map((m) => applyMaterial(m));
+      } else {
+        child.material = applyMaterial(child.material);
+      }
+    });
+
+    // Keep assembly centered for stable initial framing.
+    const initialBox = new THREE.Box3().setFromObject(robot);
+    const initialCenter = new THREE.Vector3();
+    initialBox.getCenter(initialCenter);
+    robot.position.sub(initialCenter);
+
+    scene.add(robot);
+    currentRoot = robot;
+    currentUrdfRobot = robot;
+    urdfJointDrivers = buildUrdfJointDrivers(robot);
+    urdfAnimTime = 0;
+    controls.target.set(0, 0, 0);
+    controls.update();
+    fitView('iso');
+    if (viewCube) viewCube.setEnabled(true);
+
+    await new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        finish();
+      }, 1500);
+      manager.onLoad = () => {
+        clearTimeout(timer);
+        finish();
+      };
+      manager.onError = () => {};
+    });
+
+    robot.updateMatrixWorld(true);
+    fitView('iso');
+
+    const box = new THREE.Box3().setFromObject(robot);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    onLog('URDF parse complete');
+    return {
+      faceCount: null,
+      bbox: {
+        min: { x: box.min.x, y: box.min.y, z: box.min.z },
+        max: { x: box.max.x, y: box.max.y, z: box.max.z },
+        size: { x: size.x, y: size.y, z: size.z }
+      },
+      faces: []
+    };
+  }
+
   /**
-   * Unified entry: choose BREP/STL loader by URL suffix or explicit format.
+   * Unified entry: choose BREP/STL/URDF loader by URL suffix or explicit format.
    * @param {string} url
    * @param {(msg:string)=>void} [onLog]
-   * @param {{ format?: 'BREP'|'STL' }} [opts]
+   * @param {{ format?: 'BREP'|'STL'|'URDF' }} [opts]
    */
   function loadModel(url, onLog = () => {}, opts = {}) {
     const fmt = (opts.format || '').toUpperCase();
+    if (fmt === 'URDF' || /\.urdf(\?|$)/i.test(url)) return loadUrdf(url, onLog);
     const isStl = fmt === 'STL' || /\.stl(\?|$)/i.test(url);
     return isStl ? loadStl(url, onLog) : loadBrep(url, onLog);
   }
@@ -1174,6 +1386,7 @@ export function createViewer(host) {
     setViewCubeEnabled,
     loadBrep,
     loadStl,
+    loadUrdf,
     loadModel,
     snapshot,
     setView,

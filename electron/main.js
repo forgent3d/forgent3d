@@ -8,6 +8,10 @@ const chokidar = require('chokidar');
 const pyenv = require('./python-env');
 const mcp = require('./mcp-server');
 const terminalManager = require('./terminal-manager');
+const { registerIpcHandlers } = require('./main.ipc');
+const { initMainExportTools } = require('./main.export');
+const { initMainUiTools } = require('./main.ui');
+const { initMainLogicTools } = require('./main.logic');
 const {
   KERNELS,
   assertKernel,
@@ -64,12 +68,15 @@ const CACHE_DIR = '.cache';
 const PROJECT_META_DIR = '.aicad';
 const PROJECT_META_FILE = 'project.json';
 let cachedElectronExportRunnerPath = null;
-const EXPORT_FORMATS = ['step', 'stl', 'obj', 'glb'];
+const EXPORT_FORMATS = ['step', 'stl', 'obj'];
 const SCREENSHOT_VIEWS = ['iso', 'front', 'side', 'top'];
 const PLATFORM_TAG = `${process.platform}-${process.arch}`;
 const BUNDLED_RUNNER_NAME = process.platform === 'win32'
   ? 'aicad-export-runner.exe'
   : 'aicad-export-runner';
+let exportTools = null;
+let uiTools = null;
+let logicTools = null;
 
 function appIconPath() {
   return path.join(__dirname, '..', 'assets', 'images', 'logo.png');
@@ -78,6 +85,7 @@ function appIconPath() {
 function modelDir(projectPath, name) { return path.join(projectPath, MODELS_DIR, name); }
 function sourceExt(kernel = currentKernel) { return path.extname(kernelMeta(kernel).sourceFile); }
 function modelSourceFilename(kernel = currentKernel, kind = 'part') {
+  if (kind === 'asm') return 'asm.urdf';
   return `${kind}${sourceExt(kernel)}`;
 }
 function resolveModelSource(projectPath, name, kernel = currentKernel) {
@@ -96,7 +104,23 @@ function partSource(projectPath, name, kernel = currentKernel, kind = null) {
 }
 function partReadme(projectPath, name) { return path.join(modelDir(projectPath, name), 'README.md'); }
 function partCache(projectPath, name, kernel = currentKernel) {
-  return path.join(projectPath, CACHE_DIR, `${name}${kernelMeta(kernel).cacheExt}`);
+  return path.join(modelDir(projectPath, name), `${name}${kernelMeta(kernel).cacheExt}`);
+}
+function modelCacheFile(projectPath, name, source = null, kernel = currentKernel) {
+  const s = source || resolveModelSource(projectPath, name, kernel);
+  if (!s) return null;
+  return s.kind === 'asm' ? s.sourcePath : partCache(projectPath, name, kernel);
+}
+function modelPreviewFormat(source = null, kernel = currentKernel) {
+  return source?.kind === 'asm' ? 'URDF' : kernelMeta(kernel).previewFormat;
+}
+function toProjectRelativeAsset(relPath) {
+  if (!currentProjectPath) return null;
+  const normalized = String(relPath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+  const abs = path.resolve(currentProjectPath, normalized);
+  const root = path.resolve(currentProjectPath);
+  if (abs !== root && !abs.startsWith(`${root}${path.sep}`)) return null;
+  return abs;
 }
 function normalizeScreenshotView(view) {
   const v = String(view || 'iso').trim().toLowerCase();
@@ -225,21 +249,11 @@ function ensureElectronExportRunner() {
 }
 
 function exportExt(format) {
-  switch (String(format || '').toLowerCase()) {
-    case 'step': return '.step';
-    case 'stl': return '.stl';
-    case 'obj': return '.obj';
-    case 'glb': return '.glb';
-    default: return null;
-  }
+  return exportTools.exportExt(format);
 }
 
 function ensureExportFormat(format) {
-  const f = String(format || '').toLowerCase();
-  if (!EXPORT_FORMATS.includes(f)) {
-    throw new Error(`Unsupported export format: ${format}`);
-  }
-  return f;
+  return exportTools.ensureExportFormat(format);
 }
 
 /**
@@ -266,201 +280,174 @@ const partLoadedWaiters = new Map();
 
 /* ---------------- Window ---------------- */
 function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1040,
-    minHeight: 640,
-    title: 'AI CAD Companion Preview',
-    icon: appIconPath(),
-    backgroundColor: '#0b0d12',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false
-    }
-  });
+  return uiTools.createWindow();
+}
 
-  if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
-  }
-
-  mainWindow.webContents.once('did-finish-load', async () => {
-    try {
-      sendToRenderer('PYTHON_STATUS', await getBuildRuntimeStatus());
-    } catch (e) {
-      sendLog(`Python status check failed: ${e.message}`, 'error');
+function registerIpc() {
+  registerIpcHandlers({
+    ipcMain,
+    clipboard,
+    dialog,
+    shell,
+    state: {
+      mainWindow: () => mainWindow,
+      currentProjectPath: () => currentProjectPath,
+      currentKernel: () => currentKernel,
+      activePart: () => activePart,
+      partInfoCache: () => partInfoCache
+    },
+    deps: {
+      constants: {
+        SCREENSHOT_VIEWS,
+        CACHE_DIR
+      },
+      KERNELS,
+      assertKernel,
+      kernelMeta,
+      sourceFileOptions,
+      getMcpStatusPayload,
+      buildMcpContext,
+      initProjectLayout,
+      openProject,
+      openProjectByDialog,
+      scheduleBuild,
+      listParts,
+      selectPart,
+      modelDir,
+      exportPartByRequest,
+      partPng,
+      resolvePartLoadedWaiters,
+      getBuildRuntimeStatus,
+      sendLog
     }
-    broadcastMcpStatus();
-    sendToRenderer('MENU_TOGGLE_DEBUG_TOOLS', { visible: debugToolsVisible });
-    try {
-      await restoreLastProjectIfAvailable();
-    } catch (e) {
-      sendLog(`Last project restore failed: ${e.message}`, 'warn');
-    }
-  });
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-    stopWatcher();
   });
 }
 
 function rebuildAppMenu() {
-  const hasProject = !!currentProjectPath;
-  const template = [
-    {
-      label: 'File',
-      submenu: [
-        {
-          label: 'New Project...',
-          accelerator: 'CmdOrCtrl+N',
-          click: () => sendToRenderer('MENU_NEW_PROJECT', {})
-        },
-        {
-          label: 'Open Project...',
-          accelerator: 'CmdOrCtrl+O',
-          click: async () => {
-            try {
-              await openProjectByDialog();
-            } catch (e) {
-              sendLog(`Open failed: ${e.message}`, 'error');
-            }
-          }
-        },
-        { type: 'separator' },
-        {
-          label: 'Rebuild',
-          accelerator: 'F5',
-          enabled: hasProject,
-          click: () => {
-            if (activePart) scheduleBuild(activePart);
-          }
-        },
-        {
-          label: 'Reveal in Folder',
-          enabled: hasProject,
-          click: () => {
-            if (currentProjectPath) shell.openPath(currentProjectPath);
-          }
-        },
-        {
-          label: 'Export Current Model',
-          enabled: hasProject && !!activePart,
-          submenu: [
-            {
-              label: 'Export STEP...',
-              enabled: hasProject && !!activePart,
-              click: () => handleExportFromMenu('step')
-            },
-            {
-              label: 'Export STL...',
-              enabled: hasProject && !!activePart,
-              click: () => handleExportFromMenu('stl')
-            },
-            {
-              label: 'Export OBJ...',
-              enabled: hasProject && !!activePart,
-              click: () => handleExportFromMenu('obj')
-            },
-            {
-              label: 'Export GLB...',
-              enabled: hasProject && !!activePart,
-              click: () => handleExportFromMenu('glb')
-            }
-          ]
-        },
-        { type: 'separator' },
-        { role: 'quit', label: 'Quit' }
-      ]
-    },
-    {
-      label: 'Edit',
-      submenu: [
-        { role: 'undo', label: 'Undo' },
-        { role: 'redo', label: 'Redo' },
-        { type: 'separator' },
-        { role: 'cut', label: 'Cut' },
-        { role: 'copy', label: 'Copy' },
-        { role: 'paste', label: 'Paste' },
-        { role: 'selectAll', label: 'Select All' }
-      ]
-    },
-    {
-      label: 'View',
-      submenu: [
-        { role: 'reload', label: 'Reload' },
-        { role: 'toggleDevTools', label: 'Developer Tools' },
-        {
-          type: 'checkbox',
-          label: 'Debug Tools',
-          checked: debugToolsVisible,
-          click: (menuItem) => {
-            debugToolsVisible = !!menuItem.checked;
-            sendToRenderer('MENU_TOGGLE_DEBUG_TOOLS', { visible: debugToolsVisible });
-          }
-        },
-        { type: 'separator' },
-        { role: 'resetZoom', label: 'Actual Size' },
-        { role: 'zoomIn', label: 'Zoom In' },
-        { role: 'zoomOut', label: 'Zoom Out' },
-        { type: 'separator' },
-        { role: 'togglefullscreen', label: 'Toggle Full Screen' }
-      ]
-    }
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  return uiTools.rebuildAppMenu();
 }
 
 async function openProjectByDialog() {
-  const res = await dialog.showOpenDialog(mainWindow, {
-    title: 'Open an Existing AI CAD Project',
-    properties: ['openDirectory']
-  });
-  if (res.canceled || res.filePaths.length === 0) return null;
-  const projectPath = res.filePaths[0];
-  if (!fs.existsSync(projectPath)) throw new Error(`Path does not exist: ${projectPath}`);
-  await openProject(projectPath, { runImmediately: true });
-  return projectPath;
+  return uiTools.openProjectByDialog();
 }
 
 async function restoreLastProjectIfAvailable() {
-  const lastProjectPath = String(loadAppConfig().lastProjectPath || '').trim();
-  if (!lastProjectPath) return false;
-  if (!fs.existsSync(lastProjectPath)) {
-    clearLastProjectPath();
-    sendLog(`Last project no longer exists, cleared saved path: ${lastProjectPath}`, 'warn');
-    return false;
-  }
-  try {
-    await openProject(lastProjectPath, { runImmediately: true });
-    sendLog(`Restored last project: ${lastProjectPath}`);
-    return true;
-  } catch (e) {
-    clearLastProjectPath();
-    sendLog(`Failed to restore last project (${lastProjectPath}): ${e.message}`, 'warn');
-    return false;
-  }
+  return uiTools.restoreLastProjectIfAvailable();
 }
 
 async function handleExportFromMenu(format) {
-  try {
-    if (!activePart) throw new Error('No active model is available for export.');
-    const res = await exportPartByRequest(activePart, format);
-    if (!res?.canceled && res?.path) {
-      sendLog(`[${activePart}] Exported ${String(format).toUpperCase()}: ${res.path}`);
+  return uiTools.handleExportFromMenu(format);
+}
+
+function initModuleTools() {
+  const mainContext = {
+    electron: { BrowserWindow, Menu, dialog, shell, protocol, net },
+    app: {
+      app,
+      appIconPath
+    },
+    mcp,
+    env: { isDev },
+    constants: {
+      MCP_PORT,
+      MODELS_DIR,
+      MODEL_KINDS,
+      CACHE_DIR,
+      EXPORT_FORMATS
+    },
+    templates: {
+      CURSOR_PROJECT_RULE_FILE,
+      assertKernel,
+      kernelMeta,
+      sourceFileOptions,
+      cursorMcpJson,
+      claudeMcpJson,
+      codexConfigToml,
+      cursorRulesTemplate,
+      agentsMdTemplate,
+      claudeMdTemplate,
+      geminiMdTemplate,
+      aicadProjectJson,
+      modelSourceTemplate,
+      modelReadmeTemplate
+    },
+    state: {
+      mainWindow: () => mainWindow,
+      setMainWindow: (v) => { mainWindow = v; },
+      watcher: () => watcher,
+      setWatcher: (v) => { watcher = v; },
+      currentProjectPath: () => currentProjectPath,
+      setCurrentProjectPath: (v) => { currentProjectPath = v; },
+      currentKernel: () => currentKernel,
+      setCurrentKernel: (v) => { currentKernel = v; },
+      activePart: () => activePart,
+      setActivePart: (v) => { activePart = v; },
+      debugToolsVisible: () => debugToolsVisible,
+      setDebugToolsVisible: (v) => { debugToolsVisible = !!v; },
+      mcpStartError: () => mcpStartError,
+      partInfoCache: () => partInfoCache,
+      buildingParts: () => buildingParts,
+      pendingParts: () => pendingParts,
+      buildWaiters: () => buildWaiters,
+      partLoadedWaiters: () => partLoadedWaiters
+    },
+    model: {
+      projectMetaPath,
+      modelDir,
+      sourceExt,
+      modelSourceFilename,
+      resolveModelSource,
+      partSource,
+      partReadme,
+      partCache,
+      modelCacheFile,
+      modelPreviewFormat,
+      toProjectRelativeAsset,
+      partPng
+    },
+    project: {
+      readProjectKernel,
+      loadAppConfig,
+      saveLastProjectPath,
+      clearLastProjectPath,
+      openProject: (...args) => openProject(...args),
+      openProjectByDialog: (...args) => openProjectByDialog(...args),
+      restoreLastProjectIfAvailable: (...args) => restoreLastProjectIfAvailable(...args),
+      stopWatcher: (...args) => stopWatcher(...args)
+    },
+    runtime: {
+      detectBuildRuntime,
+      missingRuntimeMessage,
+      buildRuntimeSpawn,
+      getBuildRuntimeStatus
+    },
+    logging: {
+      sendLog: (...args) => sendLog(...args)
+    },
+    build: {
+      scheduleBuild: (...args) => scheduleBuild(...args),
+      ensurePartStlArtifact: (...args) => ensurePartStlArtifact(...args),
+      sendModelUpdated: (...args) => sendModelUpdated(...args)
+    },
+    exportApi: {
+      buildStlForModel: (...args) => buildStlForModel(...args),
+      exportPartByRequest: (...args) => exportPartByRequest(...args),
+      handleExportFromMenu: (...args) => handleExportFromMenu(...args)
+    },
+    ui: {
+      rebuildAppMenu: (...args) => rebuildAppMenu(...args),
+      sendToRenderer: (...args) => sendToRenderer(...args),
+      sendLog: (...args) => sendLog(...args)
     }
-  } catch (e) {
-    sendLog(`Export failed: ${e.message || e}`, 'error');
-    dialog.showErrorBox('Export Failed', e.message || String(e));
-  }
+  };
+
+  exportTools = initMainExportTools(mainContext);
+  uiTools = initMainUiTools(mainContext);
+  logicTools = initMainLogicTools(mainContext);
 }
 
 app.whenReady().then(async () => {
+  initModuleTools();
   registerProtocol();
   registerIpc();
   terminalManager.init(ipcMain, (type, payload) => sendToRenderer(type, payload), {
@@ -501,27 +488,11 @@ app.on('before-quit', () => {
 });
 
 /* ---------------- Custom Protocol aicad:// ---------------- */
-// aicad://model/<partName>.brep -> .cache/<partName>.brep
+// aicad://model/<name>.<ext> -> cached model payload
+// aicad://asset/<relative-path> -> project-scoped asset (URDF meshes, etc.)
 
 function registerProtocol() {
-  protocol.handle('aicad', async (request) => {
-    try {
-      const url = new URL(request.url);
-      if (url.hostname === 'model' && currentProjectPath) {
-        const file = path.basename(url.pathname);           // <name>.brep / <name>.stl
-        const name = file.replace(/\.(brep|stl)$/i, '');
-        if (name) {
-          const p = partCache(currentProjectPath, name);
-          if (fs.existsSync(p)) {
-            return net.fetch(pathToFileURL(p).toString());
-          }
-        }
-      }
-      return new Response('Not Found', { status: 404 });
-    } catch (e) {
-      return new Response(`protocol error: ${e.message}`, { status: 500 });
-    }
-  });
+  return uiTools.registerProtocol();
 }
 
 /* ---------------- File Templates ---------------- */
@@ -529,24 +500,7 @@ function registerProtocol() {
 /* ---------------- Project Setup ---------------- */
 
 function writeIfChanged(filePath, content) {
-  try {
-    const prev = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null;
-    if (prev === content) return false;
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, content, 'utf-8');
-    if (prev !== null) sendLog(`Updated: ${path.relative(currentProjectPath || '', filePath)}`);
-    return true;
-  } catch (e) {
-    sendLog(`Failed to write ${filePath}: ${e.message}`, 'error');
-    return false;
-  }
-}
-
-function writeIfMissing(filePath, content) {
-  if (fs.existsSync(filePath)) return false;
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, content, 'utf-8');
-  return true;
+  return logicTools.writeIfChanged(filePath, content);
 }
 
 /**
@@ -554,756 +508,86 @@ function writeIfMissing(filePath, content) {
  * Machine-oriented configs use writeIfChanged; markdown / .mdc rules use writeIfMissing so user edits persist.
  */
 function bootstrapAgentWorkspace(projectPath, agent) {
-  const k = readProjectKernel(projectPath);
-  switch (agent) {
-    case 'cli':
-      writeIfMissing(
-        path.join(projectPath, '.cursor', 'rules', CURSOR_PROJECT_RULE_FILE),
-        cursorRulesTemplate(k)
-      );
-      writeIfChanged(path.join(projectPath, '.cursor', 'mcp.json'), cursorMcpJson(MCP_PORT));
-      break;
-    case 'codex':
-      writeIfChanged(path.join(projectPath, '.codex', 'config.toml'), codexConfigToml(MCP_PORT));
-      writeIfMissing(path.join(projectPath, 'AGENTS.md'), agentsMdTemplate(k));
-      break;
-    case 'claude':
-      writeIfChanged(path.join(projectPath, '.mcp.json'), claudeMcpJson(MCP_PORT));
-      writeIfMissing(path.join(projectPath, 'CLAUDE.md'), claudeMdTemplate(k));
-      break;
-    case 'gemini':
-      writeIfMissing(path.join(projectPath, 'GEMINI.md'), geminiMdTemplate(k));
-      break;
-    default:
-      throw new Error(`Unknown agent: ${agent}`);
-  }
+  return logicTools.bootstrapAgentWorkspace(projectPath, agent);
 }
 
 /**
  * Initialize a new project layout:
  *   - .aicad/project.json
- *   - models/cuboid/<src> as a sample model
+ *   - models/cuboid/part.py as a sample part
+ *   - models/assembly_demo/asm.urdf as a sample assembly that references cuboid
  *   - .cache/ for preview artifacts
  *   - .gitignore
  * Agent-specific rules and MCP configs are written on demand (see bootstrapAgentWorkspace).
  */
 function initProjectLayout(projectPath, kernel) {
-  const k = assertKernel(kernel);
-  const meta = kernelMeta(k);
-
-  writeIfChanged(projectMetaPath(projectPath), aicadProjectJson(k));
-
-  writeIfChanged(path.join(projectPath, '.gitignore'),
-    '# AI CAD Companion Preview\n.cache/\n__pycache__/\n*.pyc\n');
-  fs.mkdirSync(path.join(projectPath, MODELS_DIR), { recursive: true });
-  fs.mkdirSync(path.join(projectPath, CACHE_DIR), { recursive: true });
-
-  createPartFiles(projectPath, 'cuboid', `Default cuboid model. Edit ${meta.sourceFile} to preview changes.`, k);
-  sendLog(`Sample model created: models/cuboid/${modelSourceFilename(k, 'part')}`);
+  return logicTools.initProjectLayout(projectPath, kernel);
 }
 
-/**
- * When opening an existing project, only ensure the required runtime folders exist.
- * Do not rewrite user-managed rule files here.
- */
-function ensureRuntimeDirs(projectPath) {
-  fs.mkdirSync(path.join(projectPath, MODELS_DIR), { recursive: true });
-  fs.mkdirSync(path.join(projectPath, CACHE_DIR), { recursive: true });
-}
-
-function createPartFiles(projectPath, name, kindOrDescription, descriptionOrKernel, kernel = currentKernel) {
-  let kind = 'part';
-  let description = kindOrDescription;
-  let actualKernel = descriptionOrKernel ?? kernel;
-  if (MODEL_KINDS.includes(kindOrDescription)) {
-    kind = kindOrDescription;
-    description = descriptionOrKernel;
-    actualKernel = kernel;
-  }
-  const k = assertKernel(actualKernel);
-  const srcPath = partSource(projectPath, name, k, kind);
-  const mdPath = partReadme(projectPath, name);
-  fs.mkdirSync(path.dirname(srcPath), { recursive: true });
-  writeIfMissing(srcPath, modelSourceTemplate(k, kind, name, description));
-  writeIfMissing(mdPath, modelReadmeTemplate(k, kind, name, description));
-}
 
 /* ---------------- Model Listing ---------------- */
 
-function listPartsRaw(projectPath, kernel = currentKernel) {
-  const k = assertKernel(kernel);
-  const dir = path.join(projectPath, MODELS_DIR);
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
-    .map((d) => d.name)
-    .map((name) => ({ name, source: resolveModelSource(projectPath, name, k) }))
-    .filter(({ source }) => !!source)
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map(({ name, source }) => ({
-      name,
-      kind: source.kind,
-      sourceFile: source.fileName,
-      description: readPartDescription(projectPath, name, k)
-    }));
-}
-
-function readPartDescription(projectPath, name, kernel = currentKernel) {
-  const k = assertKernel(kernel);
-  // Prefer the first non-empty, non-heading, non-quote paragraph from README.md.
-  try {
-    const md = fs.readFileSync(partReadme(projectPath, name), 'utf-8');
-    const lines = md.split(/\r?\n/);
-    for (let i = 0; i < lines.length; i++) {
-      const l = lines[i].trim();
-      if (!l) continue;
-      if (l.startsWith('#')) continue;
-      if (l.startsWith('>')) continue;
-      return l.replace(/^[*-]\s*/, '').slice(0, 120);
-    }
-  } catch {}
-  // Fallback to a top-level source comment.
-  try {
-    const source = resolveModelSource(projectPath, name, k);
-    if (!source) return '';
-    const src = fs.readFileSync(source.sourcePath, 'utf-8');
-    const m = /^\s*"""([\s\S]*?)"""/.exec(src);
-    if (m) return m[1].trim().split(/\r?\n/)[0].slice(0, 120);
-  } catch {}
-  return '';
-}
-
 function listParts(projectPath, kernel = currentKernel) {
-  const k = assertKernel(kernel);
-  return listPartsRaw(projectPath, k).map((p) => {
-    const cache = partCache(projectPath, p.name, k);
-    let size = 0, mtime = 0;
-    if (fs.existsSync(cache)) {
-      const st = fs.statSync(cache);
-      size = st.size;
-      mtime = st.mtimeMs;
-    }
-    return {
-      name: p.name,
-      kind: p.kind,
-      sourceFile: p.sourceFile,
-      description: p.description,
-      hasCache: size > 0,
-      cacheSize: size,
-      cacheMtime: mtime,
-      building: buildingParts.has(p.name) || pendingParts.has(p.name)
-    };
-  });
+  return logicTools.listParts(projectPath, kernel);
 }
-
-/* ---------------- IPC ---------------- */
-
-function registerIpc() {
-  ipcMain.handle('clipboard:readText', () => clipboard.readText());
-  ipcMain.handle('clipboard:writeText', (_evt, text) => {
-    clipboard.writeText(String(text ?? ''));
-    return true;
-  });
-
-  ipcMain.handle('mcp:status', () => getMcpStatusPayload());
-
-  /** Same data source as the MCP list_models tool, useful for UI validation. */
-  ipcMain.handle('mcp:testListParts', () => buildMcpContext().listParts());
-
-  ipcMain.handle('dialog:chooseDirectory', async () => {
-    const res = await dialog.showOpenDialog(mainWindow, {
-      title: 'Choose a parent directory for the new project',
-      properties: ['openDirectory', 'createDirectory']
-    });
-    if (res.canceled || res.filePaths.length === 0) return null;
-    return res.filePaths[0];
-  });
-
-  ipcMain.handle('project:create', async (_evt, { parentDir, projectName, kernel }) => {
-    if (!parentDir || !projectName) throw new Error('parentDir and projectName are required.');
-    const k = assertKernel(kernel);
-    const projectPath = path.join(parentDir, projectName);
-    if (fs.existsSync(projectPath)) throw new Error(`Project path already exists: ${projectPath}`);
-    fs.mkdirSync(projectPath, { recursive: true });
-    initProjectLayout(projectPath, k);
-    await openProject(projectPath, { runImmediately: true });
-    return projectPath;
-  });
-
-  ipcMain.handle('project:open', async (_evt, projectPath) => {
-    if (!projectPath) {
-      return openProjectByDialog();
-    }
-    if (!fs.existsSync(projectPath)) throw new Error(`Path does not exist: ${projectPath}`);
-    await openProject(projectPath, { runImmediately: true });
-    return projectPath;
-  });
-
-  ipcMain.handle('project:meta', () => {
-    if (!currentProjectPath) return null;
-    const meta = kernelMeta(currentKernel);
-    return {
-      path: currentProjectPath,
-      kernel: currentKernel,
-      kernelLabel: meta.label,
-      sourceFile: meta.sourceFile,
-      sourceFiles: Object.values(sourceFileOptions(currentKernel)),
-      previewFormat: meta.previewFormat,
-      runner: meta.runner,
-      kernels: KERNELS.map((k) => ({ id: k, ...kernelMeta(k) }))
-    };
-  });
-
-  ipcMain.handle('project:rebuild', async () => {
-    if (!currentProjectPath) throw new Error('Open a project first.');
-    if (activePart) scheduleBuild(activePart);
-    return true;
-  });
-
-  ipcMain.handle('project:revealInFolder', async () => {
-    if (!currentProjectPath) return;
-    shell.openPath(currentProjectPath);
-  });
-
-  /* ---- Model actions ---- */
-
-  ipcMain.handle('parts:list', async () => {
-    if (!currentProjectPath) return { parts: [], active: null };
-    return { parts: listParts(currentProjectPath), active: activePart };
-  });
-
-  ipcMain.handle('parts:create', async (_evt, { name, kind = 'part', description }) => {
-    if (!currentProjectPath) throw new Error('Open a project first.');
-    const cleanName = sanitizePartName(name);
-    if (!cleanName) throw new Error('Model names may only contain letters, numbers, underscores, and hyphens.');
-    if (!MODEL_KINDS.includes(kind)) throw new Error(`Unsupported model kind: ${kind}`);
-    if (fs.existsSync(modelDir(currentProjectPath, cleanName))) {
-      throw new Error(`Model "${cleanName}" already exists.`);
-    }
-    createPartFiles(currentProjectPath, cleanName, kind, description, currentKernel);
-    broadcastPartsList();
-    sendLog(`Model created: models/${cleanName}/${modelSourceFilename(currentKernel, kind)}`);
-    // Make the new model active and build it immediately.
-    await selectPart(cleanName);
-    scheduleBuild(cleanName);
-    return cleanName;
-  });
-
-  ipcMain.handle('parts:select', async (_evt, name) => {
-    if (!currentProjectPath) return;
-    await selectPart(name);
-    return activePart;
-  });
-
-  ipcMain.handle('parts:rebuild', async (_evt, name) => {
-    const target = name || activePart;
-    if (target) scheduleBuild(target);
-    return true;
-  });
-
-  ipcMain.handle('parts:reveal', async (_evt, name) => {
-    if (!currentProjectPath || !name) return;
-    shell.openPath(modelDir(currentProjectPath, name));
-  });
-
-  ipcMain.handle('parts:export', async (_evt, { name, format }) => {
-    if (!currentProjectPath) throw new Error('Open a project first.');
-    const partName = String(name || activePart || '').trim();
-    if (!partName) throw new Error('Select a model first.');
-    return exportPartByRequest(partName, format);
-  });
-
-  ipcMain.handle('viewer:partLoaded', async (_evt, payload) => {
-    if (!currentProjectPath || !payload?.part) return;
-    const { part, faceCount, bbox, faces, snapshotDataURL, snapshotDataURLs } = payload;
-    partInfoCache.set(part, {
-      faceCount, bbox, faces,
-      capturedAt: Date.now()
-    });
-    const snapshots = snapshotDataURLs && typeof snapshotDataURLs === 'object'
-      ? snapshotDataURLs
-      : { iso: snapshotDataURL };
-    for (const view of SCREENSHOT_VIEWS) {
-      const dataUrl = snapshots?.[view];
-      if (typeof dataUrl !== 'string') continue;
-      const m = /^data:image\/[a-zA-Z]+;base64,(.*)$/.exec(dataUrl);
-      if (!m) continue;
-      try {
-        fs.mkdirSync(path.join(currentProjectPath, CACHE_DIR), { recursive: true });
-        fs.writeFileSync(partPng(currentProjectPath, part, view), Buffer.from(m[1], 'base64'));
-      } catch (e) {
-        sendLog(`Failed to write screenshot cache (${view}): ${e.message}`, 'warn');
-      }
-      if (view === 'iso') {
-        try {
-          fs.writeFileSync(partPng(currentProjectPath, part), Buffer.from(m[1], 'base64'));
-        } catch (e) {
-          sendLog(`Failed to write screenshot cache (legacy iso): ${e.message}`, 'warn');
-        }
-      }
-    }
-    resolvePartLoadedWaiters(part, {
-      part,
-      faceCount,
-      capturedAt: Date.now()
-    });
-  });
-
-  /* ---- Python runtime status ---- */
-
-  ipcMain.handle('python:status', async () => getBuildRuntimeStatus());
-
-}
-
-function sanitizePartName(name) {
-  const s = String(name || '').trim();
-  if (!/^[a-zA-Z0-9_\-]+$/.test(s)) return null;
-  return s;
-}
-
 
 /* ---------------- Project and Watchers ---------------- */
 
 async function openProject(projectPath, { runImmediately = false } = {}) {
-  const resolvedProjectPath = path.resolve(projectPath);
-  const nextKernel = readProjectKernel(resolvedProjectPath);
-  ensureRuntimeDirs(resolvedProjectPath);
-
-  stopWatcher();
-  currentProjectPath = resolvedProjectPath;
-  currentKernel = nextKernel;
-  partInfoCache.clear();
-  buildWaiters.clear();
-  partLoadedWaiters.clear();
-
-  saveLastProjectPath(resolvedProjectPath);
-  sendLog(`Project kernel: ${kernelMeta(currentKernel).label} (${currentKernel})`);
-
-  // Select the first model as the active model.
-  const parts = listPartsRaw(resolvedProjectPath, currentKernel);
-  activePart = parts.length ? parts[0].name : null;
-
-  sendToRenderer('PROJECT_OPENED', {
-    path: resolvedProjectPath,
-    kernel: currentKernel,
-    kernelLabel: kernelMeta(currentKernel).label,
-    sourceFile: kernelMeta(currentKernel).sourceFile,
-    sourceFiles: Object.values(sourceFileOptions(currentKernel)),
-    previewFormat: kernelMeta(currentKernel).previewFormat
-  });
-  sendToRenderer('PYTHON_STATUS', await getBuildRuntimeStatus(currentKernel));
-  broadcastPartsList();
-  rebuildAppMenu();
-
-  // Watch both part.* and asm.* source files for the current kernel.
-  const globs = MODEL_KINDS.map((kind) =>
-    path.join(resolvedProjectPath, MODELS_DIR, '*', modelSourceFilename(currentKernel, kind)).replace(/\\/g, '/')
-  );
-  watcher = chokidar.watch(globs, {
-    ignoreInitial: true,
-    awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 }
-  });
-
-  watcher.on('change', (filePath) => {
-    const entry = partNameFromPath(filePath);
-    if (!entry) return;
-    sendLog(`Model changed: models/${entry.name}/${entry.fileName}`);
-    scheduleBuild(entry.name);
-  });
-  watcher.on('add', (filePath) => {
-    const entry = partNameFromPath(filePath);
-    if (entry) {
-      broadcastPartsList();
-      scheduleBuild(entry.name);
-    }
-  });
-  watcher.on('unlink', () => {
-    broadcastPartsList();
-  });
-  watcher.on('error', (err) => sendLog(`watcher error: ${err.message}`, 'error'));
-
-  if (runImmediately && activePart) {
-    const cache = partCache(currentProjectPath, activePart);
-    if (fs.existsSync(cache)) {
-      // On project open, prefer existing cache for instant preview.
-      sendModelUpdated(activePart);
-    } else {
-      scheduleBuild(activePart);
-    }
-  }
-}
-
-function partNameFromPath(filePath) {
-  const rel = path.relative(currentProjectPath || '', filePath).replace(/\\/g, '/');
-  const ext = sourceExt(currentKernel).replace(/^\./, '');
-  const re = new RegExp(`^models/([^/]+)/(part|asm)\\.${ext}$`, 'i');
-  const m = re.exec(rel);
-  return m ? { name: m[1], kind: m[2], fileName: `${m[2]}${sourceExt(currentKernel)}` } : null;
+  return logicTools.openProject(projectPath, { runImmediately });
 }
 
 function stopWatcher() {
-  if (watcher) {
-    watcher.close().catch(() => {});
-    watcher = null;
-  }
+  return logicTools.stopWatcher();
 }
 
 async function selectPart(name) {
-  if (!currentProjectPath) return;
-  if (!resolveModelSource(currentProjectPath, name)) {
-    throw new Error(`Model does not exist: ${name}`);
-  }
-  activePart = name;
-  sendToRenderer('ACTIVE_PART_CHANGED', { name });
-  broadcastPartsList();
-
-  const cache = partCache(currentProjectPath, name);
-  if (fs.existsSync(cache)) {
-    sendModelUpdated(name);
-  } else {
-    scheduleBuild(name);
-  }
+  return logicTools.selectPart(name);
 }
 
 /* ---------------- Build ---------------- */
 
 function scheduleBuild(partName) {
-  if (!currentProjectPath || !partName) return;
-  if (buildingParts.has(partName)) {
-    pendingParts.add(partName);
-    return;
-  }
-  runBuild(partName);
+  return logicTools.scheduleBuild(partName);
 }
 
-async function runBuild(partName) {
-  if (!currentProjectPath || !partName) return;
-  buildingParts.add(partName);
-  pendingParts.delete(partName);
-  sendToRenderer('BUILD_STARTED', { part: partName });
-  broadcastPartsList();
-  return runBuildPython(partName);
-}
-
-async function runBuildPython(partName) {
-  const runtime = await detectBuildRuntime(currentKernel);
-  if (!runtime) {
-    buildingParts.delete(partName);
-    const msg = missingRuntimeMessage(currentKernel);
-    sendLog(msg, 'error');
-    sendToRenderer('BUILD_FAILED', { part: partName, message: msg, reason: 'NO_RUNTIME' });
-    sendToRenderer('PYTHON_STATUS', await getBuildRuntimeStatus(currentKernel));
-    broadcastPartsList();
-    resolveBuildWaiters(partName, { ok: false, part: partName, error: msg, reason: 'NO_RUNTIME' });
-    if (pendingParts.has(partName)) runBuild(partName);
-    return;
-  }
-
-  const cmd = buildRuntimeSpawn(runtime, ['--project', currentProjectPath, '--model', partName]);
-  sendLog(
-    runtime.kind === 'bundled-runner'
-      ? `[${partName}] Build using bundled build123d runtime`
-      : `[${partName}] Build using Python ${runtime.cmd} (v${runtime.version}) with ${kernelMeta(currentKernel).label}`
-  );
-
-  const child = spawn(cmd.cmd, cmd.args, {
-    cwd: currentProjectPath,
-    shell: false,
-    windowsHide: true
-  });
-
-  finalizeBuildChild(
-    child,
-    partName,
-    runtime.kind === 'bundled-runner' ? 'bundled build123d runtime' : 'electron/export_runner.py'
-  );
-}
-
-/**
- * Shared process cleanup:
- * stream stdout/stderr into logs, then resolve success or failure from cache output.
- */
-function finalizeBuildChild(child, partName, label) {
-  let stderr = '';
-  let stdout = '';
-  child.stdout?.on('data', (d) => {
-    const s = d.toString();
-    stdout += s;
-    sendLog(s.trimEnd());
-  });
-  child.stderr?.on('data', (d) => {
-    const s = d.toString();
-    stderr += s;
-    sendLog(s.trimEnd(), 'warn');
-  });
-
-  child.on('error', (err) => {
-    buildingParts.delete(partName);
-    const friendlyMsg = err.message;
-    sendLog(`[${partName}] ${label} failed: ${friendlyMsg}`, 'error');
-    sendToRenderer('BUILD_FAILED', { part: partName, message: friendlyMsg });
-    broadcastPartsList();
-    resolveBuildWaiters(partName, { ok: false, part: partName, error: friendlyMsg });
-  });
-
-  child.on('close', (code) => {
-    buildingParts.delete(partName);
-    const cacheFile = partCache(currentProjectPath, partName);
-    const cacheBase = path.basename(cacheFile);
-
-    if (code !== 0) {
-      sendLog(`[${partName}] ${label} exited with code ${code}`, 'error');
-      sendToRenderer('BUILD_FAILED', { part: partName, code, stderr });
-      resolveBuildWaiters(partName, {
-        ok: false, part: partName, exitCode: code, stderr: stderr.trim(), stdout: stdout.trim()
-      });
-    } else if (fs.existsSync(cacheFile)) {
-      const size = fs.statSync(cacheFile).size;
-      sendLog(`[${partName}] Model cache updated (${(size / 1024).toFixed(1)} KB)`);
-      sendToRenderer('PART_BUILT', { part: partName, size });
-      if (partName === activePart) sendModelUpdated(partName);
-      resolveBuildWaiters(partName, {
-        ok: true,
-        part: partName,
-        kernel: currentKernel,
-        cacheFile: cacheBase,
-        cacheSize: size,
-        faceCount: partInfoCache.get(partName)?.faceCount ?? null,
-        stdout: stdout.trim()
-      });
-    } else {
-      sendToRenderer('BUILD_FAILED', { part: partName, message: `${cacheBase} was not generated` });
-      resolveBuildWaiters(partName, {
-        ok: false, part: partName, error: `${cacheBase} was not generated`, stderr: stderr.trim()
-      });
-    }
-    broadcastPartsList();
-    if (pendingParts.has(partName)) runBuild(partName);
-  });
-}
-
-function resolveBuildWaiters(name, payload) {
-  const arr = buildWaiters.get(name);
-  if (!arr || arr.length === 0) return;
-  buildWaiters.delete(name);
-  for (const resolve of arr) {
-    try { resolve(payload); } catch {}
-  }
+async function ensurePartStlArtifact(partName) {
+  return exportTools.ensurePartStlArtifact(partName);
 }
 
 function resolvePartLoadedWaiters(name, payload) {
-  const arr = partLoadedWaiters.get(name);
-  if (!arr || arr.length === 0) return;
-  partLoadedWaiters.delete(name);
-  for (const resolve of arr) {
-    try { resolve(payload); } catch {}
-  }
-}
-
-function waitForPartLoaded(name, timeoutMs = 5000) {
-  return new Promise((resolve) => {
-    if (!partLoadedWaiters.has(name)) partLoadedWaiters.set(name, []);
-    const arr = partLoadedWaiters.get(name);
-    let done = false;
-    const onLoaded = (payload) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      resolve(payload);
-    };
-    const timer = setTimeout(() => {
-      if (done) return;
-      done = true;
-      const idx = arr.indexOf(onLoaded);
-      if (idx >= 0) arr.splice(idx, 1);
-      if (arr.length === 0) partLoadedWaiters.delete(name);
-      resolve(null);
-    }, timeoutMs);
-    arr.push(onLoaded);
-  });
-}
-
-async function refreshViewerCachesAfterBuild(partName) {
-  if (!currentProjectPath || !partName) return { cacheRefresh: 'skipped' };
-  if (!fs.existsSync(partCache(currentProjectPath, partName))) {
-    return { cacheRefresh: 'skipped', cacheRefreshReason: 'cache-missing' };
-  }
-  sendModelUpdated(partName);
-  const loaded = await waitForPartLoaded(partName, 5000);
-  if (!loaded) {
-    return { cacheRefresh: 'timeout' };
-  }
-  return {
-    cacheRefresh: 'ok',
-    faceCount: partInfoCache.get(partName)?.faceCount ?? null
-  };
+  return logicTools.resolvePartLoadedWaiters(name, payload);
 }
 
 function sendModelUpdated(partName) {
-  const cache = partCache(currentProjectPath, partName);
-  if (!fs.existsSync(cache)) return;
-  const ts = Date.now();
-  const size = fs.statSync(cache).size;
-  const meta = kernelMeta(currentKernel);
-  const ext = meta.cacheExt.replace(/^\./, '');
-  sendToRenderer('MODEL_UPDATED', {
-    part: partName,
-    url: `aicad://model/${encodeURIComponent(partName)}${meta.cacheExt}?t=${ts}`,
-    format: meta.previewFormat,
-    extension: ext,
-    kernel: currentKernel,
-    size,
-    ts
-  });
+  return logicTools.sendModelUpdated(partName);
 }
 
-async function runCommandCollect(cmd, args, opts = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, opts);
-    let stdout = '';
-    let stderr = '';
-    child.stdout?.on('data', (d) => { stdout += d.toString(); });
-    child.stderr?.on('data', (d) => { stderr += d.toString(); });
-    child.on('error', reject);
-    child.on('close', (code) => resolve({ code, stdout, stderr }));
-  });
-}
 
-async function runPythonExport(partName, format, outFile) {
-  const runtime = await detectBuildRuntime(currentKernel);
-  if (!runtime) throw new Error(missingRuntimeMessage(currentKernel));
-  const cmd = buildRuntimeSpawn(runtime, [
-    '--project',
-    currentProjectPath,
-    '--model',
-    partName,
-    '--export-format',
-    format,
-    '--output',
-    outFile
-  ]);
-  const ret = await runCommandCollect(cmd.cmd, cmd.args, {
-    cwd: currentProjectPath,
-    shell: false,
-    windowsHide: true
-  });
-  if (ret.code !== 0) {
-    throw new Error((ret.stderr || ret.stdout || `Python export failed with exit code ${ret.code}`).trim());
-  }
-}
-
-async function convertStlToObjOrGlb(stlPath, outPath, format) {
-  const THREE = require('three');
-  const [{ STLLoader }, { OBJExporter }, { GLTFExporter }] = await Promise.all([
-    import('three/examples/jsm/loaders/STLLoader.js'),
-    import('three/examples/jsm/exporters/OBJExporter.js'),
-    import('three/examples/jsm/exporters/GLTFExporter.js')
-  ]);
-
-  const data = fs.readFileSync(stlPath);
-  const loader = new STLLoader();
-  const geometry = loader.parse(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
-  geometry.computeVertexNormals();
-  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xb0b0b0 }));
-  const scene = new THREE.Scene();
-  scene.add(mesh);
-
-  if (format === 'obj') {
-    const objText = new OBJExporter().parse(scene);
-    fs.writeFileSync(outPath, objText, 'utf-8');
-    return;
-  }
-  if (format === 'glb') {
-    const exporter = new GLTFExporter();
-    const glbBuffer = await new Promise((resolve, reject) => {
-      exporter.parse(
-        scene,
-        (result) => resolve(Buffer.from(result)),
-        (err) => reject(err),
-        { binary: true }
-      );
-    });
-    fs.writeFileSync(outPath, glbBuffer);
-    return;
-  }
-  throw new Error(`Unsupported conversion format: ${format}`);
-}
-
-async function generateExportFile(partName, format, outFile) {
-  if (format === 'step') {
-    await runPythonExport(partName, 'step', outFile);
-    return;
-  }
-  if (format === 'stl') {
-    await runPythonExport(partName, 'stl', outFile);
-    return;
-  }
-
-  const tmpStl = path.join(os.tmpdir(), `aicad-export-${partName}-${Date.now()}.stl`);
-  try {
-    await runPythonExport(partName, 'stl', tmpStl);
-    await convertStlToObjOrGlb(tmpStl, outFile, format);
-  } finally {
-    try { fs.unlinkSync(tmpStl); } catch {}
-  }
+async function buildStlForModel(modelName, outputPath = null) {
+  return exportTools.buildStlForModel(modelName, outputPath);
 }
 
 async function exportPartByRequest(partName, format) {
-  if (!currentProjectPath) throw new Error('Open a project first.');
-  const cleanPart = String(partName || '').trim();
-  if (!cleanPart) throw new Error('Model name is required.');
-  if (!resolveModelSource(currentProjectPath, cleanPart, currentKernel)) {
-    throw new Error(`Model does not exist: ${cleanPart}`);
-  }
-
-  const fmt = ensureExportFormat(format);
-  const ext = exportExt(fmt);
-  const saveRes = await dialog.showSaveDialog(mainWindow, {
-    title: `Export ${cleanPart} as ${fmt.toUpperCase()}`,
-    defaultPath: path.join(currentProjectPath, `${cleanPart}${ext}`),
-    filters: [{ name: `${fmt.toUpperCase()} File`, extensions: [ext.replace(/^\./, '')] }]
-  });
-  if (saveRes.canceled || !saveRes.filePath) return { canceled: true };
-
-  sendLog(`[${cleanPart}] Exporting ${fmt.toUpperCase()}...`);
-  await generateExportFile(cleanPart, fmt, saveRes.filePath);
-  return { canceled: false, path: saveRes.filePath, format: fmt, part: cleanPart };
+  return exportTools.exportPartByRequest(partName, format);
 }
 
 /* ---------------- Broadcast ---------------- */
 
-function broadcastPartsList() {
-  if (!currentProjectPath) return;
-  sendToRenderer('PARTS_LIST', {
-    active: activePart,
-    kernel: currentKernel,
-    parts: listParts(currentProjectPath, currentKernel)
-  });
-}
-
 function sendToRenderer(type, payload) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('app:event', { type, payload });
-  }
+  return uiTools.sendToRenderer(type, payload);
 }
 
 function sendLog(message, level = 'info') {
-  sendToRenderer('LOG', { message, level, ts: Date.now() });
+  return uiTools.sendLog(message, level);
 }
 
 function getMcpStatusPayload() {
-  const li = mcp.getListenInfo?.() ?? null;
-  const fallbackUrl = `http://127.0.0.1:${MCP_PORT}/mcp`;
-  return {
-    running: mcp.isRunning(),
-    port: li?.port ?? MCP_PORT,
-    url: li?.url ?? fallbackUrl,
-    error: mcpStartError
-  };
+  return uiTools.getMcpStatusPayload();
 }
 
 function broadcastMcpStatus() {
-  sendToRenderer('MCP_STATUS', getMcpStatusPayload());
+  return uiTools.broadcastMcpStatus();
 }
 
 /* ---------------- MCP context ---------------- */
@@ -1312,92 +596,5 @@ function broadcastMcpStatus() {
  * mcp-server.js reads runtime state through this interface instead of touching main.js globals.
  */
 function buildMcpContext() {
-  return {
-    listParts() {
-      if (!currentProjectPath) return { error: 'No project is open in the preview app.', parts: [], active: null };
-      const meta = kernelMeta(currentKernel);
-      const list = listParts(currentProjectPath, currentKernel).map((p) => {
-        const info = partInfoCache.get(p.name);
-        return {
-          ...p,
-          hasScreenshot: fs.existsSync(partPng(currentProjectPath, p.name)),
-          hasInfo: !!info,
-          faceCount: info?.faceCount ?? null
-        };
-      });
-      return {
-        projectPath: currentProjectPath,
-        kernel: currentKernel,
-        kernelLabel: meta.label,
-        sourceFile: meta.sourceFile,
-        sourceFiles: Object.values(sourceFileOptions(currentKernel)),
-        previewFormat: meta.previewFormat,
-        supportsFaceIndex: meta.previewFormat === 'BREP',
-        active: activePart,
-        parts: list
-      };
-    },
-
-    async getPartInfo(name) {
-      if (!currentProjectPath) return { error: 'No project is open in the preview app.' };
-      if (!resolveModelSource(currentProjectPath, name)) {
-        return { error: `Model does not exist: ${name}` };
-      }
-      const info = partInfoCache.get(name);
-      const cache = partCache(currentProjectPath, name);
-      const src = partSource(currentProjectPath, name);
-      const source = resolveModelSource(currentProjectPath, name);
-      const cacheStale = fs.existsSync(cache) && fs.existsSync(src)
-        && fs.statSync(src).mtimeMs > fs.statSync(cache).mtimeMs;
-      if (!info) {
-        return {
-          name,
-          kernel: currentKernel,
-          error:
-            `Geometry info for "${name}" is not cached yet. ` +
-            `Run rebuild_model({"model":"${name}"}) first, then verify status with list_models and try again.`,
-          cacheStale
-        };
-      }
-      return {
-        name,
-        kernel: currentKernel,
-        kind: source?.kind || null,
-        sourceFile: source?.fileName || null,
-        description: readPartDescription(currentProjectPath, name, currentKernel),
-        faceCount: info.faceCount,
-        bbox: info.bbox,
-        cacheStale,
-        capturedAt: new Date(info.capturedAt).toISOString()
-      };
-    },
-
-    async getPartScreenshot(name, view = 'iso') {
-      if (!currentProjectPath) return null;
-      if (!resolveModelSource(currentProjectPath, name)) return null;
-      try {
-        await selectPart(name);
-      } catch {
-        return null;
-      }
-      const p = partPng(currentProjectPath, name, view);
-      if (!fs.existsSync(p)) return null;
-      return fs.readFileSync(p);
-    },
-
-    async rebuildPartSync(name) {
-      if (!currentProjectPath) return { ok: false, error: 'No project is open in the preview app.' };
-      if (!resolveModelSource(currentProjectPath, name)) {
-        return { ok: false, error: `Model does not exist: ${name}` };
-      }
-      const result = await new Promise((resolve) => {
-        if (!buildWaiters.has(name)) buildWaiters.set(name, []);
-        buildWaiters.get(name).push(resolve);
-        scheduleBuild(name);
-      });
-      if (!result?.ok) return result;
-      const refreshed = await refreshViewerCachesAfterBuild(name);
-      return { ...result, ...refreshed };
-    }
-  };
+  return logicTools.buildMcpContext();
 }

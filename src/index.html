@@ -25,7 +25,6 @@
                 <option value="step">STEP</option>
                 <option value="stl">STL</option>
                 <option value="obj">OBJ</option>
-                <option value="glb">GLB</option>
               </select>
               <button id="btn-export-active" class="link parts-export-link" type="button">Export</button>
             </div>
@@ -129,12 +128,17 @@
     <!-- New part modal -->
     <div id="modal-part" class="modal hidden">
       <div class="modal-body">
-        <h3>New Part</h3>
+        <h3>New Model</h3>
         <p class="muted" style="font-size:12px;margin:-6px 0 8px 0">
-          This creates <code>parts/&lt;name&gt;/part.py</code> and
+          This creates <code>models/&lt;name&gt;/part.py</code> or <code>models/&lt;name&gt;/asm.urdf</code> and
           <code>README.md</code>. Name can only contain letters, numbers, underscores, and hyphens.
         </p>
-        <label>Part name</label>
+        <label>Model type</label>
+        <select id="select-model-kind">
+          <option value="part">Part (part.py)</option>
+          <option value="asm">Assembly (asm.urdf)</option>
+        </select>
+        <label>Model name</label>
         <input id="input-part-name" type="text" placeholder="bracket" />
         <label>One-line description (optional, written to README.md)</label>
         <input id="input-part-desc" type="text" placeholder="Mounting bracket for XX" />

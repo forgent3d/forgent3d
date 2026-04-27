@@ -6,7 +6,7 @@ export_runner.py - Auto-managed by AI CAD Companion Viewer (do not edit manually
 Responsibilities:
   * Accept --model <name> (and legacy --part <name>);
   * Optionally support on-demand exports via --export-format/--output (step/stl/brep);
-  * Load models/<name>/part.py or models/<name>/asm.py and read a geometry object named result;
+  * Load models/<name>/part.py and read a geometry object named result;
   * Support both build123d and cadquery, exporting to .cache/<name>.brep via OCCT APIs;
   * Let the frontend parse BREP via occt-import-js for geometry inspection.
 """
@@ -19,7 +19,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = HERE
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 CACHE_DIR = os.path.join(PROJECT_ROOT, ".cache")
-MODEL_KINDS = ("asm", "part")
+MODEL_KINDS = ("part",)
 
 
 def _looks_like_cadquery(obj) -> bool:
@@ -135,7 +135,7 @@ def _build_namespace(model_name: str):
     source_path = _resolve_model_source(model_name)
     if not source_path:
         print(
-            f"[export_runner] models/{model_name}/part.py or models/{model_name}/asm.py does not exist",
+            f"[export_runner] models/{model_name}/part.py does not exist",
             file=sys.stderr
         )
         return None, None, 2

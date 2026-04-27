@@ -14,7 +14,7 @@ function sourceFileOptions(kernel) {
   const ext = sourceExtension(meta);
   return {
     part: `part${ext}`,
-    asm: `asm${ext}`
+    asm: 'asm.urdf'
   };
 }
 

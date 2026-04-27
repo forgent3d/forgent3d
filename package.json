@@ -44,6 +44,7 @@
     "node-pty": "^1.1.0",
     "occt-import-js": "^0.0.23",
     "three": "^0.168.0",
+    "urdf-loader": "^0.12.7",
     "zod": "^4.3.6"
   },
   "build": {

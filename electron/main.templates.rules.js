@@ -29,10 +29,18 @@ const CORE_RULES_TEMPLATE = `# AI CAD Project Rules ({label}){agentHintBlock}{co
 When user says "make a gear" / "make a bracket", the deliverable is {language} geometry code, not images:
 
 - Build solid geometry in \`models/<model_name>/{sourceFileHint}\` using **{label}** and assign to global \`result\`.
+- For \`asm.urdf\`, visual geometry must reference exported meshes from existing part models; do not use URDF primitive shapes (\`box/cylinder/sphere\`) for final assembly deliverables.
 - Do not create or rely on \`models/README.md\`; the file tree and UI are the project overview. Skip creating a README entirely unless the user explicitly requests documentation for a complex project.
 - Do not ask user to create PNG/JPG as a substitute for CAD source.
 - Preview flow is always code -> export_runner -> {cacheExt}; sequence is edit -> rebuild -> (optional) screenshot.
 - **Silent Validation & Brief Response:** Validate your geometry silently using MCP tools. Do not narrate your validation steps, traceback, or internal reasoning to the user. Say "Model generated" and show the preview, only speaking up if you hit a design blocker requiring user input.
+
+## Model Type Decision (explicit)
+
+- Use \`part.py\` for a single rigid body (brackets, gears, housings, standalone components).
+- Use \`asm.urdf\` for multi-body systems, articulated structures, or any model composed from multiple reusable sub-parts.
+- If intent implies multiple distinct bodies or kinematic relationships, prefer \`asm.urdf\` by default.
+- In \`asm.urdf\`, each visual mesh must come from an existing part export (\`models/<part>/<part>.stl\`), then connect links via joints.
 
 ## Accuracy Contract (mandatory)
 
@@ -96,7 +104,7 @@ MCP is provided by **AI CAD Companion Viewer** while it is running. Any IDE-side
 |  |- <model_name>/
 |  |  |- {sourceFileHint}      (model source, must define global result)
 |  |  |- README.md             (model description)
-|- .cache/                     (viewer artifacts *{cacheExt}, auto-generated, ignore in git)
+|- .cache/                     (viewer screenshots and transient artifacts, auto-generated, ignore in git)
 \`\`\`
 
 {mustFollow}
@@ -116,7 +124,7 @@ function buildVars(kernel, agentHint = '') {
   }
   const bundle = kernelPromptBundle(k);
   const ext = meta.sourceFile.replace(/^[^.]+/, '');
-  const sourceFileHint = `part${ext} or asm${ext}`;
+  const sourceFileHint = `part${ext} or asm.urdf`;
   return {
     label: meta.label,
     language: meta.language,
