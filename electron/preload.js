@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('aicad', {
   rebuildPart: (name) => ipcRenderer.invoke('parts:rebuild', name),
   revealPart: (name) => ipcRenderer.invoke('parts:reveal', name),
   exportPart: (name, format) => ipcRenderer.invoke('parts:export', { name, format }),
+  getParams: (name) => ipcRenderer.invoke('params:get', name),
+  saveParams: (name, text) => ipcRenderer.invoke('params:save', { name, text }),
 
   notifyPartLoaded: (payload) => ipcRenderer.invoke('viewer:partLoaded', payload),
 

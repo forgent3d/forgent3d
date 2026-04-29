@@ -2,7 +2,6 @@
 
 const { EXPORT_RUNNER_PYTHON } = require('./main.templates.export-runner');
 const { assertKernel, kernelMeta } = require('./main.templates.kernel');
-const { kernelProjectPromptBundle } = require('./main.templates.prompts.index');
 
 function sourceExtension(meta) {
   const m = /(\.[^.]+)$/.exec(meta.sourceFile);
@@ -14,13 +13,14 @@ function sourceFileOptions(kernel) {
   const ext = sourceExtension(meta);
   return {
     part: `part${ext}`,
-    asm: 'asm.urdf'
+    asm: 'asm.xacro',
+    params: 'params.json'
   };
 }
 
 function cursorMcpJson(MCP_PORT) {
   return JSON.stringify({
-    mcpServers: { aicad: { url: `http://127.0.0.1:${MCP_PORT}/mcp` } }
+    mcpServers: { aicad: { type: 'http', url: `http://127.0.0.1:${MCP_PORT}/mcp` } }
   }, null, 2) + '\n';
 }
 
@@ -45,11 +45,100 @@ function codexConfigToml(MCP_PORT) {
   ].join('\n');
 }
 
+function build123dModelSourceTemplate(kind, _name, desc) {
+  const fileName = kind === 'asm' ? 'asm.xacro' : 'part.py';
+  const kindLabel = kind === 'asm' ? 'assembly' : 'part';
+  if (kind === 'asm') {
+    return [
+      `<!-- ${desc}`,
+      '',
+      'This file is managed by AI CAD Companion Viewer.',
+      `This is the primary ${kindLabel} source: \`${fileName}\`.`,
+      'Tunable values live in params.json and are substituted into ${...} expressions before preview.',
+      'Reference exported meshes from parts in this project and compose links/joints here.',
+      '-->',
+      '<robot name="${robotName}" xmlns:xacro="http://www.ros.org/wiki/xacro">',
+      '  <link name="base_link">',
+      '    <visual>',
+      '      <origin xyz="${parts.cuboid.origin.xyz}" rpy="${parts.cuboid.origin.rpy}"/>',
+      '      <geometry>',
+      '        <mesh filename="${parts.cuboid.mesh}" scale="${parts.cuboid.scale}"/>',
+      '      </geometry>',
+      '    </visual>',
+      '  </link>',
+      '</robot>',
+      ''
+    ].join('\n');
+  }
+  return [
+    `"""${desc}`,
+    '',
+    'This file is managed by AI CAD Companion Viewer.',
+    `This is the primary ${kindLabel} source: \`${fileName}\`.`,
+    'Keep a global variable named `result` at the end of the file.',
+    'Saving this file automatically rebuilds and refreshes the 3D preview.',
+    '"""',
+    'import json',
+    'from pathlib import Path',
+    'from build123d import *',
+    '',
+    '# === Parameters ===',
+    'PARAMS = json.loads((Path(__file__).with_name("params.json")).read_text(encoding="utf-8"))',
+    'length = float(PARAMS["length"])',
+    'width = float(PARAMS["width"])',
+    'height = float(PARAMS["height"])',
+    '',
+    '# === Derived Parameters ===',
+    'half_length = length / 2',
+    'half_width = width / 2',
+    'half_height = height / 2',
+    '',
+    '# === Coordinate Frame ===',
+    '# +X: right, +Y: back, +Z: up.',
+    '',
+    '# === Geometry ===',
+    'def build():',
+    '    # For simple parts, build everything in one pass.',
+    '    # For complex parts, build primary structure first, validate, then add details.',
+    '    with BuildPart() as bp:',
+    '        add(Box(length, width, height))',
+    '    return bp.part',
+    '',
+    'result = build()',
+    ''
+  ].join('\n');
+}
+
 function modelSourceTemplate(kernel, kind, name, description) {
-  const k = assertKernel(kernel);
+  assertKernel(kernel);
   const kindLabel = kind === 'asm' ? 'assembly' : 'part';
   const desc = description || `${name} ${kindLabel}`;
-  return kernelProjectPromptBundle(k).modelSourceTemplate(kind, name, desc);
+  return build123dModelSourceTemplate(kind, name, desc);
+}
+
+function modelParamsTemplate(kind, _name, description) {
+  if (kind === 'asm') {
+    return JSON.stringify({
+      description: description || 'Assembly parameters',
+      robotName: 'assembly',
+      parts: {
+        cuboid: {
+          mesh: '../cuboid/cuboid.stl',
+          scale: [1, 1, 1],
+          origin: {
+            xyz: [0, 0, 0],
+            rpy: [0, 0, 0]
+          }
+        }
+      }
+    }, null, 2) + '\n';
+  }
+  return JSON.stringify({
+    description: description || 'Part parameters',
+    length: 40.0,
+    width: 30.0,
+    height: 20.0
+  }, null, 2) + '\n';
 }
 
 function modelReadmeTemplate(kernel, kind, name, description) {
@@ -58,14 +147,13 @@ function modelReadmeTemplate(kernel, kind, name, description) {
   const activeSource = kind === 'asm' ? fileNames.asm : fileNames.part;
   const kindLabel = kind === 'asm' ? 'assembly' : 'part';
   const desc = description || `TODO: add one sentence describing ${name}.`;
-  const faceNote = kernelProjectPromptBundle(assertKernel(kernel)).modelReadmeFaceNote(meta);
 
   return [
     `# ${name}`,
     '',
     desc,
     '',
-    `> Kernel: **${meta.label}** | Model type: **${kindLabel}** | Source: \`${activeSource}\` | Preview: \`${meta.previewFormat}\``,
+    `> Kernel: **${meta.label}** | Model type: **${kindLabel}** | Source: \`${activeSource}\` + \`params.json\` | Preview: \`${meta.previewFormat}\``,
     '> This file is scaffold-first: keep the summary, parameter table, and validation notes aligned with the source file before large geometry changes.',
     '',
     '## Parameters',
@@ -75,7 +163,6 @@ function modelReadmeTemplate(kernel, kind, name, description) {
     '| WIDTH | mm | 30 | Width |',
     '| HEIGHT | mm | 20 | Height |',
     '',
-    faceNote,
     '',
     '## Validation',
     '- Rebuild after geometry edits.',
@@ -110,6 +197,7 @@ module.exports = {
   claudeMcpJson,
   codexConfigToml,
   modelSourceTemplate,
+  modelParamsTemplate,
   modelReadmeTemplate,
   exportRunnerTemplate,
   exportRunnerFilename,

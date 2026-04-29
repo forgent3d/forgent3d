@@ -11,6 +11,12 @@ export function initUI(viewer) {
     spinner: document.getElementById('status-spinner'),
     modelNameBadge: document.getElementById('model-name-badge'),
     viewCubeHost: document.getElementById('viewcube-host'),
+    sectionPanel: document.getElementById('section-panel'),
+    sectionEnabled: document.getElementById('section-enabled'),
+    sectionAxis: document.getElementById('section-axis'),
+    sectionSlider: document.getElementById('section-slider'),
+    ghostEnabled: document.getElementById('ghost-enabled'),
+    sectionReset: document.getElementById('section-reset'),
     btnToggleLeft: document.getElementById('btn-toggle-left'),
     btnToggleRight: document.getElementById('btn-toggle-right'),
     btnToggleLeftHandle: document.getElementById('btn-toggle-left-handle'),
@@ -32,6 +38,10 @@ export function initUI(viewer) {
     partsList: document.getElementById('parts-list'),
     selectExportFormat: document.getElementById('select-export-format'),
     btnExportActive: document.getElementById('btn-export-active'),
+    paramsPanel: document.getElementById('params-panel'),
+    paramsEditor: document.getElementById('params-editor'),
+    paramsStatus: document.getElementById('params-status'),
+    btnParamsRevert: document.getElementById('btn-params-revert'),
     modalPart: document.getElementById('modal-part'),
     inputPartName: document.getElementById('input-part-name'),
     inputPartDesc: document.getElementById('input-part-desc'),
@@ -90,7 +100,16 @@ export function initUI(viewer) {
   let currentProject = null;
   let currentKernel = null;
   let activePart = null;
+  let loadedPart = null;
   let partsCache = [];
+  let paramsModel = null;
+  let paramsOriginal = null;
+  let paramsSaved = null;
+  let paramsWorking = null;
+  let paramsDirty = false;
+  let paramsLoadSeq = 0;
+  let paramsSaveTimer = null;
+  let paramsSaving = false;
   let leftSidebarVisible = false;
   let rightRailVisible = true;
 
@@ -150,12 +169,45 @@ export function initUI(viewer) {
     }
   }
 
+  function renderSectionPanel() {
+    if (!el.sectionPanel) return;
+    const hasProject = !!currentProject;
+    const hasModel = typeof viewer.hasModel === 'function' ? viewer.hasModel() : !!activePart;
+    el.sectionPanel.classList.toggle('hidden', !hasProject);
+    const section = typeof viewer.getSectionState === 'function'
+      ? viewer.getSectionState()
+      : { enabled: false, normalized: 0 };
+    if (el.sectionEnabled) {
+      el.sectionEnabled.checked = !!section.enabled;
+      el.sectionEnabled.disabled = !hasModel;
+    }
+    if (el.sectionAxis) {
+      el.sectionAxis.value = section.axis || 'y';
+      el.sectionAxis.disabled = !hasModel || !section.enabled;
+    }
+    if (el.sectionSlider) {
+      el.sectionSlider.value = String(Math.round((Number(section.normalized) || 0) * 100));
+      el.sectionSlider.disabled = !hasModel || !section.enabled;
+    }
+    if (el.ghostEnabled) {
+      el.ghostEnabled.checked = !!section.ghost;
+      el.ghostEnabled.disabled = !hasModel;
+    }
+    if (el.sectionReset) {
+      el.sectionReset.disabled = !hasModel || !section.enabled;
+    }
+  }
+
   function setProject(p, meta = null) {
     currentProject = p;
     currentKernel = meta?.kernel || null;
-    if (!p) activePart = null;
+    if (!p) {
+      activePart = null;
+      loadedPart = null;
+    }
     el.emptyHint.classList.toggle('hidden', !!p);
     el.partsPanel.style.display = p ? '' : 'none';
+    if (el.paramsPanel) el.paramsPanel.style.display = p ? '' : 'none';
     el.agentBtns.forEach((btn) => { btn.disabled = !p; });
     if (el.agentBarHint) {
       el.agentBarHint.textContent = p ? 'Open project and launch agent in a new terminal window' : 'Available after opening a project';
@@ -164,9 +216,11 @@ export function initUI(viewer) {
     renderModelNameBadge();
     syncExportControls();
     renderViewCube();
+    renderSectionPanel();
+    if (!p) setParamsEditorIdle('Select a model to edit params.json');
   }
 
-  /* ---------------- Parts List ---------------- */
+  /* ---------------- Models List ---------------- */
   function renderPartsList() {
     el.partsList.innerHTML = '';
     if (!partsCache.length) {
@@ -209,7 +263,7 @@ export function initUI(viewer) {
       });
       const bBuild = document.createElement('button');
       bBuild.className = 'icon-btn';
-      bBuild.title = 'Rebuild this part';
+      bBuild.title = 'Rebuild this model';
       bBuild.textContent = '↻';
       bBuild.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -221,9 +275,247 @@ export function initUI(viewer) {
       li.appendChild(main);
       li.appendChild(actions);
       li.addEventListener('click', () => {
-        if (p.name !== activePart) api.selectPart(p.name);
+        if (p.name === activePart) return;
+        if (paramsDirty) {
+          clearPendingParamsSave();
+          saveParamsEditor();
+        }
+        api.selectPart(p.name);
       });
       el.partsList.appendChild(li);
+    }
+  }
+
+  function setParamsStatus(text, state = '') {
+    if (!el.paramsStatus) return;
+    el.paramsStatus.textContent = text || '';
+    el.paramsStatus.classList.toggle('error', state === 'error');
+    el.paramsStatus.classList.toggle('ok', state === 'ok');
+  }
+
+  function setParamsDirty(next) {
+    paramsDirty = !!next;
+    if (el.btnParamsRevert) el.btnParamsRevert.disabled = !currentProject || !activePart || !paramsDirty;
+  }
+
+  function clearPendingParamsSave() {
+    if (!paramsSaveTimer) return;
+    clearTimeout(paramsSaveTimer);
+    paramsSaveTimer = null;
+  }
+
+  function cloneParams(value) {
+    return JSON.parse(JSON.stringify(value ?? {}));
+  }
+
+  function collectNumericParams(value, prefix = []) {
+    if (!value || typeof value !== 'object') return [];
+    const rows = [];
+    for (const [key, child] of Object.entries(value)) {
+      if (prefix.length === 0 && key === 'parts') continue;
+      const path = [...prefix, key];
+      if (typeof child === 'number' && Number.isFinite(child)) {
+        rows.push({ path, value: child });
+      } else if (child && typeof child === 'object' && !Array.isArray(child)) {
+        rows.push(...collectNumericParams(child, path));
+      }
+    }
+    return rows;
+  }
+
+  function setParamValue(root, path, value) {
+    let current = root;
+    for (let i = 0; i < path.length - 1; i++) current = current[path[i]];
+    current[path[path.length - 1]] = value;
+  }
+
+  function sliderSpec(baseValue, currentValue = baseValue) {
+    const base = Number(baseValue) || 0;
+    const current = Number(currentValue) || 0;
+    const abs = Math.abs(base);
+    const span = abs > 0 ? abs : 100;
+    const min = Math.min(base < 0 ? base - span : 0, current);
+    const max = Math.max(base > 0 ? base + span : span, current);
+    const step = span >= 100 ? 1 : span >= 10 ? 0.1 : span >= 1 ? 0.01 : 0.001;
+    return { min, max, step };
+  }
+
+  function renderParamsEditor() {
+    if (!el.paramsEditor) return;
+    el.paramsEditor.replaceChildren();
+    el.paramsEditor.classList.toggle('disabled', !paramsWorking);
+    if (!paramsWorking) return;
+
+    const rows = collectNumericParams(paramsWorking);
+    if (!rows.length) {
+      const empty = document.createElement('div');
+      empty.className = 'param-empty';
+      empty.textContent = 'No numeric params outside parts';
+      el.paramsEditor.appendChild(empty);
+      return;
+    }
+
+    for (const item of rows) {
+      const row = document.createElement('div');
+      row.className = 'param-row';
+      const head = document.createElement('div');
+      head.className = 'param-head';
+
+      const label = document.createElement('div');
+      label.className = 'param-name';
+      label.title = item.path.join('.');
+      label.textContent = item.path.join('.');
+
+      const input = document.createElement('input');
+      input.className = 'param-value';
+      input.type = 'number';
+      input.value = String(item.value);
+
+      const range = document.createElement('input');
+      range.className = 'param-range';
+      range.type = 'range';
+      const baseValue = paramsOriginal ? item.path.reduce((current, key) => current?.[key], paramsOriginal) : item.value;
+      const spec = sliderSpec(baseValue, item.value);
+      range.min = String(spec.min);
+      range.max = String(spec.max);
+      range.step = String(spec.step);
+      range.value = String(item.value);
+
+      const applyValue = (raw, source) => {
+        const next = Number(raw);
+        if (!Number.isFinite(next)) return;
+        setParamValue(paramsWorking, item.path, next);
+        if (source !== input) input.value = String(next);
+        if (source !== range) {
+          const currentMin = Number(range.min);
+          const currentMax = Number(range.max);
+          if (next < currentMin || next > currentMax) {
+            const nextSpec = sliderSpec(baseValue, next);
+            range.min = String(nextSpec.min);
+            range.max = String(nextSpec.max);
+            range.step = String(nextSpec.step);
+          }
+          range.value = String(next);
+        }
+        const dirty = JSON.stringify(paramsWorking) !== JSON.stringify(paramsOriginal);
+        setParamsDirty(dirty);
+        if (dirty) {
+          setParamsStatus(`Updating ${paramsModel}/params.json ...`);
+          scheduleParamsAutoSave();
+        } else {
+          clearPendingParamsSave();
+          setParamsStatus(`Editing ${paramsModel}/params.json`);
+        }
+      };
+
+      range.addEventListener('input', () => applyValue(range.value, range));
+      input.addEventListener('input', () => applyValue(input.value, input));
+
+      head.appendChild(label);
+      head.appendChild(input);
+      row.appendChild(head);
+      row.appendChild(range);
+      el.paramsEditor.appendChild(row);
+    }
+  }
+
+  function scheduleParamsAutoSave() {
+    clearPendingParamsSave();
+    if (!currentProject || !activePart || !paramsWorking) return;
+    paramsSaveTimer = setTimeout(() => {
+      paramsSaveTimer = null;
+      saveParamsEditor();
+    }, 350);
+  }
+
+  function setParamsEditorIdle(message) {
+    clearPendingParamsSave();
+    paramsModel = null;
+    paramsOriginal = null;
+    paramsSaved = null;
+    paramsWorking = null;
+    setParamsDirty(false);
+    renderParamsEditor();
+    setParamsStatus(message || 'Select a model to edit params.json');
+  }
+
+  async function refreshParamsEditor({ force = false } = {}) {
+    if (!currentProject || !activePart || !el.paramsEditor) {
+      setParamsEditorIdle('Select a model to edit params.json');
+      return;
+    }
+    if (paramsModel === activePart && !force) return;
+    const seq = ++paramsLoadSeq;
+    const target = activePart;
+    paramsWorking = null;
+    renderParamsEditor();
+    setParamsDirty(false);
+    setParamsStatus(`Loading ${target}/params.json ...`);
+    try {
+      const res = await api.getParams(target);
+      if (seq !== paramsLoadSeq || target !== activePart) return;
+      paramsModel = target;
+      paramsOriginal = JSON.parse(res?.text || '{}');
+      paramsSaved = cloneParams(paramsOriginal);
+      paramsWorking = cloneParams(paramsOriginal);
+      renderParamsEditor();
+      setParamsDirty(false);
+      setParamsStatus(res?.exists ? `Editing ${target}/params.json` : `params.json will be created for ${target}`);
+    } catch (e) {
+      if (seq !== paramsLoadSeq) return;
+      paramsModel = target;
+      paramsOriginal = null;
+      paramsSaved = null;
+      paramsWorking = null;
+      renderParamsEditor();
+      setParamsDirty(false);
+      setParamsStatus(e.message || String(e), 'error');
+    }
+  }
+
+  function revertParamsEditor() {
+    if (!paramsModel || !paramsOriginal) return;
+    clearPendingParamsSave();
+    paramsWorking = cloneParams(paramsOriginal);
+    renderParamsEditor();
+    setParamsDirty(JSON.stringify(paramsWorking) !== JSON.stringify(paramsSaved));
+    setParamsStatus(`Reverting ${paramsModel}/params.json ...`);
+    saveParamsEditor({ keepOriginal: true });
+  }
+
+  async function saveParamsEditor({ keepOriginal = false } = {}) {
+    if (!currentProject || !activePart || !paramsWorking) return;
+    if (paramsSaving) return;
+    const target = activePart;
+    paramsSaving = true;
+    setParamsStatus(`Saving ${target}/params.json ...`);
+    try {
+      const snapshot = cloneParams(paramsWorking);
+      const text = JSON.stringify(snapshot, null, 2) + '\n';
+      const res = await api.saveParams(target, text);
+      if (target !== activePart) {
+        paramsSaving = false;
+        return;
+      }
+      paramsModel = target;
+      paramsSaved = JSON.parse(res?.text || text);
+      if (!paramsOriginal) paramsOriginal = cloneParams(paramsSaved);
+      if (JSON.stringify(paramsWorking) !== JSON.stringify(snapshot)) {
+        paramsSaving = false;
+        setParamsDirty(JSON.stringify(paramsWorking) !== JSON.stringify(paramsOriginal));
+        setParamsStatus(`Updating ${target}/params.json ...`);
+        scheduleParamsAutoSave();
+        return;
+      }
+      paramsWorking = cloneParams(paramsSaved);
+      setParamsDirty(JSON.stringify(paramsWorking) !== JSON.stringify(paramsOriginal));
+      paramsSaving = false;
+      setParamsStatus(`Saved ${target}/params.json; rebuilding model`, 'ok');
+    } catch (e) {
+      paramsSaving = false;
+      renderParamsEditor();
+      setParamsDirty(true);
+      setParamsStatus(e.message || String(e), 'error');
     }
   }
 
@@ -236,10 +528,22 @@ export function initUI(viewer) {
       renderPartsList();
       renderModelNameBadge();
       syncExportControls();
+      refreshParamsEditor();
     } catch (e) {
-      appendLog(`Failed to read parts list: ${e.message}`, 'error');
+      appendLog(`Failed to read models list: ${e.message}`, 'error');
     }
   }
+
+  if (el.paramsEditor) {
+    el.paramsEditor.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        clearPendingParamsSave();
+        saveParamsEditor();
+      }
+    });
+  }
+  if (el.btnParamsRevert) el.btnParamsRevert.addEventListener('click', revertParamsEditor);
 
   if (el.btnExportActive) {
     el.btnExportActive.addEventListener('click', async () => {
@@ -344,6 +648,42 @@ export function initUI(viewer) {
       applyLayoutVisibility();
     });
   }
+  if (el.sectionEnabled) {
+    el.sectionEnabled.addEventListener('change', () => {
+      if (typeof viewer.setSectionEnabled === 'function') {
+        viewer.setSectionEnabled(el.sectionEnabled.checked);
+      }
+      renderSectionPanel();
+    });
+  }
+  if (el.sectionSlider) {
+    el.sectionSlider.addEventListener('input', () => {
+      if (typeof viewer.setSectionNormalized === 'function') {
+        viewer.setSectionNormalized(Number(el.sectionSlider.value) / 100);
+      }
+    });
+  }
+  if (el.sectionAxis) {
+    el.sectionAxis.addEventListener('change', () => {
+      if (typeof viewer.setSectionAxis === 'function') {
+        viewer.setSectionAxis(el.sectionAxis.value);
+      }
+    });
+  }
+  if (el.ghostEnabled) {
+    el.ghostEnabled.addEventListener('change', () => {
+      if (typeof viewer.setGhostEnabled === 'function') {
+        viewer.setGhostEnabled(el.ghostEnabled.checked);
+      }
+      renderSectionPanel();
+    });
+  }
+  if (el.sectionReset) {
+    el.sectionReset.addEventListener('click', () => {
+      if (typeof viewer.resetSection === 'function') viewer.resetSection();
+      renderSectionPanel();
+    });
+  }
   /* ============================================================
      Embedded terminal panel
      ============================================================ */
@@ -351,8 +691,7 @@ export function initUI(viewer) {
   const AGENT_LABELS = {
     codex:    '⚡ Codex',
     claude:   '◆ Claude Code',
-    cli:      '▷ Cursor CLI',
-    gemini:   '✦ Gemini CLI'
+    cli:      '▷ Cursor CLI'
   };
 
   let termPanel = null;      // instance returned by createTerminalPanel
@@ -617,12 +956,16 @@ export function initUI(viewer) {
         renderPartsList();
         renderModelNameBadge();
         syncExportControls();
+        renderSectionPanel();
+        refreshParamsEditor();
         break;
       case 'ACTIVE_PART_CHANGED':
         activePart = payload?.name || null;
         renderPartsList();
         renderModelNameBadge();
         syncExportControls();
+        renderSectionPanel();
+        refreshParamsEditor({ force: true });
         break;
       case 'BUILD_STARTED':
         setStatus(payload?.part ? `Building ${payload.part} ...` : 'Building...', true);
@@ -639,7 +982,7 @@ export function initUI(viewer) {
         }
         break;
       case 'PART_BUILT':
-        // Refresh cache size/time in parts list only
+        // Refresh cache size/time in models list only
         refreshParts();
         break;
       case 'MODEL_UPDATED': {
@@ -650,7 +993,7 @@ export function initUI(viewer) {
         const partLabel = payload.part ? `[${payload.part}] ` : '';
         const fmt = (payload.format || 'BREP').toUpperCase();
         setStatus(
-          `${partLabel}${fmt === 'URDF' ? 'Parsing URDF' : (fmt === 'STL' ? 'Parsing STL' : 'OCCT parsing BREP')} ...`,
+          `${partLabel}${fmt === 'XACRO' ? 'Loading XACRO' : (fmt === 'STL' ? 'Parsing STL' : 'OCCT parsing BREP')} ...`,
           true
         );
         const sizeKB = payload.size ? (payload.size / 1024).toFixed(1) + ' KB' : '';
@@ -659,16 +1002,19 @@ export function initUI(viewer) {
           appendLog('Main process did not return a URL, skipping load', 'warn');
           break;
         }
-        viewer.loadModel(url, (msg) => appendLog(msg), { format: fmt })
+        const preserveView = !!payload.part && payload.part === loadedPart && typeof viewer.hasModel === 'function' && viewer.hasModel();
+        viewer.loadModel(url, (msg) => appendLog(msg), { format: fmt, paramsUrl: payload.paramsUrl, preserveView })
           .then(async (partInfo) => {
+            if (payload?.part) loadedPart = payload.part;
             const { faceCount } = partInfo;
-            const tail = fmt === 'URDF'
-              ? 'URDF assembly'
+            const tail = fmt === 'XACRO'
+              ? 'XACRO assembly'
               : (fmt === 'STL' ? 'STL mesh' : `${faceCount} BREP faces`);
             setStatus(
               `${partLabel}Model ready${sizeKB ? ' · ' + sizeKB : ''} · ${tail}`
             );
             renderViewCube();
+            renderSectionPanel();
             // Send part info and single-view screenshots back to main process (MCP cache)
             try {
               // Wait one frame so OrbitControls and renderer.setSize first frame is stable
@@ -694,6 +1040,7 @@ export function initUI(viewer) {
             setStatus('Model load failed');
             appendLog(`${partLabel}Failed to load ${fmt}: ${e.message || e}`, 'error');
             renderViewCube();
+            renderSectionPanel();
           });
         break;
       }
@@ -735,6 +1082,8 @@ export function initUI(viewer) {
   setDebugToolsVisible(false);
   applyLayoutVisibility();
   syncExportControls();
+  renderViewCube();
+  renderSectionPanel();
 
   setStatus('Waiting for project...');
 }

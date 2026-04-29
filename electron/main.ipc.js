@@ -16,6 +16,22 @@ function registerIpcHandlers({
     CACHE_DIR
   } = deps.constants;
 
+  function writeTextViaTempFile(targetPath, content) {
+    const dir = path.dirname(targetPath);
+    const base = path.basename(targetPath);
+    const tmpPath = path.join(dir, `.${base}.${process.pid}.${Date.now()}.tmp`);
+    fs.mkdirSync(dir, { recursive: true });
+    try {
+      fs.writeFileSync(tmpPath, content, 'utf-8');
+      fs.renameSync(tmpPath, targetPath);
+    } catch (e) {
+      try {
+        if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+      } catch {}
+      throw e;
+    }
+  }
+
   ipcMain.handle('clipboard:readText', () => clipboard.readText());
   ipcMain.handle('clipboard:writeText', (_evt, text) => {
     clipboard.writeText(String(text ?? ''));
@@ -109,6 +125,39 @@ function registerIpcHandlers({
     const partName = String(name || state.activePart() || '').trim();
     if (!partName) throw new Error('Select a model first.');
     return deps.exportPartByRequest(partName, format);
+  });
+
+  ipcMain.handle('params:get', async (_evt, name) => {
+    if (!state.currentProjectPath()) throw new Error('Open a project first.');
+    const modelName = String(name || state.activePart() || '').trim();
+    if (!modelName) throw new Error('Select a model first.');
+    const source = deps.resolveModelSource(state.currentProjectPath(), modelName, state.currentKernel());
+    if (!source) throw new Error(`Model does not exist: ${modelName}`);
+    const paramsPath = deps.modelParamsPath(state.currentProjectPath(), modelName);
+    if (!fs.existsSync(paramsPath)) {
+      return { model: modelName, exists: false, text: '{}\n' };
+    }
+    const text = fs.readFileSync(paramsPath, 'utf-8');
+    return { model: modelName, exists: true, text };
+  });
+
+  ipcMain.handle('params:save', async (_evt, { name, text }) => {
+    if (!state.currentProjectPath()) throw new Error('Open a project first.');
+    const modelName = String(name || state.activePart() || '').trim();
+    if (!modelName) throw new Error('Select a model first.');
+    const source = deps.resolveModelSource(state.currentProjectPath(), modelName, state.currentKernel());
+    if (!source) throw new Error(`Model does not exist: ${modelName}`);
+    let parsed;
+    try {
+      parsed = JSON.parse(String(text ?? ''));
+    } catch (e) {
+      throw new Error(`params.json is invalid JSON: ${e.message}`);
+    }
+    const formatted = JSON.stringify(parsed, null, 2) + '\n';
+    const paramsPath = deps.modelParamsPath(state.currentProjectPath(), modelName);
+    writeTextViaTempFile(paramsPath, formatted);
+    deps.scheduleBuild(modelName);
+    return { model: modelName, text: formatted };
   });
 
   ipcMain.handle('viewer:partLoaded', async (_evt, payload) => {

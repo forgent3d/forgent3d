@@ -6,8 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "dev:renderer": "vite",
-    "dev:electron": "wait-on tcp:5173 && cross-env NODE_ENV=development electron .",
-    "dev:electron:watch": "wait-on tcp:5173 && cross-env NODE_ENV=development electronmon .",
+    "dev:electron": "wait-on tcp:7788 && cross-env NODE_ENV=development electron .",
+    "dev:electron:watch": "wait-on tcp:7788 && cross-env NODE_ENV=development electronmon .",
     "dev": "concurrently -k -n RENDERER,ELECTRON -c cyan,magenta \"npm:dev:renderer\" \"npm:dev:electron\"",
     "build:renderer": "vite build",
     "build:runner": "node scripts/build-embedded-runner.js",
@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@xmldom/xmldom": "^0.9.10",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-unicode11": "^0.9.0",
     "@xterm/xterm": "^6.0.0",
@@ -45,6 +46,7 @@
     "occt-import-js": "^0.0.23",
     "three": "^0.168.0",
     "urdf-loader": "^0.12.7",
+    "xacro-parser": "^0.3.11",
     "zod": "^4.3.6"
   },
   "build": {

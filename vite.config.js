@@ -4,7 +4,7 @@ export default defineConfig({
   root: 'src',
   base: './',
   server: {
-    port: 5173,
+    port: 7788,
     strictPort: true,
     hmr: false
   },

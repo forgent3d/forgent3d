@@ -21,13 +21,12 @@ const {
   codexConfigToml,
   aicadProjectJson,
   modelSourceTemplate,
+  modelParamsTemplate,
   modelReadmeTemplate,
   sourceFileOptions,
-  CURSOR_PROJECT_RULE_FILE,
-  cursorRulesTemplate,
+  getAgentSkills,
   agentsMdTemplate,
-  claudeMdTemplate,
-  geminiMdTemplate
+  claudeMdTemplate
 } = require('./main.templates.index');
 const { EXPORT_RUNNER_PYTHON } = require('./main.templates.export-runner');
 
@@ -64,6 +63,7 @@ const pendingParts = new Set();    // Models queued for another build pass.
 
 const MODELS_DIR = 'models';
 const MODEL_KINDS = ['part', 'asm'];
+const MODEL_PARAMS_FILE = 'params.json';
 const CACHE_DIR = '.cache';
 const PROJECT_META_DIR = '.aicad';
 const PROJECT_META_FILE = 'project.json';
@@ -83,9 +83,10 @@ function appIconPath() {
 }
 
 function modelDir(projectPath, name) { return path.join(projectPath, MODELS_DIR, name); }
+function modelParamsPath(projectPath, name) { return path.join(modelDir(projectPath, name), MODEL_PARAMS_FILE); }
 function sourceExt(kernel = currentKernel) { return path.extname(kernelMeta(kernel).sourceFile); }
 function modelSourceFilename(kernel = currentKernel, kind = 'part') {
-  if (kind === 'asm') return 'asm.urdf';
+  if (kind === 'asm') return 'asm.xacro';
   return `${kind}${sourceExt(kernel)}`;
 }
 function resolveModelSource(projectPath, name, kernel = currentKernel) {
@@ -112,7 +113,8 @@ function modelCacheFile(projectPath, name, source = null, kernel = currentKernel
   return s.kind === 'asm' ? s.sourcePath : partCache(projectPath, name, kernel);
 }
 function modelPreviewFormat(source = null, kernel = currentKernel) {
-  return source?.kind === 'asm' ? 'URDF' : kernelMeta(kernel).previewFormat;
+  if (source?.kind === 'asm') return 'XACRO';
+  return kernelMeta(kernel).previewFormat;
 }
 function toProjectRelativeAsset(relPath) {
   if (!currentProjectPath) return null;
@@ -317,6 +319,8 @@ function registerIpc() {
       listParts,
       selectPart,
       modelDir,
+      modelParamsPath,
+      resolveModelSource,
       exportPartByRequest,
       partPng,
       resolvePartLoadedWaiters,
@@ -355,23 +359,23 @@ function initModuleTools() {
       MCP_PORT,
       MODELS_DIR,
       MODEL_KINDS,
+      MODEL_PARAMS_FILE,
       CACHE_DIR,
       EXPORT_FORMATS
     },
     templates: {
-      CURSOR_PROJECT_RULE_FILE,
+      getAgentSkills,
       assertKernel,
       kernelMeta,
       sourceFileOptions,
       cursorMcpJson,
       claudeMcpJson,
       codexConfigToml,
-      cursorRulesTemplate,
       agentsMdTemplate,
       claudeMdTemplate,
-      geminiMdTemplate,
       aicadProjectJson,
       modelSourceTemplate,
+      modelParamsTemplate,
       modelReadmeTemplate
     },
     state: {
@@ -397,6 +401,7 @@ function initModuleTools() {
     model: {
       projectMetaPath,
       modelDir,
+      modelParamsPath,
       sourceExt,
       modelSourceFilename,
       resolveModelSource,
@@ -455,7 +460,7 @@ app.whenReady().then(async () => {
   registerIpc();
   terminalManager.init(ipcMain, (type, payload) => sendToRenderer(type, payload), {
     onBeforeTerminalCreate: async ({ agent, projectPath }) => {
-      if (agent === 'codex' || agent === 'claude' || agent === 'cli' || agent === 'gemini') {
+      if (agent === 'codex' || agent === 'claude' || agent === 'cli') {
         bootstrapAgentWorkspace(projectPath, agent);
       }
     }
@@ -518,10 +523,11 @@ function bootstrapAgentWorkspace(projectPath, agent) {
  * Initialize a new project layout:
  *   - .aicad/project.json
  *   - models/cuboid/part.py as a sample part
- *   - models/assembly_demo/asm.urdf as a sample assembly that references cuboid
+ *   - params.json beside each model source
+ *   - models/assembly_demo/asm.xacro as a sample assembly that references cuboid
  *   - .cache/ for preview artifacts
  *   - .gitignore
- * Agent-specific rules and MCP configs are written on demand (see bootstrapAgentWorkspace).
+ *   - agent-specific rules, skills, and MCP configs
  */
 function initProjectLayout(projectPath, kernel) {
   return logicTools.initProjectLayout(projectPath, kernel);

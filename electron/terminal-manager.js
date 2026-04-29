@@ -27,8 +27,7 @@ const path = require('path');
 const AGENT_CMDS = {
   codex:  'codex',
   claude: 'claude',
-  cli:    'agent',
-  gemini: 'gemini'
+  cli:    'agent'
 };
 
 const AGENT_FALLBACK_SHELL_CMDS = {
@@ -39,8 +38,7 @@ const AGENT_FALLBACK_SHELL_CMDS = {
 const AGENT_CLI_DOCS = {
   cli:    { label: 'Cursor CLI', url: 'https://cursor.com/cli' },
   claude: { label: 'Claude Code', url: 'https://code.claude.com/docs/en/setup' },
-  codex:  { label: 'OpenAI Codex CLI', url: 'https://developers.openai.com/codex/cli' },
-  gemini: { label: 'Gemini CLI', url: 'https://github.com/google-gemini/gemini-cli' }
+  codex:  { label: 'OpenAI Codex CLI', url: 'https://developers.openai.com/codex/cli' }
 };
 
 function buildProcessEnvWithWindowsPathFixes(baseEnv = process.env) {
@@ -50,46 +48,48 @@ function buildProcessEnvWithWindowsPathFixes(baseEnv = process.env) {
   const pathKey = Object.keys(env).find((k) => k.toLowerCase() === 'path') || 'Path';
   const currentPath = String(env[pathKey] || '');
   const sep = ';';
-  const currentEntries = currentPath.split(sep).filter(Boolean);
+  const currentEntries = currentPath.split(sep).map((p) => p.trim()).filter(Boolean);
   const normalized = new Set(currentEntries.map((p) => p.toLowerCase()));
-  const candidates = [
-    // npm -g default bin (most common install location for `agent`)
-    env.APPDATA ? path.join(env.APPDATA, 'npm') : '',
-    env.USERPROFILE ? path.join(env.USERPROFILE, 'AppData', 'Roaming', 'npm') : ''
-  ].filter(Boolean);
+  if (!_windowsPathPatchCache) {
+    const candidates = [
+      // npm -g default bin (most common install location for `agent`)
+      env.APPDATA ? path.join(env.APPDATA, 'npm') : '',
+      env.USERPROFILE ? path.join(env.USERPROFILE, 'AppData', 'Roaming', 'npm') : ''
+    ].filter(Boolean);
 
-  // Merge PATH entries from Windows registry as desktop-launched Electron may miss refreshed user PATH.
-  const regQueries = [
-    ['query', 'HKCU\\Environment', '/v', 'Path'],
-    ['query', 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment', '/v', 'Path']
-  ];
-  for (const args of regQueries) {
-    try {
-      const out = spawnSync('reg', args, {
-        windowsHide: true,
-        stdio: ['ignore', 'pipe', 'ignore'],
-        encoding: 'utf8'
-      });
-      if (out.status !== 0 || !out.stdout) continue;
-      const lines = String(out.stdout).split(/\r?\n/);
-      for (const line of lines) {
-        if (!/\bPath\b/i.test(line) || !/\bREG_/i.test(line)) continue;
-        const m = line.match(/\bREG_\w+\s+(.+)$/i);
-        if (!m?.[1]) continue;
-        const regPathRaw = m[1].trim();
-        if (!regPathRaw) continue;
-        const expanded = regPathRaw.replace(/%([^%]+)%/g, (_, name) => env[name] || `%${name}%`);
-        for (const p of expanded.split(sep).filter(Boolean)) {
-          candidates.push(p.trim());
+    // Merge PATH entries from Windows registry as desktop-launched Electron may miss refreshed user PATH.
+    const regQueries = [
+      ['query', 'HKCU\\Environment', '/v', 'Path'],
+      ['query', 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment', '/v', 'Path']
+    ];
+    for (const args of regQueries) {
+      try {
+        const out = spawnSync('reg', args, {
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'ignore'],
+          encoding: 'utf8'
+        });
+        if (out.status !== 0 || !out.stdout) continue;
+        const lines = String(out.stdout).split(/\r?\n/);
+        for (const line of lines) {
+          if (!/\bPath\b/i.test(line) || !/\bREG_/i.test(line)) continue;
+          const m = line.match(/\bREG_\w+\s+(.+)$/i);
+          if (!m?.[1]) continue;
+          const regPathRaw = m[1].trim();
+          if (!regPathRaw) continue;
+          const expanded = regPathRaw.replace(/%([^%]+)%/g, (_, name) => env[name] || `%${name}%`);
+          for (const p of expanded.split(sep).map((v) => v.trim()).filter(Boolean)) {
+            candidates.push(p);
+          }
         }
+      } catch {
+        // Ignore registry read failures and continue with best-effort PATH merge.
       }
-    } catch {
-      // Ignore registry read failures and continue with best-effort PATH merge.
     }
+    _windowsPathPatchCache = candidates;
   }
 
-  for (const dir of candidates) {
-    if (!fs.existsSync(dir)) continue;
+  for (const dir of _windowsPathPatchCache) {
     if (normalized.has(dir.toLowerCase())) continue;
     currentEntries.push(dir);
     normalized.add(dir.toLowerCase());
@@ -117,6 +117,7 @@ const sessions = new Map();
 let _sendToRenderer = null;
 let nodePty = null;
 let fixedSpawnHelper = false;
+let _windowsPathPatchCache = null;
 
 // Cached PATH resolved from the user's login shell (computed once, async-safely).
 let _loginShellPath = null;
@@ -344,15 +345,19 @@ function init(ipcMain, sendToRenderer, hooks = {}) {
           LC_ALL: 'en_US.UTF-8'
         })
       });
-      ptyProcess = pty.spawn(shell, args, {
+      const ptyOptions = {
         name: 'xterm-256color',
         cols: Math.max(40, cols),
         rows: Math.max(10, rows),
         cwd,
-        // Explicit UTF-8 decoding (default, but set explicitly to avoid being overridden)
-        encoding: 'utf8',
         env: mergedEnv
-      });
+      };
+      // node-pty on Windows does not support setting encoding.
+      if (process.platform !== 'win32') {
+        // Explicit UTF-8 decoding (default, but set explicitly to avoid being overridden)
+        ptyOptions.encoding = 'utf8';
+      }
+      ptyProcess = pty.spawn(shell, args, ptyOptions);
     } catch (e) {
       throw new Error(
         `Failed to create terminal for ${agent}: ${e.message}` +

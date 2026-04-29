@@ -162,7 +162,7 @@ export function createTerminalPanel(containerEl, api) {
     const wasSwitched = termId !== id;
     termId = id;
     // For a new PTY session, always reset terminal modes/buffer to avoid stale
-    // alternate-screen artifacts (common in TUIs like Gemini CLI).
+    // alternate-screen artifacts (common in full-screen terminal TUIs).
     if (wasSwitched && id) {
       try { xterm?.reset(); } catch {}
       try { xterm?.clear(); } catch {}

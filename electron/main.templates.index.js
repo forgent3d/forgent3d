@@ -13,6 +13,7 @@ const {
   codexConfigToml,
   aicadProjectJson,
   modelSourceTemplate,
+  modelParamsTemplate,
   modelReadmeTemplate,
   exportRunnerTemplate,
   exportRunnerFilename,
@@ -20,13 +21,11 @@ const {
 } = require('./main.templates.project');
 
 const {
-  CURSOR_PROJECT_RULE_FILE,
-  cursorRulesTemplate,
+  getAgentSkills,
   agentsMdTemplate,
   claudeMdTemplate,
-  geminiMdTemplate,
   copilotInstructionsTemplate
-} = require('./main.templates.rules');
+} = require('./main.templates.agents');
 
 module.exports = {
   KERNELS,
@@ -40,13 +39,12 @@ module.exports = {
   aicadProjectJson,
 
   modelSourceTemplate,
+  modelParamsTemplate,
   modelReadmeTemplate,
   sourceFileOptions,
-  CURSOR_PROJECT_RULE_FILE,
-  cursorRulesTemplate,
+  getAgentSkills,
   agentsMdTemplate,
   claudeMdTemplate,
-  geminiMdTemplate,
   copilotInstructionsTemplate,
   exportRunnerTemplate,
   exportRunnerFilename

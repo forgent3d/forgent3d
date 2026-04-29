@@ -3,6 +3,7 @@ import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import URDFLoader from 'urdf-loader';
 import occtImportJs from 'occt-import-js';
+import { loadXacroDocument } from './xacro.js';
 // Vite treats wasm as an asset and returns the final bundled URL
 import occtWasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
 
@@ -418,6 +419,7 @@ export function createViewer(host) {
   axes.renderOrder = 999;
   axes.visible = false;
   scene.add(axes);
+  renderer.localClippingEnabled = true;
 
   /* ---- State ---- */
   let currentRoot = null;         // three.Group for current BREP model
@@ -429,6 +431,23 @@ export function createViewer(host) {
   const _viewBox = new THREE.Box3();
   const _viewSphere = new THREE.Sphere();
   let viewCube = null;
+  const sectionPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const SECTION_AXIS_NORMALS = {
+    x: new THREE.Vector3(1, 0, 0),
+    y: new THREE.Vector3(0, 1, 0),
+    z: new THREE.Vector3(0, 0, 1)
+  };
+  const sectionState = {
+    enabled: false,
+    axis: 'y',
+    normalized: 0,
+    ranges: {
+      x: { min: -1, max: 1 },
+      y: { min: -1, max: 1 },
+      z: { min: -1, max: 1 }
+    }
+  };
+  let ghostEnabled = false;
 
   /* ---- Animation ---- */
   let running = true;
@@ -539,10 +558,153 @@ export function createViewer(host) {
     currentUrdfRobot = null;
     urdfJointDrivers = [];
     urdfAnimTime = 0;
+    sectionState.ranges = {
+      x: { min: -1, max: 1 },
+      y: { min: -1, max: 1 },
+      z: { min: -1, max: 1 }
+    };
+    sectionState.axis = 'y';
+    sectionState.normalized = 0;
+    sectionState.enabled = false;
+    ghostEnabled = false;
+    renderer.clippingPlanes = [];
     controls.target.set(0, 0, 0);
     controls.update();
     currentViewKey = 'iso';
     if (viewCube) viewCube.setEnabled(false);
+  }
+
+  function captureViewState() {
+    return {
+      cameraPosition: camera.position.clone(),
+      cameraQuaternion: camera.quaternion.clone(),
+      cameraUp: camera.up.clone(),
+      target: controls.target.clone(),
+      viewKey: currentViewKey
+    };
+  }
+
+  function restoreViewState(state) {
+    if (!state) return;
+    camera.position.copy(state.cameraPosition);
+    camera.quaternion.copy(state.cameraQuaternion);
+    camera.up.copy(state.cameraUp);
+    controls.target.copy(state.target);
+    camera.updateMatrixWorld();
+    controls.update();
+    currentViewKey = state.viewKey || currentViewKey;
+    updateDirectionalLights(camera, controls.target);
+  }
+
+  function replaceCurrentModel(nextRoot, { preserveView = false, isUrdf = false } = {}) {
+    const previousRoot = currentRoot;
+    const viewState = preserveView && previousRoot ? captureViewState() : null;
+
+    scene.add(nextRoot);
+    currentRoot = nextRoot;
+    currentUrdfRobot = isUrdf ? nextRoot : null;
+    urdfJointDrivers = isUrdf ? buildUrdfJointDrivers(nextRoot) : [];
+    urdfAnimTime = 0;
+    const modelBox = new THREE.Box3().setFromObject(nextRoot);
+    const axes = ['x', 'y', 'z'];
+    for (const axis of axes) {
+      const min = modelBox.min[axis];
+      const max = modelBox.max[axis];
+      if (Number.isFinite(min) && Number.isFinite(max) && max > min) {
+        sectionState.ranges[axis] = { min, max };
+      } else {
+        sectionState.ranges[axis] = { min: -1, max: 1 };
+      }
+    }
+    applySectionPlane();
+    applyGhostMode();
+
+    if (previousRoot) {
+      scene.remove(previousRoot);
+      disposeObject(previousRoot);
+    }
+
+    if (viewState) {
+      restoreViewState(viewState);
+    } else {
+      controls.target.set(0, 0, 0);
+      controls.update();
+      fitView('iso');
+    }
+    if (viewCube) viewCube.setEnabled(true);
+  }
+
+  function getSectionWorldCoord() {
+    const t = (THREE.MathUtils.clamp(sectionState.normalized, -1, 1) + 1) * 0.5;
+    const { min, max } = sectionState.ranges[sectionState.axis] || { min: -1, max: 1 };
+    return THREE.MathUtils.lerp(min, max, t);
+  }
+
+  function applySectionPlane() {
+    const coord = getSectionWorldCoord();
+    const normal = SECTION_AXIS_NORMALS[sectionState.axis] || SECTION_AXIS_NORMALS.y;
+    sectionPlane.set(normal, -coord);
+    renderer.clippingPlanes = sectionState.enabled ? [sectionPlane] : [];
+  }
+
+  function setSectionEnabled(enabled) {
+    sectionState.enabled = !!enabled;
+    applySectionPlane();
+  }
+
+  function setSectionNormalized(normalized) {
+    sectionState.normalized = THREE.MathUtils.clamp(Number(normalized) || 0, -1, 1);
+    applySectionPlane();
+  }
+
+  function setSectionAxis(axis) {
+    const nextAxis = String(axis || '').toLowerCase();
+    sectionState.axis = ['x', 'y', 'z'].includes(nextAxis) ? nextAxis : 'y';
+    applySectionPlane();
+  }
+
+  function resetSection() {
+    sectionState.normalized = 0;
+    applySectionPlane();
+  }
+
+  function getSectionState() {
+    return {
+      enabled: sectionState.enabled,
+      axis: sectionState.axis,
+      normalized: sectionState.normalized,
+      ghost: ghostEnabled
+    };
+  }
+
+  function applyGhostMode() {
+    if (!currentRoot) return;
+    currentRoot.traverse((child) => {
+      if (!child?.isMesh || !child.material) return;
+      const mats = Array.isArray(child.material) ? child.material : [child.material];
+      for (const m of mats) {
+        if (!m) continue;
+        if (!m.userData.__ghostBackup) {
+          m.userData.__ghostBackup = {
+            transparent: !!m.transparent,
+            opacity: Number.isFinite(m.opacity) ? m.opacity : 1
+          };
+        }
+        if (ghostEnabled) {
+          m.transparent = true;
+          m.opacity = Math.min(0.22, m.userData.__ghostBackup.opacity);
+        } else {
+          m.transparent = m.userData.__ghostBackup.transparent;
+          m.opacity = m.userData.__ghostBackup.opacity;
+        }
+        m.needsUpdate = true;
+      }
+    });
+  }
+
+  function setGhostEnabled(enabled) {
+    ghostEnabled = !!enabled;
+    applyGhostMode();
   }
 
   /* ---- Load BREP ---- */
@@ -670,7 +832,7 @@ export function createViewer(host) {
     return { centroid, normal };
   }
 
-  async function loadBrep(url, onLog = () => {}) {
+  async function loadBrep(url, onLog = () => {}, opts = {}) {
     // 1) Fetch BREP bytes
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`fetch ${url} failed: ${resp.status}`);
@@ -689,7 +851,6 @@ export function createViewer(host) {
     if (!res.success) throw new Error('OCCT failed to parse BREP');
 
     // 3) Build Three.js scene
-    clearModel();
     const group = buildSceneFromOcctResult(res);
 
     // Center model + adapt camera
@@ -698,12 +859,8 @@ export function createViewer(host) {
     const center = new THREE.Vector3();
     box.getSize(size); box.getCenter(center);
     group.position.sub(center);
-    controls.target.set(0, 0, 0);
 
-    scene.add(group);
-    currentRoot = group;
-    fitView('iso');
-    if (viewCube) viewCube.setEnabled(true);
+    replaceCurrentModel(group, { preserveView: !!opts.preserveView, isUrdf: false });
 
     const pickable = group.children.find((c) => c.isMesh && c.userData.faceRanges);
     const faceRanges = pickable?.userData.faceRanges || [];
@@ -1155,7 +1312,7 @@ export function createViewer(host) {
 
   /* ---- Load STL mesh preview ---- */
 
-  async function loadStl(url, onLog = () => {}) {
+  async function loadStl(url, onLog = () => {}, opts = {}) {
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`fetch ${url} failed: ${resp.status}`);
     const buf = await resp.arrayBuffer();
@@ -1167,7 +1324,6 @@ export function createViewer(host) {
     geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
 
-    clearModel();
     const group = new THREE.Group();
 
     const material = new THREE.MeshStandardMaterial({
@@ -1191,12 +1347,8 @@ export function createViewer(host) {
     const center = new THREE.Vector3();
     box.getSize(size); box.getCenter(center);
     group.position.sub(center);
-    controls.target.set(0, 0, 0);
 
-    scene.add(group);
-    currentRoot = group;
-    fitView('iso');
-    if (viewCube) viewCube.setEnabled(true);
+    replaceCurrentModel(group, { preserveView: !!opts.preserveView, isUrdf: false });
 
     const triCount = (geometry.index ? geometry.index.count : geometry.attributes.position.count) / 3;
     onLog(`STL parse complete: ${Math.floor(triCount)} triangles`);
@@ -1216,7 +1368,13 @@ export function createViewer(host) {
   function resolveUrdfMeshUrl(urdfUrl, meshPath) {
     const raw = String(meshPath || '').trim();
     if (!raw) return null;
-    if (/^(https?:|aicad:)/i.test(raw)) return raw;
+    if (/^(https?:|aicad:)/i.test(raw)) {
+      try {
+        return new URL(raw).toString();
+      } catch {
+        return raw;
+      }
+    }
     let normalized = raw.replace(/^package:\/\//i, '');
     if (/^[A-Za-z]:[\\/]/.test(normalized)) {
       normalized = normalized.replace(/\\/g, '/');
@@ -1228,20 +1386,14 @@ export function createViewer(host) {
     }
   }
 
-  async function loadUrdf(url, onLog = () => {}) {
-    onLog('URDF parsing ...');
-    clearModel();
-    const manager = new THREE.LoadingManager();
-    const baseForRelative = String(url).split('?')[0];
-    manager.setURLModifier((resourceUrl) => resolveUrdfMeshUrl(baseForRelative, resourceUrl) || resourceUrl);
-
+  function makeUrdfLoader(manager, baseForRelative) {
     const urdfLoader = new URDFLoader(manager);
     urdfLoader.parseVisual = true;
     urdfLoader.parseCollision = false;
     urdfLoader.loadMeshCb = (path, _manager, done) => {
       const resolved = resolveUrdfMeshUrl(baseForRelative, path);
       if (!resolved) {
-        done(new Error(`Unsupported URDF mesh path: ${path}`));
+        done(null, new Error(`Unsupported URDF mesh path: ${path}`));
         return;
       }
       const lower = resolved.toLowerCase();
@@ -1254,15 +1406,33 @@ export function createViewer(host) {
             done(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xb0b0b0 })));
           },
           undefined,
-          (err) => done(err || new Error(`Failed to load STL mesh: ${resolved}`))
+          (err) => done(null, err || new Error(`Failed to load STL mesh: ${resolved}`))
         );
         return;
       }
-      done(new Error(`Unsupported URDF mesh extension: ${path}`));
+      done(null, new Error(`Unsupported URDF mesh extension: ${path}`));
     };
+    return urdfLoader;
+  }
+
+  async function loadUrdfDocument({ url, urdfText = null, baseUrl = url }, onLog = () => {}, opts = {}) {
+    onLog('URDF parsing ...');
+    const manager = new THREE.LoadingManager();
+    const baseForRelative = String(baseUrl || url).split('?')[0];
+    manager.setURLModifier((resourceUrl) => resolveUrdfMeshUrl(baseForRelative, resourceUrl) || resourceUrl);
+
+    const urdfLoader = makeUrdfLoader(manager, baseForRelative);
 
     const robot = await new Promise((resolve, reject) => {
-      urdfLoader.load(url, resolve, undefined, reject);
+      if (urdfText != null) {
+        try {
+          resolve(urdfLoader.parse(urdfText, baseForRelative.replace(/[^/]*$/, '')));
+        } catch (e) {
+          reject(e);
+        }
+      } else {
+        urdfLoader.load(url, resolve, undefined, reject);
+      }
     });
     if (!robot) throw new Error('URDF loader returned empty scene');
 
@@ -1294,22 +1464,6 @@ export function createViewer(host) {
       }
     });
 
-    // Keep assembly centered for stable initial framing.
-    const initialBox = new THREE.Box3().setFromObject(robot);
-    const initialCenter = new THREE.Vector3();
-    initialBox.getCenter(initialCenter);
-    robot.position.sub(initialCenter);
-
-    scene.add(robot);
-    currentRoot = robot;
-    currentUrdfRobot = robot;
-    urdfJointDrivers = buildUrdfJointDrivers(robot);
-    urdfAnimTime = 0;
-    controls.target.set(0, 0, 0);
-    controls.update();
-    fitView('iso');
-    if (viewCube) viewCube.setEnabled(true);
-
     await new Promise((resolve) => {
       let done = false;
       const finish = () => {
@@ -1327,8 +1481,14 @@ export function createViewer(host) {
       manager.onError = () => {};
     });
 
+    // Keep assembly centered for stable framing. Do this after mesh loads so
+    // async STL children are included in the bounds.
+    const initialBox = new THREE.Box3().setFromObject(robot);
+    const initialCenter = new THREE.Vector3();
+    initialBox.getCenter(initialCenter);
+    robot.position.sub(initialCenter);
     robot.updateMatrixWorld(true);
-    fitView('iso');
+    replaceCurrentModel(robot, { preserveView: !!opts.preserveView, isUrdf: true });
 
     const box = new THREE.Box3().setFromObject(robot);
     const size = new THREE.Vector3();
@@ -1345,17 +1505,28 @@ export function createViewer(host) {
     };
   }
 
+  async function loadUrdf(url, onLog = () => {}, opts = {}) {
+    return loadUrdfDocument({ url }, onLog, opts);
+  }
+
+  async function loadXacro(url, paramsUrl, onLog = () => {}, opts = {}) {
+    onLog('XACRO loading ...');
+    const urdfText = await loadXacroDocument(url, paramsUrl);
+    onLog('XACRO expanded, parsing URDF ...');
+    return loadUrdfDocument({ url, urdfText, baseUrl: url }, onLog, opts);
+  }
+
   /**
-   * Unified entry: choose BREP/STL/URDF loader by URL suffix or explicit format.
+   * Unified entry: choose BREP/STL/XACRO loader by URL suffix or explicit format.
    * @param {string} url
    * @param {(msg:string)=>void} [onLog]
-   * @param {{ format?: 'BREP'|'STL'|'URDF' }} [opts]
+   * @param {{ format?: 'BREP'|'STL'|'XACRO', paramsUrl?: string, preserveView?: boolean }} [opts]
    */
   function loadModel(url, onLog = () => {}, opts = {}) {
     const fmt = (opts.format || '').toUpperCase();
-    if (fmt === 'URDF' || /\.urdf(\?|$)/i.test(url)) return loadUrdf(url, onLog);
+    if (fmt === 'XACRO' || /\.xacro(\?|$)/i.test(url)) return loadXacro(url, opts.paramsUrl, onLog, opts);
     const isStl = fmt === 'STL' || /\.stl(\?|$)/i.test(url);
-    return isStl ? loadStl(url, onLog) : loadBrep(url, onLog);
+    return isStl ? loadStl(url, onLog, opts) : loadBrep(url, onLog, opts);
   }
 
   function mountViewCube(hostEl) {
@@ -1387,11 +1558,18 @@ export function createViewer(host) {
     loadBrep,
     loadStl,
     loadUrdf,
+    loadXacro,
     loadModel,
     snapshot,
     setView,
     fitView,
     cycleView,
+    setSectionEnabled,
+    setSectionNormalized,
+    setSectionAxis,
+    resetSection,
+    setGhostEnabled,
+    getSectionState,
     getCurrentView: () => currentViewKey,
     hasModel: () => !!currentRoot,
     clearModel,
