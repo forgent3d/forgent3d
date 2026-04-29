@@ -1,19 +1,11 @@
 'use strict';
 
+const { assertKernel } = require('./main.templates.kernel');
 const build123d = require('./main.templates.prompts.build123d');
-const cadquery = require('./main.templates.prompts.cadquery');
-
-const PROMPT_BUNDLES = {
-  build123d,
-  cadquery
-};
 
 function kernelPromptBundle(kernel) {
-  const bundle = PROMPT_BUNDLES[kernel];
-  if (!bundle) {
-    throw new Error(`Missing prompt bundle for kernel: ${JSON.stringify(kernel)}`);
-  }
-  return bundle;
+  assertKernel(kernel);
+  return build123d;
 }
 
 module.exports = {

@@ -33,20 +33,20 @@ function createMainLogicTools({ state, deps }) {
       case 'cli':
         writeIfMissing(
           path.join(projectPath, '.cursor', 'rules', deps.CURSOR_PROJECT_RULE_FILE),
-          deps.cursorRulesTemplate(k)
+          deps.cursorRulesTemplate()
         );
         writeIfChanged(path.join(projectPath, '.cursor', 'mcp.json'), deps.cursorMcpJson(deps.MCP_PORT));
         break;
       case 'codex':
         writeIfChanged(path.join(projectPath, '.codex', 'config.toml'), deps.codexConfigToml(deps.MCP_PORT));
-        writeIfMissing(path.join(projectPath, 'AGENTS.md'), deps.agentsMdTemplate(k));
+        writeIfMissing(path.join(projectPath, 'AGENTS.md'), deps.agentsMdTemplate());
         break;
       case 'claude':
         writeIfChanged(path.join(projectPath, '.mcp.json'), deps.claudeMcpJson(deps.MCP_PORT));
-        writeIfMissing(path.join(projectPath, 'CLAUDE.md'), deps.claudeMdTemplate(k));
+        writeIfMissing(path.join(projectPath, 'CLAUDE.md'), deps.claudeMdTemplate());
         break;
       case 'gemini':
-        writeIfMissing(path.join(projectPath, 'GEMINI.md'), deps.geminiMdTemplate(k));
+        writeIfMissing(path.join(projectPath, 'GEMINI.md'), deps.geminiMdTemplate());
         break;
       default:
         throw new Error(`Unknown agent: ${agent}`);

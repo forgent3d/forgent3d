@@ -7,7 +7,7 @@ Responsibilities:
   * Accept --model <name> (and legacy --part <name>);
   * Optionally support on-demand exports via --export-format/--output (step/stl/brep);
   * Load models/<name>/part.py and read a geometry object named result;
-  * Support both build123d and cadquery, exporting to .cache/<name>.brep via OCCT APIs;
+  * Export build123d geometry to .cache/<name>.brep (and STEP/STL) via OCCT APIs;
   * Let the frontend parse BREP via occt-import-js for geometry inspection.
 """
 import argparse
@@ -22,30 +22,11 @@ CACHE_DIR = os.path.join(PROJECT_ROOT, ".cache")
 MODEL_KINDS = ("part",)
 
 
-def _looks_like_cadquery(obj) -> bool:
-    return any(c.__module__.startswith("cadquery") for c in type(obj).__mro__)
-
-
 def _looks_like_build123d(obj) -> bool:
     return any(c.__module__.startswith("build123d") for c in type(obj).__mro__)
 
 
 def _write_brep(shape, path_out):
-    if _looks_like_cadquery(shape):
-        try:
-            import cadquery as cq  # type: ignore
-            cq.exporters.export(shape, path_out, exportType="BREP")
-            return "cadquery.exporters.export(BREP)"
-        except Exception as exc:
-            try:
-                inner = shape.val() if hasattr(shape, "val") else shape
-                inner = getattr(inner, "wrapped", inner)
-                from OCP.BRepTools import BRepTools  # type: ignore
-                BRepTools.Write_s(inner, path_out)
-                return "OCP.BRepTools.Write_s (cadquery fallback)"
-            except Exception as exc2:
-                raise RuntimeError(f"Failed to export BREP from cadquery: {exc} / {exc2}")
-
     if _looks_like_build123d(shape):
         try:
             from build123d import export_brep  # type: ignore
@@ -64,14 +45,6 @@ def _write_brep(shape, path_out):
 
 
 def _write_step(shape, path_out):
-    if _looks_like_cadquery(shape):
-        try:
-            import cadquery as cq  # type: ignore
-            cq.exporters.export(shape, path_out, exportType="STEP")
-            return "cadquery.exporters.export(STEP)"
-        except Exception as exc:
-            raise RuntimeError(f"Failed to export STEP from cadquery: {exc}")
-
     if _looks_like_build123d(shape):
         try:
             from build123d import export_step  # type: ignore
@@ -95,14 +68,6 @@ def _write_step(shape, path_out):
 
 
 def _write_stl(shape, path_out):
-    if _looks_like_cadquery(shape):
-        try:
-            import cadquery as cq  # type: ignore
-            cq.exporters.export(shape, path_out, exportType="STL")
-            return "cadquery.exporters.export(STL)"
-        except Exception:
-            pass
-
     if _looks_like_build123d(shape):
         try:
             from build123d import export_stl  # type: ignore
@@ -158,7 +123,7 @@ def build_one(model_name: str, export_format: str = "brep", output: str = None) 
         return err
     result = ns.get("result", None)
     if result is None:
-        print(f"[export_runner] {source_path} must define a global result object (build123d / cadquery).",
+        print(f"[export_runner] {source_path} must define a global result object (build123d).",
               file=sys.stderr)
         return 4
 

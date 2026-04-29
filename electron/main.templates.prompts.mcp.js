@@ -18,7 +18,7 @@ if visual style matters:
     # silhouette, proportions, symmetry, edge language, signature motifs
     ->
 for a new Python model:
-    create scaffold in models/<name>/{sourceFileHint}
+    create scaffold in models/<name>/part.py or asm.urdf
     ->
     route the task
     # asm => body-first
@@ -40,7 +40,7 @@ for a new Python model:
     ->
     Pass 2: add details only after Pass 1 screenshots read correctly
     ->
-edit models/<name>/{sourceFileHint}
+edit models/<name>/part.py or asm.urdf
     ->
 rebuild_model({ model: "<model_name>" })    # if failed, fix using stderr then retry
     ->

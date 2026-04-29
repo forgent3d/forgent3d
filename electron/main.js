@@ -268,6 +268,9 @@ function readProjectKernel(projectPath) {
   if (meta?.kernel === 'openscad') {
     throw new Error('OpenSCAD projects are no longer supported by this app.');
   }
+  if (meta?.kernel === 'cadquery') {
+    throw new Error('CadQuery projects are no longer supported by this app.');
+  }
   return assertKernel(meta?.kernel);
 }
 
