@@ -1,5 +1,8 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 const {
   CODEX_MCP_QUICK_BLOCK,
   CODEX_INSTRUCTION_META
@@ -12,33 +15,37 @@ function agentBlocks(agentHint) {
   };
 }
 
+function readSkillContent(relativePath) {
+  return fs.readFileSync(path.join(__dirname, relativePath), 'utf8');
+}
+
 const SKILL_CORE = {
   filename: 'aicad-core.mdc',
   description: 'AI CAD companion core project rules: geometry deliverables, layout, and validation policy',
   globs: '*',
   alwaysApply: true,
-  content: require('./skills/aicad-core-skill-content.md')
+  content: readSkillContent('./skills/aicad-core-skill-content.md')
 };
 
 const SKILL_BUILD123D = {
   filename: 'skill-build123d.mdc',
   description: 'build123d CAD kernel syntax, API reference, parameterization, and structure policy',
   globs: '*.py',
-  content: require('./skills/build123d-skill-content.md')
+  content: readSkillContent('./skills/build123d-skill-content.md')
 };
 
 const SKILL_XACRO = {
   filename: 'skill-xacro.mdc',
   description: 'XACRO assembly rules for AI CAD, multi-body kinematics, and joint logic',
   globs: '*.xacro',
-  content: require('./skills/xacro-skill-content.md')
+  content: readSkillContent('./skills/aicad-xacro-skill-content.md')
 };
 
 const SKILL_MCP_WORKFLOW = {
   filename: 'skill-mcp-workflow.mdc',
   description: 'MCP tools usage, generation protocol, accuracy contract, and failure recovery workflow',
   globs: '*',
-  content: require('./skills/mcp-workflow-skill-content.md')
+  content: readSkillContent('./skills/aicad-mcp-skill-content.md')
 
 };
 
