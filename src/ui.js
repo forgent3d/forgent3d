@@ -709,7 +709,7 @@ export function initUI(viewer) {
     appendLog(`[TERM_DEBUG] ${message}${suffix}`, 'warn');
     try {
       // Also print to DevTools for full object inspection
-      console.debug('[TERM_DEBUG]', message, extra || '');
+      // console.debug('[TERM_DEBUG]', message, extra || '');
     } catch {}
   }
 
