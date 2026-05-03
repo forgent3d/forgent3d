@@ -13,7 +13,7 @@ function sourceFileOptions(kernel) {
   const ext = sourceExtension(meta);
   return {
     part: `part${ext}`,
-    asm: 'asm.xacro',
+    asm: 'asm.xml',
     params: 'params.json'
   };
 }
@@ -46,7 +46,7 @@ function codexConfigToml(MCP_PORT) {
 }
 
 function build123dModelSourceTemplate(kind, _name, desc) {
-  const fileName = kind === 'asm' ? 'asm.xacro' : 'part.py';
+  const fileName = kind === 'asm' ? 'asm.xml' : 'part.py';
   const kindLabel = kind === 'asm' ? 'assembly' : 'part';
   if (kind === 'asm') {
     return [
@@ -54,19 +54,20 @@ function build123dModelSourceTemplate(kind, _name, desc) {
       '',
       'This file is managed by AI CAD Companion Viewer.',
       `This is the primary ${kindLabel} source: \`${fileName}\`.`,
-      'Tunable values live in params.json and are substituted into ${...} expressions before preview.',
-      'Reference exported meshes from parts in this project and compose links/joints here.',
+      'Tunable values live in params.json and are substituted into parameter expressions before preview.',
+      'Reference exported meshes and part-local anchors from params.json; compose bodies, joints, sites, and constraints here.',
       '-->',
-      '<robot name="${robotName}" xmlns:xacro="http://www.ros.org/wiki/xacro">',
-      '  <link name="base_link">',
-      '    <visual>',
-      '      <origin xyz="${parts.cuboid.origin.xyz}" rpy="${parts.cuboid.origin.rpy}"/>',
-      '      <geometry>',
-      '        <mesh filename="${parts.cuboid.mesh}" scale="${parts.cuboid.scale}"/>',
-      '      </geometry>',
-      '    </visual>',
-      '  </link>',
-      '</robot>',
+      '<mujoco model="${modelName}">',
+      '  <asset>',
+      '    <mesh name="cuboid" file="${parts.cuboid.mesh}" scale="${parts.cuboid.scale}"/>',
+      '  </asset>',
+      '  <worldbody>',
+      '    <body name="base" pos="${parts.cuboid.pose.pos}" euler="${parts.cuboid.pose.euler}">',
+      '      <geom type="mesh" mesh="cuboid" pos="${parts.cuboid.mesh_pos}"/>',
+      '      <site name="base_origin" pos="${parts.cuboid.anchors.origin}" size="0.01"/>',
+      '    </body>',
+      '  </worldbody>',
+      '</mujoco>',
       ''
     ].join('\n');
   }
@@ -92,6 +93,11 @@ function build123dModelSourceTemplate(kind, _name, desc) {
     'half_length = length / 2',
     'half_width = width / 2',
     'half_height = height / 2',
+    'anchors = {',
+    '    "origin": [0, 0, 0],',
+    '    "x_min": [-half_length, 0, 0],',
+    '    "x_max": [half_length, 0, 0],',
+    '}',
     '',
     '# === Coordinate Frame ===',
     '# +X: right, +Y: back, +Z: up.',
@@ -105,6 +111,11 @@ function build123dModelSourceTemplate(kind, _name, desc) {
     '    return bp.part',
     '',
     'result = build()',
+    'metadata = {',
+    '    "schema": "aicad.part.metadata.v1",',
+    '    "units": "mm",',
+    '    "anchors": anchors,',
+    '}',
     ''
   ].join('\n');
 }
@@ -120,14 +131,20 @@ function modelParamsTemplate(kind, _name, description) {
   if (kind === 'asm') {
     return JSON.stringify({
       description: description || 'Assembly parameters',
-      robotName: 'assembly',
+      modelName: 'assembly',
       parts: {
         cuboid: {
           mesh: '../cuboid/cuboid.stl',
           scale: [1, 1, 1],
-          origin: {
-            xyz: [0, 0, 0],
-            rpy: [0, 0, 0]
+          pose: {
+            pos: [0, 0, 0],
+            euler: [0, 0, 0]
+          },
+          mesh_pos: [0, 0, 0],
+          anchors: {
+            origin: [0, 0, 0],
+            x_min: [-20, 0, 0],
+            x_max: [20, 0, 0]
           }
         }
       }

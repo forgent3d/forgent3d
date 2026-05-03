@@ -11,6 +11,7 @@ Responsibilities:
   * Let the frontend parse BREP via occt-import-js for geometry inspection.
 """
 import argparse
+import json
 import os
 import sys
 import runpy
@@ -96,6 +97,49 @@ def _resolve_model_source(model_name: str):
     return None
 
 
+def _json_safe(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if hasattr(value, "to_tuple"):
+        try:
+            return _json_safe(value.to_tuple())
+        except Exception:
+            pass
+    if all(hasattr(value, attr) for attr in ("X", "Y", "Z")):
+        try:
+            return [float(value.X), float(value.Y), float(value.Z)]
+        except Exception:
+            pass
+    if all(hasattr(value, attr) for attr in ("x", "y", "z")):
+        try:
+            return [float(value.x), float(value.y), float(value.z)]
+        except Exception:
+            pass
+    raise TypeError(f"metadata contains non-JSON value of type {type(value).__name__}")
+
+
+def _write_metadata(model_name: str, ns: dict):
+    metadata = ns.get("metadata", None)
+    if metadata is None:
+        return
+    try:
+        payload = _json_safe(metadata)
+    except Exception as exc:
+        raise RuntimeError(f"Invalid metadata: {exc}")
+    model_dir = os.path.join(MODELS_DIR, model_name)
+    os.makedirs(model_dir, exist_ok=True)
+    metadata_path = os.path.join(model_dir, "metadata.json")
+    tmp_path = metadata_path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+        f.write("\\n")
+    os.replace(tmp_path, metadata_path)
+
+
 def _build_namespace(model_name: str):
     source_path = _resolve_model_source(model_name)
     if not source_path:
@@ -126,6 +170,11 @@ def build_one(model_name: str, export_format: str = "brep", output: str = None) 
         print(f"[export_runner] {source_path} must define a global result object (build123d).",
               file=sys.stderr)
         return 4
+    try:
+        _write_metadata(model_name, ns)
+    except Exception as exc:
+        print(f"[export_runner] Failed to write metadata.json: {exc}", file=sys.stderr)
+        return 8
 
     fmt = (export_format or "brep").strip().lower()
     if fmt not in ("brep", "step", "stl"):

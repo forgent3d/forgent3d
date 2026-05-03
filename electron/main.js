@@ -86,7 +86,7 @@ function modelDir(projectPath, name) { return path.join(projectPath, MODELS_DIR,
 function modelParamsPath(projectPath, name) { return path.join(modelDir(projectPath, name), MODEL_PARAMS_FILE); }
 function sourceExt(kernel = currentKernel) { return path.extname(kernelMeta(kernel).sourceFile); }
 function modelSourceFilename(kernel = currentKernel, kind = 'part') {
-  if (kind === 'asm') return 'asm.xacro';
+  if (kind === 'asm') return 'asm.xml';
   return `${kind}${sourceExt(kernel)}`;
 }
 function resolveModelSource(projectPath, name, kernel = currentKernel) {
@@ -113,7 +113,7 @@ function modelCacheFile(projectPath, name, source = null, kernel = currentKernel
   return s.kind === 'asm' ? s.sourcePath : partCache(projectPath, name, kernel);
 }
 function modelPreviewFormat(source = null, kernel = currentKernel) {
-  if (source?.kind === 'asm') return 'XACRO';
+  if (source?.kind === 'asm') return 'MJCF';
   return kernelMeta(kernel).previewFormat;
 }
 function toProjectRelativeAsset(relPath) {
@@ -497,7 +497,7 @@ app.on('before-quit', () => {
 
 /* ---------------- Custom Protocol aicad:// ---------------- */
 // aicad://model/<name>.<ext> -> cached model payload
-// aicad://asset/<relative-path> -> project-scoped asset (URDF meshes, etc.)
+// aicad://asset/<relative-path> -> project-scoped asset (MJCF meshes, etc.)
 
 function registerProtocol() {
   return uiTools.registerProtocol();
@@ -524,7 +524,7 @@ function bootstrapAgentWorkspace(projectPath, agent) {
  *   - .aicad/project.json
  *   - models/cuboid/part.py as a sample part
  *   - params.json beside each model source
- *   - models/assembly_demo/asm.xacro as a sample assembly that references cuboid
+ *   - models/assembly_demo/asm.xml as a sample assembly that references cuboid
  *   - .cache/ for preview artifacts
  *   - .gitignore
  *   - agent-specific rules, skills, and MCP configs
@@ -556,8 +556,8 @@ async function selectPart(name) {
 
 /* ---------------- Build ---------------- */
 
-function scheduleBuild(partName) {
-  return logicTools.scheduleBuild(partName);
+function scheduleBuild(partName, options) {
+  return logicTools.scheduleBuild(partName, options);
 }
 
 async function ensurePartStlArtifact(partName) {

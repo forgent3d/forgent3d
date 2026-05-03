@@ -145,7 +145,7 @@ function createMainExportTools({ dialog, state, deps }) {
       throw new Error(`Model does not exist: ${cleanPart}`);
     }
     if (source.kind === 'asm') {
-      throw new Error('Assembly XACRO models do not support direct export from this menu yet.');
+      throw new Error('Assembly MJCF models do not support direct export from this menu yet.');
     }
 
     const fmt = ensureExportFormat(format);

@@ -263,7 +263,7 @@ export function initUI(viewer) {
       });
       const bBuild = document.createElement('button');
       bBuild.className = 'icon-btn';
-      bBuild.title = 'Rebuild this model';
+      bBuild.title = 'Rebuild this model (part models also refresh models/<name>/<name>.stl)';
       bBuild.textContent = '↻';
       bBuild.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -993,7 +993,7 @@ export function initUI(viewer) {
         const partLabel = payload.part ? `[${payload.part}] ` : '';
         const fmt = (payload.format || 'BREP').toUpperCase();
         setStatus(
-          `${partLabel}${fmt === 'XACRO' ? 'Loading XACRO' : (fmt === 'STL' ? 'Parsing STL' : 'OCCT parsing BREP')} ...`,
+          `${partLabel}${fmt === 'MJCF' ? 'Loading MJCF' : (fmt === 'STL' ? 'Parsing STL' : 'OCCT parsing BREP')} ...`,
           true
         );
         const sizeKB = payload.size ? (payload.size / 1024).toFixed(1) + ' KB' : '';
@@ -1007,8 +1007,8 @@ export function initUI(viewer) {
           .then(async (partInfo) => {
             if (payload?.part) loadedPart = payload.part;
             const { faceCount } = partInfo;
-            const tail = fmt === 'XACRO'
-              ? 'XACRO assembly'
+            const tail = fmt === 'MJCF'
+              ? 'MJCF assembly'
               : (fmt === 'STL' ? 'STL mesh' : `${faceCount} BREP faces`);
             setStatus(
               `${partLabel}Model ready${sizeKB ? ' · ' + sizeKB : ''} · ${tail}`

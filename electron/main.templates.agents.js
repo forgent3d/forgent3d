@@ -48,7 +48,7 @@ function getAgentSkills(agentHint) {
 function baseMarkdown(agentHint) {
   const { agentHintBlock, codexQuickBlock } = agentBlocks(agentHint);
   let md = `# AI CAD Project Rules (build123d)${agentHintBlock}${codexQuickBlock}\n`;
-  md += `You are an expert in **build123d**.\n\n> **Current CAD kernel: build123d (Python)**\n> Geometry source: \`models/<name>/part.py\` + \`params.json\` for single bodies, \`models/<name>/asm.xacro\` + \`params.json\` for assemblies; preview output format: \`BREP\` for parts.\n\n`;
+  md += `You are an expert in **build123d**.\n\n> **Current CAD kernel: build123d (Python)**\n> Geometry source: \`models/<name>/part.py\` + \`params.json\` for single bodies, \`models/<name>/asm.xml\` + \`params.json\` for assemblies; preview output format: \`BREP\` for parts.\n\n`;
   if (agentHint === 'Claude Code') {
      md += `> Detailed rules and workflows are located in \`.claude/rules/\`.\n`;
   } else if (agentHint === 'OpenAI Codex') {
@@ -72,11 +72,12 @@ function codexSkillsIndexMarkdown() {
     '',
     '- The deliverable for CAD requests is editable geometry source code, not images.',
     '- Current CAD kernel: build123d (Python). Single-body source files live under `models/<name>/part.py` with tunable values in `models/<name>/params.json`.',
-    '- Use `asm.xacro` + `params.json` for complex multi-part systems, articulated mechanisms, vehicles, robots, drones, or separable components; do not collapse these into one monolithic `part.py`.',
+    '- Use `asm.xml` + `params.json` for complex multi-part systems, articulated mechanisms, vehicles, robots, drones, or separable components; do not collapse these into one monolithic `part.py`.',
     '- Validate generated CAD only through AI CAD Companion Viewer MCP tools: edit source -> `rebuild_model` -> inspect result -> optional screenshot/info.',
     '- Do not run `python part.py`, `python -m`, `pytest`, `uv run`, or other local Python validation for generated CAD code.',
     '- If MCP is unavailable, ask the user to start AI CAD Companion Viewer instead of using a local Python fallback.',
     '- Keep tunable dimensions in `params.json`; source files should read or substitute those values before geometry construction.',
+    '- For assembly-ready parts, compute anchors/connection facts in `part.py` as a global `metadata` dict; the viewer export runner writes `models/<name>/metadata.json` after rebuild.',
     '',
     '## Detailed Skills',
     '',
@@ -84,7 +85,7 @@ function codexSkillsIndexMarkdown() {
     '',
     '- `.agents/skills/core/SKILL.md` - core project rules, layout, and validation policy.',
     '- `.agents/skills/build123d/SKILL.md` - build123d syntax, parameterization, and modeling policy.',
-    '- `.agents/skills/xacro/SKILL.md` - XACRO assembly and kinematic rules.',
+    '- `.agents/skills/mjcf/SKILL.md` - MJCF assembly and kinematic rules.',
     '- `.agents/skills/mcp-workflow/SKILL.md` - MCP tool workflow, accuracy contract, and failure recovery.',
     ''
   ].join('\n');

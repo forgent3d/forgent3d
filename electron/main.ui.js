@@ -47,7 +47,7 @@ function createMainUiTools({
         const url = new URL(request.url);
         if (url.hostname === 'model' && state.currentProjectPath()) {
           const file = path.basename(url.pathname);
-          const name = file.replace(/\.(brep|stl|urdf)$/i, '');
+          const name = file.replace(/\.(brep|stl|xml)$/i, '');
           if (name) {
             const source = deps.resolveModelSource(state.currentProjectPath(), name, state.currentKernel());
             const p = deps.modelCacheFile(state.currentProjectPath(), name, source, state.currentKernel());

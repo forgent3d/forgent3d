@@ -34,11 +34,11 @@ const SKILL_BUILD123D = {
   content: readSkillContent('./skills/build123d-skill-content.md')
 };
 
-const SKILL_XACRO = {
-  filename: 'skill-xacro.mdc',
-  description: 'XACRO assembly rules for AI CAD, multi-body kinematics, and joint logic',
-  globs: '*.xacro',
-  content: readSkillContent('./skills/aicad-xacro-skill-content.md')
+const SKILL_MJCF = {
+  filename: 'skill-mjcf.mdc',
+  description: 'MJCF assembly rules for AI CAD, multi-body kinematics, and joint logic',
+  globs: '*.xml',
+  content: readSkillContent('./skills/aicad-mjcf-skill-content.md')
 };
 
 const SKILL_MCP_WORKFLOW = {
@@ -49,7 +49,7 @@ const SKILL_MCP_WORKFLOW = {
 
 };
 
-const ALL_SKILLS = [SKILL_CORE, SKILL_BUILD123D, SKILL_XACRO, SKILL_MCP_WORKFLOW];
+const ALL_SKILLS = [SKILL_CORE, SKILL_BUILD123D, SKILL_MJCF, SKILL_MCP_WORKFLOW];
 
 module.exports = {
   ALL_SKILLS,

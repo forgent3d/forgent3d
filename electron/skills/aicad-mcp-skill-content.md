@@ -54,10 +54,10 @@ if visual style matters:
 for a new Python model:
     decide model type first
     # single rigid body => models/<name>/part.py
-    # complex multi-part / articulated / vehicle / robot / drone / separable components => models/<name>/asm.xacro + params.json plus reusable part.py models
+    # complex multi-part / articulated / vehicle / robot / drone / separable components => models/<name>/asm.xml + params.json plus reusable part.py models
     ->
     route the task
-    # asm => body-first parts, then XACRO composition
+    # asm => body-first parts, then MJCF composition
     # part => profile-dominant => sketch-first
     # part => mass-dominant => body-first
     # if uncertain => body-first
@@ -76,7 +76,7 @@ for a new Python model:
     ->
     Pass 2: add details only after Pass 1 screenshots read correctly
     ->
-edit models/<name>/params.json plus models/<name>/part.py or asm.xacro
+edit models/<name>/params.json plus models/<name>/part.py or asm.xml
     ->
 rebuild_model({ model: "<model_name>" })    # if failed, fix using stderr then retry
     ->

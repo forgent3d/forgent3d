@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
-import URDFLoader from 'urdf-loader';
 import occtImportJs from 'occt-import-js';
-import { loadXacroDocument } from './xacro.js';
+import loadMujoco from '@mujoco/mujoco';
+import { loadMjcfDocument } from './mjcf.js';
 // Vite treats wasm as an asset and returns the final bundled URL
 import occtWasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
+import mujocoWasmUrl from '@mujoco/mujoco/mujoco.wasm?url';
 
 function vec3From(value) {
   if (value instanceof THREE.Vector3) return value.clone();
@@ -423,9 +424,8 @@ export function createViewer(host) {
 
   /* ---- State ---- */
   let currentRoot = null;         // three.Group for current BREP model
-  let currentUrdfRobot = null;
-  let urdfJointDrivers = [];
-  let urdfAnimTime = 0;
+  let currentMjcfRoot = null;
+  let mjcfSimulation = null;
   let currentViewKey = 'iso';
   const VIEW_CYCLE = ['iso', 'front', 'side', 'top'];
   const _viewBox = new THREE.Box3();
@@ -452,54 +452,14 @@ export function createViewer(host) {
   /* ---- Animation ---- */
   let running = true;
   let lastFrameTs = performance.now();
-  function hashName(name) {
-    let h = 0;
-    const s = String(name || '');
-    for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-    return Math.abs(h);
-  }
-  function buildUrdfJointDrivers(robot) {
-    const jointEntries = Object.entries(robot?.joints || {});
-    return jointEntries
-      .filter(([, joint]) => !!joint?.setJointValue)
-      .map(([jointKey, joint]) => {
-        const type = String(joint.jointType || '').toLowerCase();
-        const name = String(joint.name || jointKey || '');
-        const lower = Number(joint?.limit?.lower);
-        const upper = Number(joint?.limit?.upper);
-        const hasFiniteLimits = Number.isFinite(lower) && Number.isFinite(upper) && upper > lower;
-        const isSpinner = /(prop|rotor|wheel|fan|spin)/i.test(name);
-        if (type === 'continuous' || (type === 'revolute' && isSpinner)) {
-          const speed = isSpinner ? 9 : 5;
-          const direction = (hashName(name) % 2 === 0) ? 1 : -1;
-          return { joint, mode: 'spin', speed: speed * direction };
-        }
-        if (type === 'revolute' || type === 'prismatic') {
-          const center = hasFiniteLimits ? (lower + upper) * 0.5 : 0;
-          const span = hasFiniteLimits ? (upper - lower) : (type === 'prismatic' ? 0.12 : 0.8);
-          const amplitude = Math.max(1e-4, span * 0.35);
-          const phase = (hashName(name) % 360) * Math.PI / 180;
-          const freq = 0.5 + (hashName(name) % 7) * 0.08;
-          return { joint, mode: 'osc', center, amplitude, phase, freq };
-        }
-        return null;
-      })
-      .filter(Boolean);
-  }
-  function animateUrdfJoints(dt) {
-    if (!currentUrdfRobot || !urdfJointDrivers.length) return;
-    urdfAnimTime += Math.max(0, dt || 0);
-    for (const driver of urdfJointDrivers) {
-      try {
-        if (driver.mode === 'spin') {
-          driver.joint.setJointValue(urdfAnimTime * driver.speed);
-        } else if (driver.mode === 'osc') {
-          const value = driver.center + Math.sin(urdfAnimTime * driver.freq * Math.PI * 2 + driver.phase) * driver.amplitude;
-          driver.joint.setJointValue(value);
-        }
-      } catch {
-        // Ignore one-off joint update failures to keep viewer responsive.
-      }
+  function animateMjcfSimulation(dt) {
+    if (!currentMjcfRoot) return;
+    const sim = currentMjcfRoot.userData?.mjcfSimulation;
+    if (!sim) return;
+    try {
+      stepMjcfSimulation(dt);
+    } catch {
+      // Ignore one-off simulation update failures to keep viewer responsive.
     }
   }
   (function loop() {
@@ -507,7 +467,7 @@ export function createViewer(host) {
     const now = performance.now();
     const dt = Math.min(0.05, Math.max(0, (now - lastFrameTs) / 1000));
     lastFrameTs = now;
-    animateUrdfJoints(dt);
+    animateMjcfSimulation(dt);
     controls.update();
     updateDirectionalLights(camera, controls.target);
     renderer.render(scene, camera);
@@ -538,6 +498,16 @@ export function createViewer(host) {
     return occtPromise;
   }
 
+  let mujocoPromise = null;
+  function getMujoco() {
+    if (!mujocoPromise) {
+      mujocoPromise = loadMujoco({
+        locateFile: (file) => file.endsWith('.wasm') ? mujocoWasmUrl : file
+      });
+    }
+    return mujocoPromise;
+  }
+
   /* ---- Cleanup ---- */
   function disposeObject(obj) {
     obj.traverse((child) => {
@@ -549,15 +519,25 @@ export function createViewer(host) {
       }
     });
   }
+
+  function disposeMjcfSimulation(sim) {
+    if (!sim) return;
+    for (const binding of sim.bodyBindings || []) binding.bodyAccessor?.delete?.();
+    sim.defaultCtrlAccessor?.delete?.();
+    sim.data?.delete?.();
+    sim.model?.delete?.();
+    sim.vfs?.delete?.();
+  }
+
   function clearModel() {
     if (currentRoot) {
       scene.remove(currentRoot);
       disposeObject(currentRoot);
       currentRoot = null;
     }
-    currentUrdfRobot = null;
-    urdfJointDrivers = [];
-    urdfAnimTime = 0;
+    currentMjcfRoot = null;
+    disposeMjcfSimulation(mjcfSimulation);
+    mjcfSimulation = null;
     sectionState.ranges = {
       x: { min: -1, max: 1 },
       y: { min: -1, max: 1 },
@@ -596,15 +576,15 @@ export function createViewer(host) {
     updateDirectionalLights(camera, controls.target);
   }
 
-  function replaceCurrentModel(nextRoot, { preserveView = false, isUrdf = false } = {}) {
+  function replaceCurrentModel(nextRoot, { preserveView = false, isMjcf = false } = {}) {
     const previousRoot = currentRoot;
+    const previousSimulation = mjcfSimulation;
     const viewState = preserveView && previousRoot ? captureViewState() : null;
 
     scene.add(nextRoot);
     currentRoot = nextRoot;
-    currentUrdfRobot = isUrdf ? nextRoot : null;
-    urdfJointDrivers = isUrdf ? buildUrdfJointDrivers(nextRoot) : [];
-    urdfAnimTime = 0;
+    currentMjcfRoot = isMjcf ? nextRoot : null;
+    mjcfSimulation = isMjcf ? (nextRoot.userData.mjcfSimulation || null) : null;
     const modelBox = new THREE.Box3().setFromObject(nextRoot);
     const axes = ['x', 'y', 'z'];
     for (const axis of axes) {
@@ -622,6 +602,9 @@ export function createViewer(host) {
     if (previousRoot) {
       scene.remove(previousRoot);
       disposeObject(previousRoot);
+    }
+    if (previousSimulation && previousSimulation !== mjcfSimulation) {
+      disposeMjcfSimulation(previousSimulation);
     }
 
     if (viewState) {
@@ -860,7 +843,7 @@ export function createViewer(host) {
     box.getSize(size); box.getCenter(center);
     group.position.sub(center);
 
-    replaceCurrentModel(group, { preserveView: !!opts.preserveView, isUrdf: false });
+    replaceCurrentModel(group, { preserveView: !!opts.preserveView, isMjcf: false });
 
     const pickable = group.children.find((c) => c.isMesh && c.userData.faceRanges);
     const faceRanges = pickable?.userData.faceRanges || [];
@@ -1011,7 +994,7 @@ export function createViewer(host) {
   function getFittedViewDistance(target = controls.target) {
     const sphere = getCurrentModelSphere();
     if (!sphere) return getViewDistance(target);
-    // If target drifts away from model center (common in URDF updates),
+    // If target drifts away from model center (common in assembly updates),
     // include that offset in fit radius so camera framing stays stable.
     const targetOffset = sphere.center.distanceTo(target);
     const radius = Math.max(sphere.radius + targetOffset, 1);
@@ -1348,7 +1331,7 @@ export function createViewer(host) {
     box.getSize(size); box.getCenter(center);
     group.position.sub(center);
 
-    replaceCurrentModel(group, { preserveView: !!opts.preserveView, isUrdf: false });
+    replaceCurrentModel(group, { preserveView: !!opts.preserveView, isMjcf: false });
 
     const triCount = (geometry.index ? geometry.index.count : geometry.attributes.position.count) / 3;
     onLog(`STL parse complete: ${Math.floor(triCount)} triangles`);
@@ -1365,7 +1348,197 @@ export function createViewer(host) {
     };
   }
 
-  function resolveUrdfMeshUrl(urdfUrl, meshPath) {
+  function parseNumberList(value, fallback = []) {
+    const text = String(value || '').trim();
+    if (!text) return fallback.slice();
+    const nums = text.split(/\s+/).map((item) => Number(item));
+    return nums.every((num) => Number.isFinite(num)) ? nums : fallback.slice();
+  }
+
+  function parseVec3(value, fallback = [0, 0, 0]) {
+    const nums = parseNumberList(value, fallback);
+    return new THREE.Vector3(nums[0] ?? fallback[0], nums[1] ?? fallback[1], nums[2] ?? fallback[2]);
+  }
+
+  function parseQuat(value) {
+    const nums = parseNumberList(value, []);
+    if (nums.length < 4) return null;
+    return new THREE.Quaternion(nums[1], nums[2], nums[3], nums[0]).normalize();
+  }
+
+  function parseEulerQuat(value, angleScale) {
+    const nums = parseNumberList(value, []);
+    if (nums.length < 3) return null;
+    return new THREE.Quaternion().setFromEuler(new THREE.Euler(
+      nums[0] * angleScale,
+      nums[1] * angleScale,
+      nums[2] * angleScale,
+      'XYZ'
+    ));
+  }
+
+  function elementChildren(node, tagName = null) {
+    return Array.from(node?.children || [])
+      .filter((child) => !tagName || child.tagName === tagName);
+  }
+
+  function getCompilerAngleScale(document) {
+    const compiler = elementChildren(document.documentElement, 'compiler')[0];
+    const angle = String(compiler?.getAttribute('angle') || 'degree').trim().toLowerCase();
+    return angle === 'radian' ? 1 : Math.PI / 180;
+  }
+
+  function applyMjcfTransform(object, element, angleScale) {
+    object.position.copy(parseVec3(element.getAttribute('pos')));
+    const quat = parseQuat(element.getAttribute('quat')) || parseEulerQuat(element.getAttribute('euler'), angleScale);
+    if (quat) object.quaternion.copy(quat);
+  }
+
+  function prepareMjcfSkeletonDocument(document) {
+    const simDocument = document.cloneNode(true);
+    for (const meshEl of Array.from(simDocument.getElementsByTagName('mesh'))) {
+      meshEl.parentElement?.removeChild(meshEl);
+    }
+    for (const geomEl of Array.from(simDocument.getElementsByTagName('geom'))) {
+      if (geomEl.hasAttribute('mesh') || String(geomEl.getAttribute('type') || '').trim().toLowerCase() === 'mesh') {
+        geomEl.parentElement?.removeChild(geomEl);
+      }
+    }
+    for (const bodyEl of Array.from(simDocument.getElementsByTagName('body'))) {
+      const hasJoint = elementChildren(bodyEl).some((child) => child.tagName === 'joint' || child.tagName === 'freejoint');
+      const hasInertial = elementChildren(bodyEl, 'inertial').length > 0;
+      if (hasJoint && !hasInertial) {
+        const inertial = simDocument.createElement('inertial');
+        inertial.setAttribute('pos', '0 0 0');
+        inertial.setAttribute('mass', '1');
+        inertial.setAttribute('diaginertia', '1 1 1');
+        bodyEl.insertBefore(inertial, bodyEl.firstChild);
+      }
+    }
+    return simDocument;
+  }
+
+  async function createMjcfSimulation(root, document, meshAssets, onLog = () => {}) {
+    const mujoco = await getMujoco();
+    const vfs = new mujoco.MjVFS();
+    try {
+      const simDocument = document.cloneNode(true);
+      let meshIndex = 0;
+      for (const meshEl of Array.from(simDocument.getElementsByTagName('mesh'))) {
+        const name = String(meshEl.getAttribute('name') || '').trim();
+        const asset = meshAssets.get(name);
+        if (!asset?.bytes) continue;
+        const safeName = (name || 'asset').replace(/[^\w.-]+/g, '_');
+        const vfsPath = `mesh_${meshIndex++}_${safeName}.stl`;
+        vfs.addBuffer(vfsPath, asset.bytes);
+        meshEl.setAttribute('file', vfsPath);
+      }
+      const xml = new XMLSerializer().serializeToString(simDocument);
+      let model;
+      let usingSkeleton = false;
+      try {
+        model = mujoco.MjModel.from_xml_string(xml, vfs);
+      } catch (err) {
+        const skeletonXml = new XMLSerializer().serializeToString(prepareMjcfSkeletonDocument(document));
+        model = mujoco.MjModel.from_xml_string(skeletonXml);
+        usingSkeleton = true;
+      }
+      const data = new mujoco.MjData(model);
+      const sim = {
+        mujoco,
+        model,
+        data,
+        vfs,
+        bodyBindings: [],
+        defaultCtrl: null,
+        defaultCtrlAccessor: null
+      };
+      if (Number(model.nu || 0) > 0) {
+        try {
+          const numeric = model.numeric('aicad_default_ctrl');
+          sim.defaultCtrlAccessor = numeric;
+          sim.defaultCtrl = Array.from(numeric.data || []).slice(0, Number(model.nu || 0));
+          for (let i = 0; i < sim.defaultCtrl.length; i++) data.ctrl[i] = sim.defaultCtrl[i];
+        } catch {
+          sim.defaultCtrl = null;
+        }
+      }
+      for (const body of root.userData.mjcfBodies || []) {
+        const name = String(body.name || '').trim();
+        if (!name) continue;
+        try {
+          const bodyAccessor = data.body(name);
+          sim.bodyBindings.push({
+            body,
+            bodyAccessor,
+            xpos: bodyAccessor.xpos,
+            xquat: bodyAccessor.xquat
+          });
+        } catch {
+          // Bodies that fail named lookup remain static in the local preview scene.
+        }
+      }
+      mujoco.mj_forward(model, data);
+      onLog(`MJCF MuJoCo simulation ready (${model.nbody} bodies, ${model.njnt} joints${usingSkeleton ? ', skeleton fallback' : ''})`);
+      return sim;
+    } catch (err) {
+      vfs.delete?.();
+      onLog(`MJCF MuJoCo simulation unavailable: ${err?.message || err}`);
+      return null;
+    }
+  }
+
+  function applyMjcfWorldPose(root, body, positionView, quaternionView) {
+    const offset = root?.userData?.mjcfModelOffset;
+    const worldPosition = new THREE.Vector3(
+      (positionView?.[0] || 0) + (offset?.x || 0),
+      (positionView?.[1] || 0) + (offset?.y || 0),
+      (positionView?.[2] || 0) + (offset?.z || 0)
+    );
+    const worldQuaternion = new THREE.Quaternion(
+      quaternionView?.[1] || 0,
+      quaternionView?.[2] || 0,
+      quaternionView?.[3] || 0,
+      quaternionView?.[0] ?? 1
+    ).normalize();
+    const parent = body.parent;
+    if (parent) {
+      parent.updateMatrixWorld(true);
+      body.position.copy(parent.worldToLocal(worldPosition));
+      const parentWorldQuaternion = new THREE.Quaternion();
+      parent.getWorldQuaternion(parentWorldQuaternion);
+      body.quaternion.copy(parentWorldQuaternion.invert().multiply(worldQuaternion));
+    } else {
+      body.position.copy(worldPosition);
+      body.quaternion.copy(worldQuaternion);
+    }
+  }
+
+  function syncMjcfSimulationPose(root = currentMjcfRoot) {
+    const sim = root?.userData?.mjcfSimulation;
+    if (!root || !sim?.bodyBindings?.length) return false;
+    for (const binding of sim.bodyBindings) {
+      applyMjcfWorldPose(root, binding.body, binding.xpos, binding.xquat);
+    }
+    root.updateMatrixWorld(true);
+    return true;
+  }
+
+  function stepMjcfSimulation(dt) {
+    const sim = currentMjcfRoot?.userData?.mjcfSimulation;
+    if (!sim) return false;
+    const timestep = Math.max(1e-4, Number(sim.model?.opt?.timestep) || 0.002);
+    let steps = Math.min(120, Math.max(1, Math.ceil(Math.max(0, dt || 0) / timestep)));
+    while (steps-- > 0) {
+      if (sim.defaultCtrl?.length) {
+        for (let i = 0; i < sim.defaultCtrl.length; i++) sim.data.ctrl[i] = sim.defaultCtrl[i];
+      }
+      sim.mujoco.mj_step(sim.model, sim.data);
+    }
+    return syncMjcfSimulationPose(currentMjcfRoot);
+  }
+
+  function resolveMjcfMeshUrl(mjcfUrl, meshPath) {
     const raw = String(meshPath || '').trim();
     if (!raw) return null;
     if (/^(https?:|aicad:)/i.test(raw)) {
@@ -1380,120 +1553,119 @@ export function createViewer(host) {
       normalized = normalized.replace(/\\/g, '/');
     }
     try {
-      return new URL(normalized, urdfUrl).toString();
+      return new URL(normalized, mjcfUrl).toString();
     } catch {
       return null;
     }
   }
 
-  function makeUrdfLoader(manager, baseForRelative) {
-    const urdfLoader = new URDFLoader(manager);
-    urdfLoader.parseVisual = true;
-    urdfLoader.parseCollision = false;
-    urdfLoader.loadMeshCb = (path, _manager, done) => {
-      const resolved = resolveUrdfMeshUrl(baseForRelative, path);
-      if (!resolved) {
-        done(null, new Error(`Unsupported URDF mesh path: ${path}`));
-        return;
-      }
-      const lower = resolved.toLowerCase();
-      if (lower.endsWith('.stl')) {
-        const stlLoader = new STLLoader(manager);
-        stlLoader.load(
-          resolved,
-          (geometry) => {
-            geometry.computeVertexNormals();
-            done(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xb0b0b0 })));
-          },
-          undefined,
-          (err) => done(null, err || new Error(`Failed to load STL mesh: ${resolved}`))
-        );
-        return;
-      }
-      done(null, new Error(`Unsupported URDF mesh extension: ${path}`));
-    };
-    return urdfLoader;
+  async function loadStlAsset(url) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`fetch ${url} failed: ${response.status}`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const geometry = new STLLoader().parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+    geometry.computeVertexNormals();
+    return { geometry, bytes };
   }
 
-  async function loadUrdfDocument({ url, urdfText = null, baseUrl = url }, onLog = () => {}, opts = {}) {
-    onLog('URDF parsing ...');
-    const manager = new THREE.LoadingManager();
+  function parseMjcfXml(text) {
+    const document = new DOMParser().parseFromString(String(text || ''), 'application/xml');
+    const parserError = document.getElementsByTagName('parsererror')[0];
+    if (parserError) throw new Error(`MJCF XML parse failed: ${parserError.textContent || 'invalid XML'}`);
+    if (document.documentElement?.tagName !== 'mujoco') throw new Error('MJCF must contain a <mujoco> root element');
+    return document;
+  }
+
+  async function loadMjcfDocumentScene({ url, mjcfText = null, baseUrl = url }, onLog = () => {}, opts = {}) {
+    onLog('MJCF parsing ...');
     const baseForRelative = String(baseUrl || url).split('?')[0];
-    manager.setURLModifier((resourceUrl) => resolveUrdfMeshUrl(baseForRelative, resourceUrl) || resourceUrl);
 
-    const urdfLoader = makeUrdfLoader(manager, baseForRelative);
+    const text = mjcfText != null ? mjcfText : await loadMjcfDocument(url, opts.paramsUrl);
+    const document = parseMjcfXml(text);
+    const angleScale = getCompilerAngleScale(document);
+    const root = new THREE.Group();
+    root.name = document.documentElement.getAttribute('model') || 'mjcf';
+    root.userData.mjcfBodies = [];
 
-    const robot = await new Promise((resolve, reject) => {
-      if (urdfText != null) {
-        try {
-          resolve(urdfLoader.parse(urdfText, baseForRelative.replace(/[^/]*$/, '')));
-        } catch (e) {
-          reject(e);
+    const meshAssets = new Map();
+    for (const meshEl of Array.from(document.getElementsByTagName('mesh'))) {
+      const name = String(meshEl.getAttribute('name') || '').trim();
+      const file = String(meshEl.getAttribute('file') || '').trim();
+      if (!name || !file) continue;
+      const resolved = resolveMjcfMeshUrl(baseForRelative, file);
+      if (!resolved) throw new Error(`Unsupported MJCF mesh path: ${file}`);
+      if (!resolved.toLowerCase().endsWith('.stl')) throw new Error(`Unsupported MJCF mesh extension: ${file}`);
+      const loaded = await loadStlAsset(resolved);
+      meshAssets.set(name, {
+        geometry: loaded.geometry,
+        bytes: loaded.bytes,
+        scale: parseVec3(meshEl.getAttribute('scale'), [1, 1, 1])
+      });
+    }
+
+    function addGeom(parent, geomEl) {
+      const meshName = String(geomEl.getAttribute('mesh') || '').trim();
+      const type = String(geomEl.getAttribute('type') || '').trim().toLowerCase();
+      if (!meshName && type !== 'mesh') return;
+      const asset = meshAssets.get(meshName);
+      if (!asset) throw new Error(`MJCF references unknown mesh asset: ${meshName}`);
+      const mesh = new THREE.Mesh(
+        asset.geometry.clone(),
+        new THREE.MeshStandardMaterial({
+          color: 0xb6c0cf,
+          roughness: 0.65,
+          metalness: 0.1,
+          side: THREE.DoubleSide
+        })
+      );
+      mesh.name = String(geomEl.getAttribute('name') || meshName || 'geom');
+      applyMjcfTransform(mesh, geomEl, angleScale);
+      const geomScale = parseVec3(geomEl.getAttribute('scale'), [1, 1, 1]);
+      mesh.scale.set(asset.scale.x * geomScale.x, asset.scale.y * geomScale.y, asset.scale.z * geomScale.z);
+      parent.add(mesh);
+    }
+
+    function addBody(parent, bodyEl) {
+      const body = new THREE.Group();
+      body.name = String(bodyEl.getAttribute('name') || 'body');
+      applyMjcfTransform(body, bodyEl, angleScale);
+      root.userData.mjcfBodies.push(body);
+      parent.add(body);
+
+      for (const child of elementChildren(bodyEl)) {
+        if (child.tagName === 'geom') {
+          addGeom(body, child);
+        } else if (child.tagName === 'body') {
+          addBody(body, child);
         }
-      } else {
-        urdfLoader.load(url, resolve, undefined, reject);
       }
-    });
-    if (!robot) throw new Error('URDF loader returned empty scene');
+    }
 
-    // Normalize URDF mesh materials to avoid black-looking assemblies.
-    robot.traverse((child) => {
-      if (!child?.isMesh) return;
-      child.geometry?.computeVertexNormals?.();
-      const applyMaterial = (m) => {
-        if (!m) return m;
-        const roughness = Number.isFinite(m.roughness) ? m.roughness : 0.65;
-        const metalness = Number.isFinite(m.metalness) ? m.metalness : 0.1;
-        if (!m.isMeshStandardMaterial) {
-          return new THREE.MeshStandardMaterial({
-            color: m.color?.clone?.() || new THREE.Color(0xb6c0cf),
-            roughness,
-            metalness,
-            side: THREE.DoubleSide
-          });
-        }
-        m.roughness = roughness;
-        m.metalness = metalness;
-        m.side = THREE.DoubleSide;
-        return m;
-      };
-      if (Array.isArray(child.material)) {
-        child.material = child.material.map((m) => applyMaterial(m));
-      } else {
-        child.material = applyMaterial(child.material);
-      }
-    });
+    const worldbody = elementChildren(document.documentElement, 'worldbody')[0];
+    if (!worldbody) throw new Error('MJCF must include a <worldbody> element');
+    for (const child of elementChildren(worldbody)) {
+      if (child.tagName === 'body') addBody(root, child);
+      else if (child.tagName === 'geom') addGeom(root, child);
+    }
+    for (const asset of meshAssets.values()) asset.geometry.dispose();
+    if (!root.children.length) throw new Error('MJCF loader returned empty scene');
 
-    await new Promise((resolve) => {
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        resolve();
-      };
-      const timer = setTimeout(() => {
-        finish();
-      }, 1500);
-      manager.onLoad = () => {
-        clearTimeout(timer);
-        finish();
-      };
-      manager.onError = () => {};
-    });
-
-    // Keep assembly centered for stable framing. Do this after mesh loads so
-    // async STL children are included in the bounds.
-    const initialBox = new THREE.Box3().setFromObject(robot);
+    // Keep assembly centered for stable framing after all STL meshes are loaded.
+    const initialBox = new THREE.Box3().setFromObject(root);
     const initialCenter = new THREE.Vector3();
     initialBox.getCenter(initialCenter);
-    robot.position.sub(initialCenter);
-    robot.updateMatrixWorld(true);
-    replaceCurrentModel(robot, { preserveView: !!opts.preserveView, isUrdf: true });
+    root.position.sub(initialCenter);
+    root.userData.mjcfModelOffset = initialCenter.clone().multiplyScalar(-1);
+    root.updateMatrixWorld(true);
+    const simulation = await createMjcfSimulation(root, document, meshAssets, onLog);
+    root.userData.mjcfSimulation = simulation;
+    if (simulation) syncMjcfSimulationPose(root);
+    replaceCurrentModel(root, { preserveView: !!opts.preserveView, isMjcf: true });
 
-    const box = new THREE.Box3().setFromObject(robot);
+    const box = new THREE.Box3().setFromObject(root);
     const size = new THREE.Vector3();
     box.getSize(size);
-    onLog('URDF parse complete');
+    onLog('MJCF parse complete');
     return {
       faceCount: null,
       bbox: {
@@ -1505,26 +1677,21 @@ export function createViewer(host) {
     };
   }
 
-  async function loadUrdf(url, onLog = () => {}, opts = {}) {
-    return loadUrdfDocument({ url }, onLog, opts);
-  }
-
-  async function loadXacro(url, paramsUrl, onLog = () => {}, opts = {}) {
-    onLog('XACRO loading ...');
-    const urdfText = await loadXacroDocument(url, paramsUrl);
-    onLog('XACRO expanded, parsing URDF ...');
-    return loadUrdfDocument({ url, urdfText, baseUrl: url }, onLog, opts);
+  async function loadMjcf(url, paramsUrl, onLog = () => {}, opts = {}) {
+    onLog('MJCF loading ...');
+    const mjcfText = await loadMjcfDocument(url, paramsUrl);
+    return loadMjcfDocumentScene({ url, mjcfText, baseUrl: url }, onLog, opts);
   }
 
   /**
-   * Unified entry: choose BREP/STL/XACRO loader by URL suffix or explicit format.
+   * Unified entry: choose BREP/STL/MJCF loader by URL suffix or explicit format.
    * @param {string} url
    * @param {(msg:string)=>void} [onLog]
-   * @param {{ format?: 'BREP'|'STL'|'XACRO', paramsUrl?: string, preserveView?: boolean }} [opts]
+   * @param {{ format?: 'BREP'|'STL'|'MJCF', paramsUrl?: string, preserveView?: boolean }} [opts]
    */
   function loadModel(url, onLog = () => {}, opts = {}) {
     const fmt = (opts.format || '').toUpperCase();
-    if (fmt === 'XACRO' || /\.xacro(\?|$)/i.test(url)) return loadXacro(url, opts.paramsUrl, onLog, opts);
+    if (fmt === 'MJCF' || /\/asm\.xml(\?|$)/i.test(url)) return loadMjcf(url, opts.paramsUrl, onLog, opts);
     const isStl = fmt === 'STL' || /\.stl(\?|$)/i.test(url);
     return isStl ? loadStl(url, onLog, opts) : loadBrep(url, onLog, opts);
   }
@@ -1557,8 +1724,7 @@ export function createViewer(host) {
     setViewCubeEnabled,
     loadBrep,
     loadStl,
-    loadUrdf,
-    loadXacro,
+    loadMjcf,
     loadModel,
     snapshot,
     setView,

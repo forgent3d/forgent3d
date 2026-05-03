@@ -3,14 +3,15 @@
 const fs = require('fs');
 const path = require('path');
 const chokidar = require('chokidar');
-const { DOMParser, XMLSerializer } = require('@xmldom/xmldom');
-const { XacroParser } = require('xacro-parser');
+const { DOMParser } = require('@xmldom/xmldom');
 const { spawn } = require('child_process');
 
 global.DOMParser = DOMParser;
-global.XMLSerializer = XMLSerializer;
 
 function createMainLogicTools({ state, deps }) {
+  /** Part names whose next completed Python build should write project STL (same path as MCP build_stl default). */
+  const pendingStlAfterBuild = new Set();
+
   function writeIfChanged(filePath, content) {
     try {
       const prev = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null;
@@ -92,7 +93,7 @@ function createMainLogicTools({ state, deps }) {
     );
     const asmTemplate = deps.modelSourceTemplate(k, 'asm', sampleAsmName, 'Sample assembly that references the cuboid part mesh.');
     writeIfMissing(asmSrcPath, asmTemplate.replace(/cuboid/g, samplePartName));
-    deps.sendLog(`Sample models created: models/${samplePartName}/${deps.modelSourceFilename(k, 'part')} + models/${samplePartName}/params.json + models/${sampleAsmName}/asm.xacro + models/${sampleAsmName}/params.json`);
+    deps.sendLog(`Sample models created: models/${samplePartName}/${deps.modelSourceFilename(k, 'part')} + models/${samplePartName}/params.json + models/${sampleAsmName}/asm.xml + models/${sampleAsmName}/params.json`);
   }
 
   function ensureRuntimeDirs(projectPath) {
@@ -187,8 +188,8 @@ function createMainLogicTools({ state, deps }) {
     const partRe = new RegExp(`^models/([^/]+)/part\\.${ext}$`, 'i');
     const partMatch = partRe.exec(rel);
     if (partMatch) return { name: partMatch[1], kind: 'part', fileName: `part${deps.sourceExt(state.currentKernel())}` };
-    const asmMatch = /^models\/([^/]+)\/asm\.xacro$/i.exec(rel);
-    if (asmMatch) return { name: asmMatch[1], kind: 'asm', fileName: 'asm.xacro' };
+    const asmMatch = /^models\/([^/]+)\/asm\.xml$/i.exec(rel);
+    if (asmMatch) return { name: asmMatch[1], kind: 'asm', fileName: 'asm.xml' };
     const paramsMatch = /^models\/([^/]+)\/params\.json$/i.exec(rel);
     if (paramsMatch) {
       const source = deps.resolveModelSource(state.currentProjectPath(), paramsMatch[1], state.currentKernel());
@@ -216,6 +217,7 @@ function createMainLogicTools({ state, deps }) {
     state.partInfoCache().clear();
     state.buildWaiters().clear();
     state.partLoadedWaiters().clear();
+    pendingStlAfterBuild.clear();
 
     deps.saveLastProjectPath(resolvedProjectPath);
     deps.sendLog(`Project kernel: ${deps.kernelMeta(state.currentKernel()).label} (${state.currentKernel()})`);
@@ -287,8 +289,9 @@ function createMainLogicTools({ state, deps }) {
     else scheduleBuild(name);
   }
 
-  function scheduleBuild(partName) {
+  function scheduleBuild(partName, { exportProjectStl = false } = {}) {
     if (!state.currentProjectPath() || !partName) return;
+    if (exportProjectStl) pendingStlAfterBuild.add(partName);
     if (state.buildingParts().has(partName)) {
       state.pendingParts().add(partName);
       return;
@@ -303,14 +306,16 @@ function createMainLogicTools({ state, deps }) {
       deps.sendToRenderer('BUILD_FAILED', { part: partName, message: `Model source not found: ${partName}` });
       return;
     }
+    const exportProjectStl = pendingStlAfterBuild.has(partName);
+    if (exportProjectStl) pendingStlAfterBuild.delete(partName);
     state.buildingParts().add(partName);
     state.pendingParts().delete(partName);
     deps.sendToRenderer('BUILD_STARTED', { part: partName });
     broadcastPartsList();
-    return source.kind === 'asm' ? runBuildUrdf(partName, source) : runBuildPython(partName);
+    return source.kind === 'asm' ? runBuildMjcf(partName, source) : runBuildPython(partName, exportProjectStl);
   }
 
-  async function runBuildPython(partName) {
+  async function runBuildPython(partName, exportProjectStl) {
     const runtime = await deps.detectBuildRuntime(state.currentKernel());
     if (!runtime) {
       state.buildingParts().delete(partName);
@@ -335,7 +340,12 @@ function createMainLogicTools({ state, deps }) {
         : `[${partName}] Build using Python ${runtime.cmd} (v${runtime.version}) with ${deps.kernelMeta(state.currentKernel()).label}`
     );
     const child = spawn(cmd.cmd, cmd.args, { cwd: state.currentProjectPath(), shell: false, windowsHide: true });
-    finalizeBuildChild(child, partName, runtime.kind === 'bundled-runner' ? 'bundled build123d runtime' : 'electron/export_runner.py');
+    finalizeBuildChild(
+      child,
+      partName,
+      runtime.kind === 'bundled-runner' ? 'bundled build123d runtime' : 'electron/export_runner.py',
+      exportProjectStl
+    );
   }
 
   function readParamsForSource(sourcePath) {
@@ -348,10 +358,10 @@ function createMainLogicTools({ state, deps }) {
     }
   }
 
-  const XACRO_PARAM_SEGMENT_RE = /^[A-Za-z_$][\w$]*$/;
+  const MJCF_PARAM_PATH_RE = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/;
 
-  function formatXacroParamValue(value) {
-    if (Array.isArray(value)) return value.map((item) => formatXacroParamValue(item)).join(' ');
+  function formatMjcfParamValue(value) {
+    if (Array.isArray(value)) return value.map((item) => formatMjcfParamValue(item)).join(' ');
     return String(value ?? '');
   }
 
@@ -363,107 +373,122 @@ function createMainLogicTools({ state, deps }) {
       .replace(/>/g, '&gt;');
   }
 
-  function collectXacroParamProperties(value, prefix = '', out = []) {
-    if (Array.isArray(value)) {
-      if (prefix) out.push([prefix, formatXacroParamValue(value)]);
-      return out;
+  function getParamPath(params, key, sourceLabel) {
+    if (!MJCF_PARAM_PATH_RE.test(key)) {
+      throw new Error(`${sourceLabel} has unsupported parameter expression: \${${key}}`);
     }
-    if (value && typeof value === 'object') {
-      for (const [key, child] of Object.entries(value)) {
-        if (!XACRO_PARAM_SEGMENT_RE.test(key)) continue;
-        collectXacroParamProperties(child, prefix ? `${prefix}.${key}` : key, out);
+    let current = params;
+    for (const segment of key.split('.')) {
+      if (!current || typeof current !== 'object' || !(segment in current)) {
+        throw new Error(`${sourceLabel} references missing params.json value: \${${key}}`);
       }
-      return out;
+      current = current[segment];
     }
-    if (prefix) out.push([prefix, formatXacroParamValue(value)]);
-    return out;
+    return current;
   }
 
-  function injectXacroParamProperties(xacroText, params = {}, sourceLabel = 'asm.xacro') {
-    const properties = collectXacroParamProperties(params);
-    if (!properties.length) return xacroText;
-
-    const rootMatch = /<robot\b[^>]*>/i.exec(xacroText);
-    if (!rootMatch) throw new Error(`${sourceLabel} must contain a <robot> root element`);
-
-    let rootTag = rootMatch[0];
-    if (!/\sxmlns:xacro\s*=/.test(rootTag)) {
-      rootTag = rootTag.replace(/>$/, ' xmlns:xacro="http://www.ros.org/wiki/xacro">');
-    }
-
-    const propertyText = properties
-      .map(([name, value]) => `  <xacro:property name="${escapeXmlAttr(name)}" value="${escapeXmlAttr(value)}"/>`)
-      .join('\n');
-    return `${xacroText.slice(0, rootMatch.index)}${rootTag}\n${propertyText}${xacroText.slice(rootMatch.index + rootMatch[0].length)}`;
+  function interpolateMjcfParams(text, params = {}, sourceLabel = 'asm.xml') {
+    return String(text || '').replace(/<!--[\s\S]*?-->|(\$\{([^}]+)\})/g, (match, expr, rawKey) => {
+      if (!expr) return match;
+      const key = String(rawKey || '').trim();
+      return escapeXmlAttr(formatMjcfParamValue(getParamPath(params, key, sourceLabel)));
+    });
   }
 
-  function resolveXacroIncludePath(includePath, sourcePath) {
-    const normalized = String(includePath || '').replace(/^package:\/\//i, '');
-    if (path.isAbsolute(normalized)) return normalized;
-    return path.resolve(path.dirname(sourcePath), normalized);
-  }
-
-  async function expandXacroText(text, params, sourceLabel = 'asm.xacro', sourcePath = '') {
-    try {
-      const parser = new XacroParser();
-      parser.workingPath = sourcePath ? path.dirname(sourcePath) : '';
-      parser.getFileContents = async (includePath) => {
-        const resolvedPath = resolveXacroIncludePath(includePath, sourcePath);
-        return fs.promises.readFile(resolvedPath, 'utf-8');
-      };
-      const document = await parser.parse(injectXacroParamProperties(String(text || ''), params, sourceLabel));
-      return new XMLSerializer().serializeToString(document);
-    } catch (e) {
-      throw new Error(`${sourceLabel} xacro expansion failed: ${e.message || String(e)}`);
-    }
-  }
-
-  async function readAssemblyUrdfText(sourcePath) {
+  function readAssemblyMjcfText(sourcePath) {
+    const sourceLabel = path.basename(sourcePath);
     const text = fs.readFileSync(sourcePath, 'utf-8');
-    return expandXacroText(text, readParamsForSource(sourcePath), path.basename(sourcePath), sourcePath);
+    return interpolateMjcfParams(text, readParamsForSource(sourcePath), sourceLabel);
   }
 
-  async function validateUrdfAssemblyReferences(sourcePath, asmName) {
+  function parseMjcfDocument(text, sourceLabel) {
+    const errors = [];
+    const parser = new DOMParser({
+      onError: (level, message) => {
+        if (level === 'error' || level === 'fatalError') errors.push(message);
+      }
+    });
+    const document = parser.parseFromString(text, 'application/xml');
+    const root = document?.documentElement;
+    if (errors.length || !root) {
+      throw new Error(`${sourceLabel} MJCF XML parse failed: ${errors[0] || 'empty document'}`);
+    }
+    if (root.nodeName !== 'mujoco') {
+      throw new Error(`${sourceLabel} must contain a <mujoco> root element`);
+    }
+    return document;
+  }
+
+  function elementChildren(node, tagName = null) {
+    return Array.from(node?.childNodes || [])
+      .filter((child) => child.nodeType === 1 && (!tagName || child.nodeName === tagName));
+  }
+
+  async function validateMjcfAssemblyReferences(sourcePath, asmName) {
     let text;
     try {
-      text = await readAssemblyUrdfText(sourcePath);
+      text = readAssemblyMjcfText(sourcePath);
     } catch (e) {
       return { ok: false, error: e.message || String(e) };
     }
-    const sourceLabel = 'asm.xacro';
-    const primitiveRe = /<\s*(box|cylinder|sphere)\b/ig;
-    if (primitiveRe.test(text)) {
-      return { ok: false, error: `${sourceLabel} for "${asmName}" must reference part meshes only; primitive geometry tags are not allowed.` };
+    const sourceLabel = 'asm.xml';
+    let document;
+    try {
+      document = parseMjcfDocument(text, sourceLabel);
+    } catch (e) {
+      return { ok: false, error: e.message || String(e) };
     }
-    const meshMatches = Array.from(text.matchAll(/<\s*mesh\b[^>]*\bfilename\s*=\s*"([^"]+)"/ig));
-    if (meshMatches.length === 0) {
-      return { ok: false, error: `${sourceLabel} for "${asmName}" must include at least one <mesh filename=\"...\"> reference to a part export.` };
+    const meshes = new Map();
+    for (const meshEl of Array.from(document.getElementsByTagName('mesh'))) {
+      const name = String(meshEl.getAttribute('name') || '').trim();
+      const file = String(meshEl.getAttribute('file') || '').trim();
+      if (name && file) meshes.set(name, file);
     }
+    const meshRefs = [];
+    for (const geomEl of Array.from(document.getElementsByTagName('geom'))) {
+      if (String(geomEl.getAttribute('type') || '').trim() === 'mesh' || geomEl.hasAttribute('mesh')) {
+        const meshName = String(geomEl.getAttribute('mesh') || '').trim();
+        if (!meshName) return { ok: false, error: `${sourceLabel} for "${asmName}" has a mesh geom without a mesh attribute.` };
+        const meshRef = meshes.get(meshName);
+        if (!meshRef) return { ok: false, error: `${sourceLabel} for "${asmName}" references unknown mesh asset "${meshName}".` };
+        meshRefs.push(meshRef);
+      }
+    }
+    if (meshRefs.length === 0) return { ok: false, error: `${sourceLabel} for "${asmName}" must include at least one mesh geom that references a part export.` };
+    const worldbody = elementChildren(document.documentElement, 'worldbody')[0];
+    if (!worldbody) return { ok: false, error: `${sourceLabel} for "${asmName}" must include a <worldbody> element.` };
     const asmDir = path.dirname(sourcePath);
     const projectRoot = path.resolve(state.currentProjectPath());
     const referencedParts = new Set();
-    for (const m of meshMatches) {
-      const meshRef = String(m[1] || '').trim();
-      if (!meshRef) return { ok: false, error: `${sourceLabel} for "${asmName}" has an empty mesh filename.` };
+    for (const meshRef of meshRefs) {
+      if (!meshRef) return { ok: false, error: `${sourceLabel} for "${asmName}" has an empty mesh file.` };
       const normalized = meshRef.replace(/^package:\/\//i, '').replace(/\\/g, '/');
       const abs = path.resolve(asmDir, normalized);
       if (abs !== projectRoot && !abs.startsWith(`${projectRoot}${path.sep}`)) return { ok: false, error: `${sourceLabel} mesh path escapes project root: ${meshRef}` };
-      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return { ok: false, error: `${sourceLabel} mesh file not found: ${meshRef}` };
       if (path.extname(abs).toLowerCase() !== '.stl') return { ok: false, error: `${sourceLabel} currently supports STL meshes only: ${meshRef}` };
       const base = path.basename(abs, path.extname(abs));
       const partSourcePath = path.join(deps.modelDir(state.currentProjectPath(), base), deps.modelSourceFilename(state.currentKernel(), 'part'));
       if (!fs.existsSync(partSourcePath)) {
         return { ok: false, error: `${sourceLabel} mesh "${meshRef}" is not linked to an existing part model "${base}" (expected models/${base}/part${deps.sourceExt(state.currentKernel())}).` };
       }
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+        try {
+          deps.sendLog(`[${asmName}] Building missing mesh asset: models/${base}/${base}.stl`);
+          await deps.ensurePartStlArtifact(base);
+        } catch (e) {
+          return { ok: false, error: `${sourceLabel} mesh file not found and could not be built: ${meshRef} (${e.message || String(e)})` };
+        }
+      }
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return { ok: false, error: `${sourceLabel} mesh file not found: ${meshRef}` };
       referencedParts.add(base);
     }
-    return { ok: true, meshCount: meshMatches.length, referencedParts: Array.from(referencedParts) };
+    return { ok: true, meshCount: meshRefs.length, referencedParts: Array.from(referencedParts) };
   }
 
-  async function runBuildUrdf(partName, source) {
+  async function runBuildMjcf(partName, source) {
     const sourcePath = source?.sourcePath || deps.partSource(state.currentProjectPath(), partName, state.currentKernel(), 'asm');
     if (!fs.existsSync(sourcePath)) {
-      const message = `asm.xacro was not generated for model "${partName}"`;
+      const message = `asm.xml was not generated for model "${partName}"`;
       state.buildingParts().delete(partName);
       deps.sendToRenderer('BUILD_FAILED', { part: partName, message });
       resolveBuildWaiters(partName, { ok: false, part: partName, error: message });
@@ -471,18 +496,18 @@ function createMainLogicTools({ state, deps }) {
       if (state.pendingParts().has(partName)) runBuild(partName);
       return;
     }
-    const urdfValidation = await validateUrdfAssemblyReferences(sourcePath, partName);
-    if (!urdfValidation.ok) {
+    const mjcfValidation = await validateMjcfAssemblyReferences(sourcePath, partName);
+    if (!mjcfValidation.ok) {
       state.buildingParts().delete(partName);
-      deps.sendToRenderer('BUILD_FAILED', { part: partName, message: urdfValidation.error });
-      resolveBuildWaiters(partName, { ok: false, part: partName, error: urdfValidation.error });
+      deps.sendToRenderer('BUILD_FAILED', { part: partName, message: mjcfValidation.error });
+      resolveBuildWaiters(partName, { ok: false, part: partName, error: mjcfValidation.error });
       broadcastPartsList();
       if (state.pendingParts().has(partName)) runBuild(partName);
       return;
     }
     const size = fs.statSync(sourcePath).size;
     const sourceLabel = path.basename(sourcePath);
-    deps.sendLog(`[${partName}] ${sourceLabel} assembly updated (${(size / 1024).toFixed(1)} KB, ${urdfValidation.meshCount} meshes from parts: ${urdfValidation.referencedParts.join(', ')})`);
+    deps.sendLog(`[${partName}] ${sourceLabel} assembly updated (${(size / 1024).toFixed(1)} KB, ${mjcfValidation.meshCount} meshes from parts: ${mjcfValidation.referencedParts.join(', ')})`);
     deps.sendToRenderer('PART_BUILT', { part: partName, size });
     if (partName === state.activePart()) deps.sendModelUpdated(partName);
     resolveBuildWaiters(partName, {
@@ -493,7 +518,7 @@ function createMainLogicTools({ state, deps }) {
     if (state.pendingParts().has(partName)) runBuild(partName);
   }
 
-  function finalizeBuildChild(child, partName, label) {
+  function finalizeBuildChild(child, partName, label, exportProjectStl = false) {
     let stderr = '';
     let stdout = '';
     child.stdout?.on('data', (d) => { const s = d.toString(); stdout += s; deps.sendLog(s.trimEnd()); });
@@ -518,8 +543,10 @@ function createMainLogicTools({ state, deps }) {
       } else if (cacheFile && fs.existsSync(cacheFile)) {
         const size = fs.statSync(cacheFile).size;
         const finalizeSuccess = async () => {
-          // Temporarily disable synchronous STL artifact generation for faster rebuild iteration.
-          // if (source?.kind === 'part') await deps.ensurePartStlArtifact(partName);
+          if (exportProjectStl && source?.kind === 'part') {
+            await deps.ensurePartStlArtifact(partName);
+            deps.sendLog(`[${partName}] Project STL updated (models/${partName}/${partName}.stl)`);
+          }
           deps.sendLog(`[${partName}] Model cache updated (${(size / 1024).toFixed(1)} KB)`);
           deps.sendToRenderer('PART_BUILT', { part: partName, size });
           if (partName === state.activePart()) deps.sendModelUpdated(partName);
@@ -731,8 +758,8 @@ function createMainLogicTools({ state, deps }) {
     scheduleBuild,
     runBuild,
     runBuildPython,
-    validateUrdfAssemblyReferences,
-    runBuildUrdf,
+    validateMjcfAssemblyReferences,
+    runBuildMjcf,
     resolveBuildWaiters,
     resolvePartLoadedWaiters,
     refreshViewerCachesAfterBuild,

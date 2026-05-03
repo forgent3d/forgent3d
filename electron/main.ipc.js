@@ -111,7 +111,7 @@ function registerIpcHandlers({
 
   ipcMain.handle('parts:rebuild', async (_evt, name) => {
     const target = name || state.activePart();
-    if (target) deps.scheduleBuild(target);
+    if (target) deps.scheduleBuild(target, { exportProjectStl: true });
     return true;
   });
 

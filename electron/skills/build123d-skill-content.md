@@ -2,6 +2,8 @@
 - **File & Output**: Code lives in `models/<model_name>/part.py`. The final build123d object must be assigned to the global `result` variable. Do NOT use manual `export_*()` calls. Unit: mm.
 - **Scaffold**: Strictly enforce this block order: `# === Parameters ===` -> `# === Derived Parameters ===` -> `# === Geometry ===`.
 - **Parameterization**: Load tunable variables from `params.json` in the Parameters block. No hardcoded dimensions in the Geometry block. Use flat vars/dicts; avoid over-engineering.
+- **Assembly Metadata**: For parts intended for assemblies, compute local connection anchors in `part.py` from the same geometry parameters used to build the shape, then expose them through a global `metadata` dict. Do not hand-maintain derived anchors in `params.json`.
+- **Metadata Format**: Use `metadata = {"schema": "aicad.part.metadata.v1", "units": "mm", "anchors": {...}}`. Anchor names should be reusable and mechanism-neutral when possible (for example `origin`, `pin`, `hinge`, `link_end`, `slide_axis`). Keep anchors in the same local coordinate frame as the exported mesh so `asm.xml` can reference them directly for body origins, sites, joints, and equality constraints.
 - **Conflict Priority**: If "fix rebuild" conflicts with "parameter refactor", prioritize restoring a successful build.
 
 ## 2. build123d Rules & Performance Optimization (CRITICAL)
