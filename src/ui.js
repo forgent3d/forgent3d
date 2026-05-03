@@ -110,8 +110,24 @@ export function initUI(viewer) {
   let paramsLoadSeq = 0;
   let paramsSaveTimer = null;
   let paramsSaving = false;
+  const LEFT_SIDEBAR_PREF_KEY = 'forgent3d.leftSidebarVisible';
   let leftSidebarVisible = false;
   let rightRailVisible = true;
+
+  function readLeftSidebarPreference() {
+    try {
+      const stored = window.localStorage?.getItem(LEFT_SIDEBAR_PREF_KEY);
+      return stored == null ? true : stored === 'true';
+    } catch {
+      return true;
+    }
+  }
+
+  function writeLeftSidebarPreference(visible) {
+    try {
+      window.localStorage?.setItem(LEFT_SIDEBAR_PREF_KEY, visible ? 'true' : 'false');
+    } catch {}
+  }
 
   if (el.viewCubeHost && typeof viewer.mountViewCube === 'function') {
     viewer.mountViewCube(el.viewCubeHost);
@@ -201,6 +217,7 @@ export function initUI(viewer) {
   function setProject(p, meta = null) {
     currentProject = p;
     currentKernel = meta?.kernel || null;
+    leftSidebarVisible = p ? readLeftSidebarPreference() : false;
     if (!p) {
       activePart = null;
       loadedPart = null;
@@ -626,6 +643,7 @@ export function initUI(viewer) {
   if (el.btnToggleLeft) {
     el.btnToggleLeft.addEventListener('click', () => {
       leftSidebarVisible = !leftSidebarVisible;
+      writeLeftSidebarPreference(leftSidebarVisible);
       applyLayoutVisibility();
     });
   }
@@ -639,6 +657,7 @@ export function initUI(viewer) {
     el.btnToggleLeftHandle.addEventListener('click', () => {
       if (!currentProject) return;
       leftSidebarVisible = true;
+      writeLeftSidebarPreference(leftSidebarVisible);
       applyLayoutVisibility();
     });
   }
