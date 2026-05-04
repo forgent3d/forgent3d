@@ -9,6 +9,7 @@ import { createContactShadow, createViewerLighting, decorateModelForCadDisplay }
 import { createSectionController } from './viewer-section.js';
 import { createSnapshotRenderer } from './viewer-snapshot.js';
 import { createViewController } from './viewer-navigation.js';
+import { createAppearanceController } from './viewer-appearance.js';
 // Vite treats wasm as an asset and returns the final bundled URL
 import occtWasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
 import mujocoWasmUrl from '@mujoco/mujoco/mujoco.wasm?url';
@@ -74,6 +75,7 @@ export function createViewer(host) {
   let mjcfSimulation = null;
   let viewCube = null;
   const sectionController = createSectionController(renderer, () => currentRoot);
+  const appearanceController = createAppearanceController({ getCurrentRoot: () => currentRoot });
   const viewController = createViewController({
     camera,
     controls,
@@ -162,6 +164,7 @@ export function createViewer(host) {
     disposeMjcfSimulation(mjcfSimulation);
     mjcfSimulation = null;
     sectionController.reset();
+    appearanceController.reset();
     contactShadow.hide();
     controls.target.set(0, 0, 0);
     controls.update();
@@ -181,6 +184,7 @@ export function createViewer(host) {
     const modelBox = prepareModelForCadDisplay(nextRoot);
     sectionController.setRangesFromBox(modelBox);
     sectionController.apply();
+    appearanceController.apply();
 
     if (previousRoot) {
       scene.remove(previousRoot);
@@ -198,6 +202,18 @@ export function createViewer(host) {
       viewController.fitView('iso');
     }
     if (viewCube) viewCube.setEnabled(true);
+  }
+
+  async function loadViewerParams(paramsUrl, onLog = () => {}) {
+    if (!paramsUrl) return {};
+    try {
+      const response = await fetch(paramsUrl);
+      if (!response.ok) throw new Error(`fetch ${paramsUrl} failed: ${response.status}`);
+      return await response.json();
+    } catch (err) {
+      onLog(`params.json appearance config unavailable: ${err?.message || err}`);
+      return {};
+    }
   }
 
   /* ---- Load BREP ---- */
@@ -317,11 +333,19 @@ export function createViewer(host) {
    * @param {(msg:string)=>void} [onLog]
    * @param {{ format?: 'BREP'|'STL'|'MJCF', paramsUrl?: string, preserveView?: boolean }} [opts]
    */
-  function loadModel(url, onLog = () => {}, opts = {}) {
+  async function loadModel(url, onLog = () => {}, opts = {}) {
     const fmt = (opts.format || '').toUpperCase();
-    if (fmt === 'MJCF' || /\/asm\.xml(\?|$)/i.test(url)) return loadMjcf(url, opts.paramsUrl, onLog, opts);
-    const isStl = fmt === 'STL' || /\.stl(\?|$)/i.test(url);
-    return isStl ? loadStl(url, onLog, opts) : loadBrep(url, onLog, opts);
+    appearanceController.reset();
+    let partInfo;
+    if (fmt === 'MJCF' || /\/asm\.xml(\?|$)/i.test(url)) {
+      partInfo = await loadMjcf(url, opts.paramsUrl, onLog, opts);
+    } else {
+      const isStl = fmt === 'STL' || /\.stl(\?|$)/i.test(url);
+      partInfo = await (isStl ? loadStl(url, onLog, opts) : loadBrep(url, onLog, opts));
+    }
+    const params = await loadViewerParams(opts.paramsUrl, onLog);
+    appearanceController.setMaterialParams(params);
+    return partInfo;
   }
 
   function mountViewCube(hostEl) {
@@ -364,6 +388,12 @@ export function createViewer(host) {
     resetSection: sectionController.resetSection,
     setGhostEnabled: sectionController.setGhostEnabled,
     getSectionState: sectionController.getSectionState,
+    setMaterialParams: appearanceController.setMaterialParams,
+    setPartMaterial: appearanceController.setPartMaterial,
+    setPartMaterialColor: appearanceController.setPartMaterialColor,
+    setPartMaterialColors: appearanceController.setPartMaterialColors,
+    getMaterialParts: appearanceController.getMaterialParts,
+    getPartMaterialState: appearanceController.getPartMaterialState,
     getCurrentView: viewController.getCurrentView,
     hasModel: () => !!currentRoot,
     clearModel,
@@ -376,6 +406,7 @@ export function createViewer(host) {
       }
       clearModel();
       contactShadow.dispose();
+      lighting.dispose();
       renderer.dispose();
     }
   };

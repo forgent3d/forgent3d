@@ -641,7 +641,7 @@ function createMainLogicTools({ state, deps }) {
       ? `aicad://asset/models/${encodeURIComponent(partName)}/${encodeURIComponent(sourceFile)}?t=${ts}`
       : `aicad://model/${encodeURIComponent(partName)}${suffix}?t=${ts}`;
     const paramsPath = deps.modelParamsPath(state.currentProjectPath(), partName);
-    const paramsUrl = source?.kind === 'asm' && fs.existsSync(paramsPath)
+    const paramsUrl = fs.existsSync(paramsPath)
       ? `aicad://asset/models/${encodeURIComponent(partName)}/params.json?t=${ts}`
       : null;
     deps.sendToRenderer('MODEL_UPDATED', {

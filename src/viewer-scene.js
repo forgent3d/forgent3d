@@ -1,8 +1,13 @@
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
 export function createViewerLighting(scene, renderer, getCurrentRoot) {
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.02;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
   scene.add(new THREE.HemisphereLight(0xe9f3ff, 0x101624, 0.72));
   const key = new THREE.DirectionalLight(0xffffff, 1.22);
@@ -70,7 +75,12 @@ export function createViewerLighting(scene, renderer, getCurrentRoot) {
 
   return {
     updateDirectionalLights,
-    updateShadowCameraForBox
+    updateShadowCameraForBox,
+    dispose() {
+      scene.environment?.dispose?.();
+      scene.environment = null;
+      pmrem.dispose();
+    }
   };
 }
 

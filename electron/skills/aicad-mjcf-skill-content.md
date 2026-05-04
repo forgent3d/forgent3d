@@ -16,6 +16,7 @@
 5. Create the top-level `models/<assembly_name>/asm.xml` and `models/<assembly_name>/params.json`.
 6. Copy generated anchors from part `metadata.json` into assembly params; attach meshes with geoms and expose connection points with `<site>`.
 7. Rebuild the assembly model and inspect the viewer output.
+8. When visual distinction helps, add preview materials under `params.json` `__viewer.materials.parts` using keys that match MJCF body names, geom names, or mesh names.
 
 ## Must Follow (MJCF)
 
@@ -30,6 +31,7 @@
 9. If the preview should move without UI input, add an `<actuator>` and a `<custom><numeric name="aicad_default_ctrl" data="..."/></custom>` vector. The viewer applies that control vector to `data.ctrl` on every MuJoCo step.
 10. Do not apply mechanism-specific formulas until the mechanism type is classified from the requested bodies and constraints. Use generic anchor-constraint modeling for unknown mechanisms.
 11. Treat part `params.json` as input dimensions and part `metadata.json` as derived geometry facts. Do not duplicate derived anchors by hand when metadata is available.
+12. Keep preview material styling in `params.json` under `__viewer.materials`; do not put renderer-only material data inside `asm.xml` constraints or geometry expressions unless it is needed for a mesh/body/geom name.
 
 ## Generic Anchor-Constraint Workflow
 

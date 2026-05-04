@@ -278,6 +278,19 @@ export async function loadMjcfScene({ url, paramsUrl, mjcfText = null, baseUrl =
       createCadClayMaterial()
     );
     mesh.name = String(geomEl.getAttribute('name') || meshName || 'geom');
+    mesh.userData.materialPart = {
+      id: mesh.name,
+      name: mesh.name,
+      aliases: [
+        mesh.name,
+        meshName,
+        parent?.name,
+        `${parent?.name || 'body'}/${mesh.name}`
+      ].filter(Boolean),
+      index: root.userData.materialPartCount || 0,
+      materialIndex: 0
+    };
+    root.userData.materialPartCount = (root.userData.materialPartCount || 0) + 1;
     applyMjcfTransform(mesh, geomEl, angleScale);
     const geomScale = parseVec3(geomEl.getAttribute('scale'), [1, 1, 1]);
     mesh.scale.set(asset.scale.x * geomScale.x, asset.scale.y * geomScale.y, asset.scale.z * geomScale.z);
