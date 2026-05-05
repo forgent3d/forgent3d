@@ -39,7 +39,7 @@
 
 Forgent3D is a local AI CAD companion for turning parametric model code into inspectable 3D geometry. Write or generate CAD with an AI coding agent, edit `params.json`, rebuild, and see the result in an interactive desktop previewer.
 
-![Forgent3D: parametric model and 3D preview](docs/forgent3d-preview.webp)
+![Forgent3D: parametric model and 3D preview](docs/forgent3d-preview.gif)
 
 ![Forgent3D: interactive viewer demo](docs/forgent3d-preview2.gif)
 
