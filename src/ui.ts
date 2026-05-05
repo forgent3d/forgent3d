@@ -53,7 +53,6 @@ export function initUI(viewer) {
 
     // Agent bar
     agentBar: document.getElementById('agent-bar'),
-    agentBarHint: document.getElementById('agent-bar-hint'),
     agentBtns: document.querySelectorAll('.agent-btn'),
 
     // Terminal panel
@@ -160,6 +159,14 @@ export function initUI(viewer) {
     const hasActivePart = !!activePart;
     if (!el.selectExportFormat || !el.btnExportActive) return;
 
+    const activeInfo = partsCache.find((part) => part.name === activePart);
+    const isAssembly = activeInfo?.kind === 'asm';
+    for (const option of Array.from(el.selectExportFormat.options || [])) {
+      option.disabled = isAssembly && option.value === 'step';
+    }
+    if (isAssembly && el.selectExportFormat.value === 'step') {
+      el.selectExportFormat.value = 'stl';
+    }
     el.selectExportFormat.disabled = !hasProject || !hasActivePart;
     el.btnExportActive.disabled = !hasProject || !hasActivePart;
 
@@ -238,9 +245,6 @@ export function initUI(viewer) {
     el.partsPanel.style.display = p ? '' : 'none';
     if (el.paramsPanel) el.paramsPanel.style.display = p ? '' : 'none';
     el.agentBtns.forEach((btn) => { btn.disabled = !p; });
-    if (el.agentBarHint) {
-      el.agentBarHint.textContent = p ? 'Open project and launch agent in a new terminal window' : 'Available after opening a project';
-    }
     applyLayoutVisibility();
     renderModelNameBadge();
     syncExportControls();
@@ -745,7 +749,6 @@ export function initUI(viewer) {
   }
 
   function setDebugToolsVisible(visible) {
-    termDebugEnabled = visible;
     el.debugTools.forEach((node) => node.classList.toggle('hidden', !visible));
     el.app?.classList.toggle('with-log-rail', !!visible);
   }

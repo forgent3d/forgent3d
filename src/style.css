@@ -923,9 +923,6 @@ html, body, #app {
   border-color: #394159;
   color: #e8ecf3;
 }
-.agent-btn:hover:not(:disabled) .agent-btn-cmd {
-  color: #6ee7ff;
-}
 .agent-btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
@@ -935,14 +932,24 @@ html, body, #app {
 }
 
 .agent-btn-icon {
-  font-size: 13px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
+  line-height: 0;
+  color: inherit;
+}
+.agent-brand-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  fill: currentColor;
 }
 .agent-btn-body {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
 }
 .agent-btn-name {
   font-size: 12px;
@@ -951,21 +958,6 @@ html, body, #app {
   line-height: 1;
 }
 .agent-btn:disabled .agent-btn-name { color: #6b7487; }
-.agent-btn-cmd {
-  font-family: "JetBrains Mono", Consolas, monospace;
-  font-size: 10px;
-  color: #4a5368;
-  line-height: 1;
-  transition: color 0.13s;
-}
-
-.agent-bar-hint {
-  margin-left: auto;
-  font-size: 11px;
-  color: #3a4158;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
 
 /* ---------- Embedded Terminal Panel ---------- */
 .terminal-panel {
