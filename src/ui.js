@@ -10,12 +10,13 @@ export function initUI(viewer) {
     statusText: document.getElementById('status-text'),
     spinner: document.getElementById('status-spinner'),
     modelNameBadge: document.getElementById('model-name-badge'),
+    previewToolbar: document.getElementById('preview-toolbar'),
+    previewModeBtns: document.querySelectorAll('[data-preview-mode]'),
     viewCubeHost: document.getElementById('viewcube-host'),
     sectionPanel: document.getElementById('section-panel'),
     sectionEnabled: document.getElementById('section-enabled'),
     sectionAxis: document.getElementById('section-axis'),
     sectionSlider: document.getElementById('section-slider'),
-    ghostEnabled: document.getElementById('ghost-enabled'),
     sectionReset: document.getElementById('section-reset'),
     btnToggleLeft: document.getElementById('btn-toggle-left'),
     btnToggleRight: document.getElementById('btn-toggle-right'),
@@ -185,6 +186,20 @@ export function initUI(viewer) {
     }
   }
 
+  function renderPreviewToolbar() {
+    if (!el.previewToolbar) return;
+    const hasProject = !!currentProject;
+    const hasModel = typeof viewer.hasModel === 'function' ? viewer.hasModel() : !!activePart;
+    const mode = typeof viewer.getPreviewMode === 'function' ? viewer.getPreviewMode() : 'solid';
+    el.previewToolbar.classList.toggle('hidden', !hasProject || !hasModel);
+    el.previewModeBtns.forEach((btn) => {
+      const active = btn.dataset.previewMode === mode;
+      btn.classList.toggle('active', active);
+      btn.disabled = !hasModel;
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+
   function renderSectionPanel() {
     if (!el.sectionPanel) return;
     const hasProject = !!currentProject;
@@ -204,10 +219,6 @@ export function initUI(viewer) {
     if (el.sectionSlider) {
       el.sectionSlider.value = String(Math.round((Number(section.normalized) || 0) * 100));
       el.sectionSlider.disabled = !hasModel || !section.enabled;
-    }
-    if (el.ghostEnabled) {
-      el.ghostEnabled.checked = !!section.ghost;
-      el.ghostEnabled.disabled = !hasModel;
     }
     if (el.sectionReset) {
       el.sectionReset.disabled = !hasModel || !section.enabled;
@@ -232,6 +243,7 @@ export function initUI(viewer) {
     applyLayoutVisibility();
     renderModelNameBadge();
     syncExportControls();
+    renderPreviewToolbar();
     renderViewCube();
     renderSectionPanel();
     if (!p) setParamsEditorIdle('Select a model to edit params.json');
@@ -689,20 +701,19 @@ export function initUI(viewer) {
       }
     });
   }
-  if (el.ghostEnabled) {
-    el.ghostEnabled.addEventListener('change', () => {
-      if (typeof viewer.setGhostEnabled === 'function') {
-        viewer.setGhostEnabled(el.ghostEnabled.checked);
-      }
-      renderSectionPanel();
-    });
-  }
   if (el.sectionReset) {
     el.sectionReset.addEventListener('click', () => {
       if (typeof viewer.resetSection === 'function') viewer.resetSection();
       renderSectionPanel();
     });
   }
+  el.previewModeBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.previewMode || 'solid';
+      if (typeof viewer.setPreviewMode === 'function') viewer.setPreviewMode(mode);
+      renderPreviewToolbar();
+    });
+  });
   /* ============================================================
      Embedded terminal panel
      ============================================================ */
@@ -932,7 +943,7 @@ export function initUI(viewer) {
         const { termId } = await api.terminalCreate(agent, currentProject, cols, rows);
         termDataChunkCount = 0;
         termDebug('terminalCreate returned', { termId });
-        termPanel?.attachSession(termId);
+        termPanel?.attachSession(termId, agent);
         termDebug('attachSession', { termId });
         // On first open, height animation may cause inaccurate rows; force another resize sync.
         requestAnimationFrame(() => {
@@ -975,6 +986,7 @@ export function initUI(viewer) {
         renderPartsList();
         renderModelNameBadge();
         syncExportControls();
+        renderPreviewToolbar();
         renderSectionPanel();
         refreshParamsEditor();
         break;
@@ -983,6 +995,7 @@ export function initUI(viewer) {
         renderPartsList();
         renderModelNameBadge();
         syncExportControls();
+        renderPreviewToolbar();
         renderSectionPanel();
         refreshParamsEditor({ force: true });
         break;
@@ -1033,16 +1046,22 @@ export function initUI(viewer) {
               `${partLabel}Model ready${sizeKB ? ' · ' + sizeKB : ''} · ${tail}`
             );
             renderViewCube();
+            renderPreviewToolbar();
             renderSectionPanel();
             // Send part info and single-view screenshots back to main process (MCP cache)
             try {
               // Wait one frame so OrbitControls and renderer.setSize first frame is stable
               await new Promise((r) => requestAnimationFrame(() => r()));
+              const snapshotViews = ['iso', 'front', 'side', 'top'];
+              const buildSnapshotSet = (mode) => Object.fromEntries(
+                snapshotViews.map((view) => [
+                  view,
+                  viewer.snapshot('image/png', { maxEdge: 1280, view, mode })
+                ])
+              );
               const snapshotDataURLs = {
-                iso: viewer.snapshot('image/png', { maxEdge: 1280, view: 'iso' }),
-                front: viewer.snapshot('image/png', { maxEdge: 1280, view: 'front' }),
-                side: viewer.snapshot('image/png', { maxEdge: 1280, view: 'side' }),
-                top: viewer.snapshot('image/png', { maxEdge: 1280, view: 'top' })
+                solid: buildSnapshotSet('solid'),
+                xray: buildSnapshotSet('xray')
               };
               await api.notifyPartLoaded({
                 part: payload.part,
@@ -1059,6 +1078,7 @@ export function initUI(viewer) {
             setStatus('Model load failed');
             appendLog(`${partLabel}Failed to load ${fmt}: ${e.message || e}`, 'error');
             renderViewCube();
+            renderPreviewToolbar();
             renderSectionPanel();
           });
         break;
@@ -1101,6 +1121,7 @@ export function initUI(viewer) {
   setDebugToolsVisible(false);
   applyLayoutVisibility();
   syncExportControls();
+  renderPreviewToolbar();
   renderViewCube();
   renderSectionPanel();
 

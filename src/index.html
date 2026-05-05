@@ -48,6 +48,11 @@
       <main class="viewport">
         <div id="canvas-host"></div>
         <div id="model-name-badge" class="model-name-badge hidden"></div>
+        <div id="preview-toolbar" class="preview-toolbar hidden" aria-label="Preview display mode">
+          <button id="preview-solid" class="preview-mode-btn active" type="button" data-preview-mode="solid">Solid</button>
+          <button id="preview-xray" class="preview-mode-btn" type="button" data-preview-mode="xray">X-Ray</button>
+          <button id="preview-wireframe" class="preview-mode-btn" type="button" data-preview-mode="wireframe">Wire</button>
+        </div>
         <div id="viewcube-host" class="viewcube-host hidden" aria-label="ViewCube"></div>
         <div id="section-panel" class="section-panel hidden" aria-label="Section clip controls">
           <label class="section-toggle">
@@ -60,10 +65,6 @@
             <option value="z">Z</option>
           </select>
           <input id="section-slider" type="range" min="-100" max="100" value="0" step="1" disabled />
-          <label class="section-toggle">
-            <input id="ghost-enabled" type="checkbox" />
-            <span>Ghost</span>
-          </label>
           <button id="section-reset" type="button" class="section-reset" disabled>Center</button>
         </div>
 

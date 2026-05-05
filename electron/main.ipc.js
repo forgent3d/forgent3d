@@ -170,22 +170,29 @@ function registerIpcHandlers({
     const snapshots = snapshotDataURLs && typeof snapshotDataURLs === 'object'
       ? snapshotDataURLs
       : { iso: snapshotDataURL };
-    for (const view of SCREENSHOT_VIEWS) {
-      const dataUrl = snapshots?.[view];
-      if (typeof dataUrl !== 'string') continue;
-      const m = /^data:image\/[a-zA-Z]+;base64,(.*)$/.exec(dataUrl);
-      if (!m) continue;
-      try {
-        fs.mkdirSync(path.join(state.currentProjectPath(), CACHE_DIR), { recursive: true });
-        fs.writeFileSync(deps.partPng(state.currentProjectPath(), part, view), Buffer.from(m[1], 'base64'));
-      } catch (e) {
-        deps.sendLog(`Failed to write screenshot cache (${view}): ${e.message}`, 'warn');
-      }
-      if (view === 'iso') {
+    const snapshotsByMode = snapshots?.solid || snapshots?.xray
+      ? snapshots
+      : { solid: snapshots };
+    for (const mode of ['solid', 'xray']) {
+      const modeSnapshots = snapshotsByMode?.[mode];
+      if (!modeSnapshots || typeof modeSnapshots !== 'object') continue;
+      for (const view of SCREENSHOT_VIEWS) {
+        const dataUrl = modeSnapshots?.[view];
+        if (typeof dataUrl !== 'string') continue;
+        const m = /^data:image\/[a-zA-Z]+;base64,(.*)$/.exec(dataUrl);
+        if (!m) continue;
         try {
-          fs.writeFileSync(deps.partPng(state.currentProjectPath(), part), Buffer.from(m[1], 'base64'));
+          fs.mkdirSync(path.join(state.currentProjectPath(), CACHE_DIR), { recursive: true });
+          fs.writeFileSync(deps.partPng(state.currentProjectPath(), part, view, mode), Buffer.from(m[1], 'base64'));
         } catch (e) {
-          deps.sendLog(`Failed to write screenshot cache (legacy iso): ${e.message}`, 'warn');
+          deps.sendLog(`Failed to write screenshot cache (${mode}/${view}): ${e.message}`, 'warn');
+        }
+        if (mode === 'solid' && view === 'iso') {
+          try {
+            fs.writeFileSync(deps.partPng(state.currentProjectPath(), part), Buffer.from(m[1], 'base64'));
+          } catch (e) {
+            deps.sendLog(`Failed to write screenshot cache (legacy iso): ${e.message}`, 'warn');
+          }
         }
       }
     }

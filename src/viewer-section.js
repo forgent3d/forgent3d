@@ -18,7 +18,6 @@ export function createSectionController(renderer, getCurrentRoot) {
       z: { min: -1, max: 1 }
     }
   };
-  let ghostEnabled = false;
 
   function getSectionWorldCoord() {
     const t = (THREE.MathUtils.clamp(state.normalized, -1, 1) + 1) * 0.5;
@@ -26,37 +25,25 @@ export function createSectionController(renderer, getCurrentRoot) {
     return THREE.MathUtils.lerp(min, max, t);
   }
 
+  function getSectionPlaneInfo() {
+    const axis = state.axis;
+    return {
+      enabled: state.enabled,
+      axis,
+      coord: getSectionWorldCoord(),
+      ranges: {
+        x: { ...state.ranges.x },
+        y: { ...state.ranges.y },
+        z: { ...state.ranges.z }
+      }
+    };
+  }
+
   function applySectionPlane() {
     const coord = getSectionWorldCoord();
     const normal = SECTION_AXIS_NORMALS[state.axis] || SECTION_AXIS_NORMALS.y;
     sectionPlane.set(normal, -coord);
     renderer.clippingPlanes = state.enabled ? [sectionPlane] : [];
-  }
-
-  function applyGhostMode() {
-    const currentRoot = getCurrentRoot?.();
-    if (!currentRoot) return;
-    currentRoot.traverse((child) => {
-      if (!child?.isMesh || !child.material) return;
-      const mats = Array.isArray(child.material) ? child.material : [child.material];
-      for (const m of mats) {
-        if (!m) continue;
-        if (!m.userData.__ghostBackup) {
-          m.userData.__ghostBackup = {
-            transparent: !!m.transparent,
-            opacity: Number.isFinite(m.opacity) ? m.opacity : 1
-          };
-        }
-        if (ghostEnabled) {
-          m.transparent = true;
-          m.opacity = Math.min(0.22, m.userData.__ghostBackup.opacity);
-        } else {
-          m.transparent = m.userData.__ghostBackup.transparent;
-          m.opacity = m.userData.__ghostBackup.opacity;
-        }
-        m.needsUpdate = true;
-      }
-    });
   }
 
   return {
@@ -78,12 +65,10 @@ export function createSectionController(renderer, getCurrentRoot) {
       state.axis = 'y';
       state.normalized = 0;
       state.enabled = false;
-      ghostEnabled = false;
       renderer.clippingPlanes = [];
     },
     apply() {
       applySectionPlane();
-      applyGhostMode();
     },
     setSectionEnabled(enabled) {
       state.enabled = !!enabled;
@@ -102,17 +87,13 @@ export function createSectionController(renderer, getCurrentRoot) {
       state.normalized = 0;
       applySectionPlane();
     },
-    setGhostEnabled(enabled) {
-      ghostEnabled = !!enabled;
-      applyGhostMode();
-    },
     getSectionState() {
       return {
         enabled: state.enabled,
         axis: state.axis,
-        normalized: state.normalized,
-        ghost: ghostEnabled
+        normalized: state.normalized
       };
-    }
+    },
+    getSectionPlaneInfo
   };
 }

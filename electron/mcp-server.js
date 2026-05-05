@@ -90,19 +90,21 @@ function buildMcpServer(ctx, { McpServer, z }) {
       ].join('\n'),
       inputSchema: {
         model: z.string().describe('Model directory name'),
-        view: z.enum(['iso', 'front', 'side', 'top']).optional().describe('Screenshot view, defaults to iso')
+        view: z.enum(['iso', 'front', 'side', 'top']).optional().describe('Screenshot view, defaults to iso'),
+        mode: z.enum(['solid', 'xray']).optional().describe('Preview mode, defaults to solid')
       }
     },
-    async ({ model, view }) => {
+    async ({ model, view, mode }) => {
       const actualView = view || 'iso';
-      const png = await ctx.getPartScreenshot(model, actualView);
+      const actualMode = mode || 'solid';
+      const png = await ctx.getPartScreenshot(model, actualView, actualMode);
       if (!png) {
         return {
           isError: true,
           content: [{
             type: 'text',
             text:
-              `No screenshot cache for model "${model}" (view: ${actualView}).\n` +
+              `No screenshot cache for model "${model}" (view: ${actualView}, mode: ${actualMode}).\n` +
               `Next: call rebuild_model({"model":"${model}"}).\n` +
               `If it still fails, call list_models to confirm "${model}" exists and name is correct, then call screenshot_model again.`
           }]
@@ -114,7 +116,7 @@ function buildMcpServer(ctx, { McpServer, z }) {
           {
             type: 'text',
             text:
-              `${actualView} screenshot for model "${model}". ` +
+              `${actualMode}/${actualView} screenshot for model "${model}". ` +
               `If another angle is needed, trigger the latest render through the model tools first, then call this tool again.`
           }
         ]

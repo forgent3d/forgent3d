@@ -711,11 +711,11 @@ function createMainLogicTools({ state, deps }) {
           capturedAt: new Date(info.capturedAt).toISOString()
         };
       },
-      async getPartScreenshot(name, view = 'iso') {
+      async getPartScreenshot(name, view = 'iso', mode = 'solid') {
         if (!state.currentProjectPath()) return null;
         if (!deps.resolveModelSource(state.currentProjectPath(), name)) return null;
         try { await selectPart(name); } catch { return null; }
-        const p = deps.partPng(state.currentProjectPath(), name, view);
+        const p = deps.partPng(state.currentProjectPath(), name, view, mode);
         if (!fs.existsSync(p)) return null;
         return fs.readFileSync(p);
       },

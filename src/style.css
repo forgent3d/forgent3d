@@ -345,6 +345,41 @@ html, body, #app {
   pointer-events: none;
 }
 
+.preview-toolbar {
+  position: absolute;
+  top: 52px;
+  left: 14px;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid #2a3143;
+  background: rgba(14, 18, 27, 0.9);
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+  z-index: 6;
+}
+.preview-mode-btn {
+  min-width: 52px;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #9aa8c0;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.preview-mode-btn:hover {
+  color: #dfe6f6;
+  background: rgba(42, 49, 67, 0.72);
+}
+.preview-mode-btn.active {
+  color: #061018;
+  background: #6ee7ff;
+}
+
 .viewcube-host {
   position: absolute;
   top: 18px;
@@ -523,6 +558,14 @@ html, body, #app {
 }
 
 @media (max-width: 900px) {
+  .preview-toolbar {
+    top: 48px;
+    left: 12px;
+  }
+  .preview-mode-btn {
+    min-width: 44px;
+    padding: 0 8px;
+  }
   .viewcube-host {
     top: 14px;
     right: 14px;

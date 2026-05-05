@@ -128,8 +128,12 @@ function normalizeScreenshotView(view) {
   const v = String(view || 'iso').trim().toLowerCase();
   return SCREENSHOT_VIEWS.includes(v) ? v : 'iso';
 }
-function partPng(projectPath, name, view = 'iso') {
+function partPng(projectPath, name, view = 'iso', mode = 'solid') {
   const v = normalizeScreenshotView(view);
+  const m = String(mode || 'solid').trim().toLowerCase() === 'xray' ? 'xray' : 'solid';
+  if (m === 'xray') {
+    return path.join(projectPath, CACHE_DIR, v === 'iso' ? `${name}.xray.png` : `${name}.${v}.xray.png`);
+  }
   return path.join(projectPath, CACHE_DIR, v === 'iso' ? `${name}.png` : `${name}.${v}.png`);
 }
 function projectMetaPath(projectPath) {

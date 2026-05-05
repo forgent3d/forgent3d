@@ -223,6 +223,8 @@ export function createSnapshotRenderer({
   camera,
   axes,
   getCurrentRoot,
+  getPreviewMode,
+  setPreviewMode,
   updateDirectionalLights
 }) {
   return function snapshot(mimeType = 'image/png', opts = {}) {
@@ -233,6 +235,9 @@ export function createSnapshotRenderer({
       const srcH = Math.max(1, src.height);
       const viewKey = String(opts.view || 'iso').toLowerCase();
       const view = SNAPSHOT_VIEWS[viewKey] || SNAPSHOT_VIEWS.iso;
+      const mode = ['solid', 'xray', 'wireframe'].includes(String(opts.mode || opts.previewMode || 'solid').toLowerCase())
+        ? String(opts.mode || opts.previewMode || 'solid').toLowerCase()
+        : 'solid';
       const maxEdge = opts.maxEdge || opts.maxWidth || Math.max(srcW, srcH);
       const currentRoot = getCurrentRoot?.();
 
@@ -242,6 +247,13 @@ export function createSnapshotRenderer({
       }
 
       const box = new THREE.Box3().setFromObject(currentRoot);
+      if (opts.axes !== false && axes) {
+        const oldAxesVisibleForBounds = axes.visible;
+        axes.visible = true;
+        const axesBox = new THREE.Box3().setFromObject(axes);
+        axes.visible = oldAxesVisibleForBounds;
+        if (!axesBox.isEmpty()) box.union(axesBox);
+      }
       const sphere = box.getBoundingSphere(new THREE.Sphere());
       const center = sphere.center.clone();
       const frame = computeSnapshotFrame(currentRoot, box, center, view, maxEdge);
@@ -250,14 +262,17 @@ export function createSnapshotRenderer({
       const oldSize = renderer.getSize(new THREE.Vector2());
       const oldAxesVisible = axes.visible;
       const oldBackground = scene.background;
+      const oldPreviewMode = getPreviewMode?.();
+      if (setPreviewMode) setPreviewMode(mode);
       restoreSnapshotState = () => {
+        if (setPreviewMode && oldPreviewMode) setPreviewMode(oldPreviewMode);
         axes.visible = oldAxesVisible;
         scene.background = oldBackground;
         renderer.setPixelRatio(oldPixelRatio);
         renderer.setSize(oldSize.x, oldSize.y, false);
         renderer.render(scene, camera);
       };
-      axes.visible = false;
+      axes.visible = opts.axes !== false;
       scene.background = new THREE.Color(VIEWER_BACKGROUND_COLOR);
 
       renderer.setPixelRatio(1);

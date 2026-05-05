@@ -29,6 +29,7 @@ export function createTerminalPanel(containerEl, api) {
   let xterm      = null;
   let fitAddon   = null;
   let termId     = null;
+  let currentAgent = null;
   let resizeObserver = null;
   let hasBoundFocusHandlers = false;
   let onContainerPointerDown = null;
@@ -89,6 +90,7 @@ export function createTerminalPanel(containerEl, api) {
       const isModifier = ev.ctrlKey || ev.metaKey;
       const isShift = ev.shiftKey;
       const hasSelection = !!xterm?.hasSelection?.();
+      const isCodexSession = currentAgent === 'codex';
 
       // Copy selected text:
       // - Ctrl/Cmd+C when there is a selection
@@ -100,6 +102,12 @@ export function createTerminalPanel(containerEl, api) {
         }
         ev.preventDefault();
         return false;
+      }
+
+      // Codex handles Ctrl/Alt+V itself and reads image data from the native clipboard.
+      // Keep those chords available in Codex sessions so pasted images can be attached.
+      if (isCodexSession && key === 'v' && !isShift && (ev.ctrlKey || ev.altKey) && !ev.metaKey) {
+        return true;
       }
 
       // Paste text:
@@ -158,9 +166,10 @@ export function createTerminalPanel(containerEl, api) {
 
   /** Bind current PTY session id and focus xterm so subsequent key input
    *  (including IME composition keys) goes directly to the hidden textarea. */
-  function attachSession(id) {
+  function attachSession(id, agent = null) {
     const wasSwitched = termId !== id;
     termId = id;
+    currentAgent = id ? agent : null;
     // For a new PTY session, always reset terminal modes/buffer to avoid stale
     // alternate-screen artifacts (common in full-screen terminal TUIs).
     if (wasSwitched && id) {
