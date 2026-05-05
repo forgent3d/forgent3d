@@ -76,6 +76,9 @@ jobs:
       - name: Build renderer
         run: pnpm run build:renderer
 
+      - name: Build Electron main
+        run: pnpm run build:electron
+
       - name: Build embedded export runner
         env:
           PIP_INDEX_URL: https://pypi.org/simple
