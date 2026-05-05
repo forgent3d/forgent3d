@@ -4,7 +4,8 @@ export function createParamsEditorController({
   api,
   elements,
   getCurrentProject,
-  getActivePart
+  getActivePart,
+  t = (key) => key
 }) {
   let paramsModel = null;
   let paramsOriginal = null;
@@ -81,7 +82,7 @@ export function createParamsEditorController({
     if (!rows.length) {
       const empty = document.createElement('div');
       empty.className = 'param-empty';
-      empty.textContent = 'No numeric params outside parts';
+      empty.textContent = t('noNumericParams');
       elements.paramsEditor.appendChild(empty);
       return;
     }
@@ -131,11 +132,11 @@ export function createParamsEditorController({
         const dirty = JSON.stringify(paramsWorking) !== JSON.stringify(paramsOriginal);
         setDirty(dirty);
         if (dirty) {
-          setStatus(`Updating ${paramsModel}/params.json ...`);
+          setStatus(t('updatingParams', { model: paramsModel }));
           scheduleAutoSave();
         } else {
           clearPendingSave();
-          setStatus(`Editing ${paramsModel}/params.json`);
+          setStatus(t('editingParams', { model: paramsModel }));
         }
       };
 
@@ -167,13 +168,13 @@ export function createParamsEditorController({
     paramsWorking = null;
     setDirty(false);
     render();
-    setStatus(message || 'Select a model to edit params.json');
+    setStatus(message || t('selectModelParams'));
   }
 
   async function refresh({ force = false } = {}) {
     const activePart = getActivePart();
     if (!getCurrentProject() || !activePart || !elements.paramsEditor) {
-      setIdle('Select a model to edit params.json');
+      setIdle(t('selectModelParams'));
       return;
     }
     if (paramsModel === activePart && !force) return;
@@ -182,7 +183,7 @@ export function createParamsEditorController({
     paramsWorking = null;
     render();
     setDirty(false);
-    setStatus(`Loading ${target}/params.json ...`);
+    setStatus(t('loadingParams', { model: target }));
     try {
       const res = await api.getParams(target);
       if (seq !== paramsLoadSeq || target !== getActivePart()) return;
@@ -192,7 +193,7 @@ export function createParamsEditorController({
       paramsWorking = cloneParams(paramsOriginal);
       render();
       setDirty(false);
-      setStatus(res?.exists ? `Editing ${target}/params.json` : `params.json will be created for ${target}`);
+      setStatus(res?.exists ? t('editingParams', { model: target }) : t('paramsWillBeCreated', { model: target }));
     } catch (e) {
       if (seq !== paramsLoadSeq) return;
       paramsModel = target;
@@ -211,7 +212,7 @@ export function createParamsEditorController({
     paramsWorking = cloneParams(paramsOriginal);
     render();
     setDirty(JSON.stringify(paramsWorking) !== JSON.stringify(paramsSaved));
-    setStatus(`Reverting ${paramsModel}/params.json ...`);
+    setStatus(t('revertingParams', { model: paramsModel }));
     save({ keepOriginal: true });
   }
 
@@ -221,7 +222,7 @@ export function createParamsEditorController({
     if (paramsSaving) return;
     const target = activePart;
     paramsSaving = true;
-    setStatus(`Saving ${target}/params.json ...`);
+    setStatus(t('savingParams', { model: target }));
     try {
       const snapshot = cloneParams(paramsWorking);
       const text = JSON.stringify(snapshot, null, 2) + '\n';
@@ -236,14 +237,14 @@ export function createParamsEditorController({
       if (JSON.stringify(paramsWorking) !== JSON.stringify(snapshot)) {
         paramsSaving = false;
         setDirty(JSON.stringify(paramsWorking) !== JSON.stringify(paramsOriginal));
-        setStatus(`Updating ${target}/params.json ...`);
+        setStatus(t('updatingParams', { model: target }));
         scheduleAutoSave();
         return;
       }
       paramsWorking = cloneParams(paramsSaved);
       setDirty(JSON.stringify(paramsWorking) !== JSON.stringify(paramsOriginal));
       paramsSaving = false;
-      setStatus(`Saved ${target}/params.json; rebuilding model`, 'ok');
+      setStatus(t('savedParamsRebuilding', { model: target }), 'ok');
     } catch (e) {
       paramsSaving = false;
       render();

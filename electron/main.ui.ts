@@ -28,6 +28,78 @@ function createMainUiTools({
     sendToRenderer('LOG', { message, level, ts: Date.now() });
   }
 
+  const menuMessages = {
+    en: {
+      file: 'File',
+      newProject: 'New Project...',
+      openProject: 'Open Project...',
+      rebuild: 'Rebuild',
+      revealInFolder: 'Reveal in Folder',
+      exportCurrentModel: 'Export Current Model',
+      exportStep: 'Export STEP...',
+      exportStl: 'Export STL...',
+      exportObj: 'Export OBJ...',
+      quit: 'Quit',
+      edit: 'Edit',
+      undo: 'Undo',
+      redo: 'Redo',
+      cut: 'Cut',
+      copy: 'Copy',
+      paste: 'Paste',
+      selectAll: 'Select All',
+      view: 'View',
+      reload: 'Reload',
+      developerTools: 'Developer Tools',
+      debugTools: 'Debug Tools',
+      actualSize: 'Actual Size',
+      zoomIn: 'Zoom In',
+      zoomOut: 'Zoom Out',
+      toggleFullScreen: 'Toggle Full Screen',
+      language: 'Language',
+      english: 'English',
+      chinese: '中文'
+    },
+    'zh-CN': {
+      file: '文件',
+      newProject: '新建项目...',
+      openProject: '打开项目...',
+      rebuild: '重新构建',
+      revealInFolder: '在文件夹中显示',
+      exportCurrentModel: '导出当前模型',
+      exportStep: '导出 STEP...',
+      exportStl: '导出 STL...',
+      exportObj: '导出 OBJ...',
+      quit: '退出',
+      edit: '编辑',
+      undo: '撤销',
+      redo: '重做',
+      cut: '剪切',
+      copy: '复制',
+      paste: '粘贴',
+      selectAll: '全选',
+      view: '视图',
+      reload: '重新加载',
+      developerTools: '开发者工具',
+      debugTools: '调试工具',
+      actualSize: '实际大小',
+      zoomIn: '放大',
+      zoomOut: '缩小',
+      toggleFullScreen: '切换全屏',
+      language: '语言',
+      english: 'English',
+      chinese: '中文'
+    }
+  };
+
+  function t(key) {
+    const language = state.appLanguage?.() || 'en';
+    return menuMessages[language]?.[key] || menuMessages.en[key] || key;
+  }
+
+  function setLanguage(language) {
+    if (typeof deps.setLanguage === 'function') deps.setLanguage(language);
+  }
+
   function getMcpStatusPayload() {
     const li = deps.mcp.getListenInfo?.() ?? null;
     const fallbackUrl = `http://127.0.0.1:${deps.MCP_PORT}/mcp`;
@@ -104,6 +176,7 @@ function createMainUiTools({
         sendLog(`Python status check failed: ${e.message}`, 'error');
       }
       broadcastMcpStatus();
+      sendToRenderer('LANGUAGE_CHANGED', { language: state.appLanguage?.() || 'en' });
       sendToRenderer('MENU_TOGGLE_DEBUG_TOOLS', { visible: state.debugToolsVisible() });
       try {
         await deps.restoreLastProjectIfAvailable();
@@ -122,15 +195,15 @@ function createMainUiTools({
     const hasProject = !!state.currentProjectPath();
     const template = [
       {
-        label: 'File',
+        label: t('file'),
         submenu: [
           {
-            label: 'New Project...',
+            label: t('newProject'),
             accelerator: 'CmdOrCtrl+N',
             click: () => sendToRenderer('MENU_NEW_PROJECT', {})
           },
           {
-            label: 'Open Project...',
+            label: t('openProject'),
             accelerator: 'CmdOrCtrl+O',
             click: async () => {
               try {
@@ -142,7 +215,7 @@ function createMainUiTools({
           },
           { type: 'separator' },
           {
-            label: 'Rebuild',
+            label: t('rebuild'),
             accelerator: 'F5',
             enabled: hasProject,
             click: () => {
@@ -150,45 +223,45 @@ function createMainUiTools({
             }
           },
           {
-            label: 'Reveal in Folder',
+            label: t('revealInFolder'),
             enabled: hasProject,
             click: () => {
               if (state.currentProjectPath()) shell.openPath(state.currentProjectPath());
             }
           },
           {
-            label: 'Export Current Model',
+            label: t('exportCurrentModel'),
             enabled: hasProject && !!state.activePart(),
             submenu: [
-              { label: 'Export STEP...', enabled: hasProject && !!state.activePart(), click: () => deps.handleExportFromMenu('step') },
-              { label: 'Export STL...', enabled: hasProject && !!state.activePart(), click: () => deps.handleExportFromMenu('stl') },
-              { label: 'Export OBJ...', enabled: hasProject && !!state.activePart(), click: () => deps.handleExportFromMenu('obj') }
+              { label: t('exportStep'), enabled: hasProject && !!state.activePart(), click: () => deps.handleExportFromMenu('step') },
+              { label: t('exportStl'), enabled: hasProject && !!state.activePart(), click: () => deps.handleExportFromMenu('stl') },
+              { label: t('exportObj'), enabled: hasProject && !!state.activePart(), click: () => deps.handleExportFromMenu('obj') }
             ]
           },
           { type: 'separator' },
-          { role: 'quit', label: 'Quit' }
+          { role: 'quit', label: t('quit') }
         ]
       },
       {
-        label: 'Edit',
+        label: t('edit'),
         submenu: [
-          { role: 'undo', label: 'Undo' },
-          { role: 'redo', label: 'Redo' },
+          { role: 'undo', label: t('undo') },
+          { role: 'redo', label: t('redo') },
           { type: 'separator' },
-          { role: 'cut', label: 'Cut' },
-          { role: 'copy', label: 'Copy' },
-          { role: 'paste', label: 'Paste' },
-          { role: 'selectAll', label: 'Select All' }
+          { role: 'cut', label: t('cut') },
+          { role: 'copy', label: t('copy') },
+          { role: 'paste', label: t('paste') },
+          { role: 'selectAll', label: t('selectAll') }
         ]
       },
       {
-        label: 'View',
+        label: t('view'),
         submenu: [
-          { role: 'reload', label: 'Reload' },
-          { role: 'toggleDevTools', label: 'Developer Tools' },
+          { role: 'reload', label: t('reload') },
+          { role: 'toggleDevTools', label: t('developerTools') },
           {
             type: 'checkbox',
-            label: 'Debug Tools',
+            label: t('debugTools'),
             checked: state.debugToolsVisible(),
             click: (menuItem) => {
               state.setDebugToolsVisible(!!menuItem.checked);
@@ -196,11 +269,19 @@ function createMainUiTools({
             }
           },
           { type: 'separator' },
-          { role: 'resetZoom', label: 'Actual Size' },
-          { role: 'zoomIn', label: 'Zoom In' },
-          { role: 'zoomOut', label: 'Zoom Out' },
+          {
+            label: t('language'),
+            submenu: [
+              { type: 'radio', label: t('english'), checked: (state.appLanguage?.() || 'en') === 'en', click: () => setLanguage('en') },
+              { type: 'radio', label: t('chinese'), checked: state.appLanguage?.() === 'zh-CN', click: () => setLanguage('zh-CN') }
+            ]
+          },
           { type: 'separator' },
-          { role: 'togglefullscreen', label: 'Toggle Full Screen' }
+          { role: 'resetZoom', label: t('actualSize') },
+          { role: 'zoomIn', label: t('zoomIn') },
+          { role: 'zoomOut', label: t('zoomOut') },
+          { type: 'separator' },
+          { role: 'togglefullscreen', label: t('toggleFullScreen') }
         ]
       }
     ];
@@ -295,6 +376,7 @@ function initMainUiTools(mainContext) {
       activePart: state.activePart,
       debugToolsVisible: state.debugToolsVisible,
       setDebugToolsVisible: state.setDebugToolsVisible,
+      appLanguage: state.appLanguage,
       mcpStartError: state.mcpStartError
     },
     deps: {
@@ -309,6 +391,7 @@ function initMainUiTools(mainContext) {
       stopWatcher: project.stopWatcher,
       openProject: project.openProject,
       loadAppConfig: project.loadAppConfig,
+      setLanguage: project.setLanguage,
       clearLastProjectPath: project.clearLastProjectPath,
       exportPartByRequest: exportApi.exportPartByRequest,
       scheduleBuild: build.scheduleBuild,

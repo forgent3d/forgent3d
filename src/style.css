@@ -47,17 +47,6 @@ html, body, #app {
   display: none;
 }
 
-#app.right-collapsed {
-  grid-template-columns: 320px minmax(0, 1fr) !important;
-}
-#app.right-collapsed.left-collapsed {
-  grid-template-columns: minmax(0, 1fr) !important;
-}
-#app.right-collapsed .log-rail,
-#app.right-collapsed .terminal-panel {
-  display: none !important;
-}
-
 /* ---------- Sidebar ---------- */
 .sidebar {
   background: #11141b;
@@ -90,6 +79,18 @@ html, body, #app {
   cursor: pointer;
   font-size: 12px;
   line-height: 1;
+}
+.collapse-icon {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-top: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+  transform: rotate(225deg);
+}
+#app.left-collapsed .edge-toggle-left .collapse-icon,
+#btn-toggle-left-handle .collapse-icon {
+  transform: rotate(45deg);
 }
 .panel-collapse-btn:hover {
   background: #1b2131;
@@ -306,10 +307,6 @@ html, body, #app {
   background: radial-gradient(ellipse at 30% 20%, #1a1d2a 0%, #0b0d12 70%);
 }
 
-#app.left-collapsed.right-collapsed .viewport {
-  grid-column: 1;
-}
-
 .log-rail {
   grid-row: 1;
 }
@@ -512,7 +509,7 @@ html, body, #app {
   z-index: 5;
 }
 .edge-toggle {
-  position: fixed;
+  position: absolute;
   top: 50%;
   transform: translateY(-50%);
   width: 20px;
@@ -522,6 +519,9 @@ html, body, #app {
   color: #a9b2c6;
   cursor: pointer;
   z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .edge-toggle:hover {
   background: #1b2131;
@@ -531,11 +531,6 @@ html, body, #app {
   left: 0;
   border-left: 0;
   border-radius: 0 8px 8px 0;
-}
-.edge-toggle-right {
-  right: 0;
-  border-right: 0;
-  border-radius: 8px 0 0 8px;
 }
 .spinner {
   width: 12px; height: 12px;
@@ -1019,12 +1014,12 @@ html, body, #app {
 .term-header {
   display: flex;
   align-items: center;
-  padding: 0 10px 0 12px;
+  padding: 0 10px 0 8px;
   height: 32px;
   flex-shrink: 0;
   border-bottom: 1px solid #1f2330;
   background: #0c0e14;
-  gap: 10px;
+  gap: 8px;
 }
 .term-title {
   flex: 1;
@@ -1039,10 +1034,6 @@ html, body, #app {
 .term-header-actions {
   display: flex;
   gap: 4px;
-}
-#btn-toggle-right.active {
-  color: #d7f7ff;
-  border: 1px solid #2a3143;
 }
 .term-action-btn {
   background: transparent;

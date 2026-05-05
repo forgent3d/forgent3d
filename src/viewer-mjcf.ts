@@ -301,6 +301,13 @@ export async function loadMjcfScene({ url, paramsUrl, mjcfText = null, baseUrl =
   function addBody(parent, bodyEl) {
     const body = new THREE.Group();
     body.name = String(bodyEl.getAttribute('name') || 'body');
+    const parentBody = parent?.userData?.isMjcfBody ? parent : null;
+    body.userData.isMjcfBody = true;
+    body.userData.mjcfParentBody = parentBody;
+    body.userData.mjcfDepth = parentBody ? (Number(parentBody.userData.mjcfDepth) || 0) + 1 : 0;
+    body.userData.mjcfChildIndex = parentBody
+      ? parentBody.children.filter((child) => child.userData?.isMjcfBody).length
+      : root.children.filter((child) => child.userData?.isMjcfBody).length;
     applyMjcfTransform(body, bodyEl, angleScale);
     root.userData.mjcfBodies.push(body);
     parent.add(body);

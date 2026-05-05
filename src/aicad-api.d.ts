@@ -68,6 +68,8 @@ type AicadApi = {
   mcpStatus(): Promise<unknown>;
   mcpTestListParts(): Promise<unknown>;
   pythonStatus(): Promise<unknown>;
+  getLanguage(): Promise<string>;
+  setLanguage(language: string): Promise<string>;
 
   terminalCreate(agent: string, projectPath: string, cols: number, rows: number): Promise<AicadTerminalCreatePayload>;
   terminalWrite(termId: string, data: string): Promise<void>;

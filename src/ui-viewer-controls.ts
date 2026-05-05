@@ -5,7 +5,8 @@ export function createViewerUiController({
   elements,
   getHasProject,
   getHasModel,
-  appendLog
+  appendLog,
+  t = (key) => key
 }) {
   let autoShowFrame = null;
   let autoShowModeLastTs = 0;
@@ -50,12 +51,19 @@ export function createViewerUiController({
       elements.viewShowcaseBtn.disabled = !hasModel;
       elements.viewShowcaseBtn.setAttribute('aria-pressed', autoShowRunning ? 'true' : 'false');
     }
+    elements.viewModeBtns?.forEach((btn) => {
+      const mode = typeof viewer.getPreviewMode === 'function' ? viewer.getPreviewMode() : 'solid';
+      const active = btn.dataset.previewMode === mode;
+      btn.classList.toggle('active', active);
+      btn.disabled = !hasModel;
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
     if (elements.viewExplodeBtn) {
       const canExplode = hasModel && !!explode.available;
       elements.viewExplodeBtn.classList.toggle('active', !!explode.enabled);
       elements.viewExplodeBtn.disabled = !canExplode;
       elements.viewExplodeBtn.setAttribute('aria-pressed', explode.enabled ? 'true' : 'false');
-      elements.viewExplodeBtn.title = canExplode ? 'Toggle exploded view' : 'Explode needs multiple visible parts';
+      elements.viewExplodeBtn.title = canExplode ? t('toggleExplodedView') : t('explodeNeedsParts');
     }
     if (elements.viewExplodeDistance) {
       elements.viewExplodeDistance.disabled = !hasModel || !explode.available;
@@ -69,7 +77,7 @@ export function createViewerUiController({
     const hasModel = getHasModel();
     const mode = typeof viewer.getPreviewMode === 'function' ? viewer.getPreviewMode() : 'solid';
     elements.previewToolbar.classList.toggle('hidden', !hasProject || !hasModel);
-    elements.previewModeBtns.forEach((btn) => {
+    elements.viewModeBtns?.forEach((btn) => {
       const active = btn.dataset.previewMode === mode;
       btn.classList.toggle('active', active);
       btn.disabled = !hasModel;
@@ -127,7 +135,7 @@ export function createViewerUiController({
   function startAutoShow() {
     if (autoShowRunning) return;
     if (!getHasModel()) {
-      appendLog('Auto Showcase needs a loaded model.', 'warn');
+      appendLog(t('autoShowNeedsModel'), 'warn');
       return;
     }
     autoShowRunning = true;
@@ -162,7 +170,7 @@ export function createViewerUiController({
       ? viewer.getExplodeState()
       : { available: false };
     if (!getHasModel() || !state.available) {
-      appendLog('Exploded View needs a loaded model with multiple visible parts.', 'warn');
+      appendLog(t('explodeNeedsLoadedParts'), 'warn');
       return;
     }
     if (typeof viewer.setExplodeEnabled === 'function') viewer.setExplodeEnabled(true);
@@ -174,7 +182,7 @@ export function createViewerUiController({
     renderViewControls();
   }
 
-  elements.previewModeBtns.forEach((btn) => {
+  elements.viewModeBtns?.forEach((btn) => {
     btn.addEventListener('click', () => {
       stopAutoShow();
       const mode = btn.dataset.previewMode || 'solid';

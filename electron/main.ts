@@ -60,6 +60,7 @@ let currentProjectPath = null;
 let currentKernel = null;     // CAD kernel used by the open project, or null when no project is open.
 let activePart = null;        // Model currently shown in the viewport.
 let debugToolsVisible = false;
+let appLanguage = 'en';
 const buildingParts = new Set();   // Models currently being built.
 const pendingParts = new Set();    // Models queued for another build pass.
 
@@ -165,6 +166,30 @@ function clearLastProjectPath() {
   if (!cfg.lastProjectPath) return;
   delete cfg.lastProjectPath;
   saveAppConfig(cfg);
+}
+
+function normalizeLanguage(language) {
+  const value = String(language || '').trim();
+  return value === 'zh-CN' ? 'zh-CN' : 'en';
+}
+
+function loadLanguagePreference() {
+  appLanguage = normalizeLanguage(loadAppConfig().language || 'en');
+  return appLanguage;
+}
+
+function getLanguage() {
+  return appLanguage || loadLanguagePreference();
+}
+
+function setLanguage(language) {
+  appLanguage = normalizeLanguage(language);
+  const cfg = loadAppConfig();
+  cfg.language = appLanguage;
+  saveAppConfig(cfg);
+  rebuildAppMenu();
+  sendToRenderer('LANGUAGE_CHANGED', { language: appLanguage });
+  return appLanguage;
 }
 
 function runtimeKernel(kernel = currentKernel) {
@@ -331,6 +356,8 @@ function registerIpc() {
       partPng,
       resolvePartLoadedWaiters,
       getBuildRuntimeStatus,
+      getLanguage,
+      setLanguage,
       sendLog
     }
   });
@@ -397,6 +424,7 @@ function initModuleTools() {
       setActivePart: (v) => { activePart = v; },
       debugToolsVisible: () => debugToolsVisible,
       setDebugToolsVisible: (v) => { debugToolsVisible = !!v; },
+      appLanguage: () => getLanguage(),
       mcpStartError: () => mcpStartError,
       partInfoCache: () => partInfoCache,
       buildingParts: () => buildingParts,
@@ -422,6 +450,7 @@ function initModuleTools() {
     project: {
       readProjectKernel,
       loadAppConfig,
+      setLanguage,
       saveLastProjectPath,
       clearLastProjectPath,
       openProject: (...args) => openProject(...args),
@@ -461,6 +490,7 @@ function initModuleTools() {
 }
 
 app.whenReady().then(async () => {
+  loadLanguagePreference();
   initModuleTools();
   registerProtocol();
   registerIpc();

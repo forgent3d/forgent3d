@@ -41,6 +41,8 @@ function registerIpcHandlers({
   });
 
   ipcMain.handle('mcp:status', () => deps.getMcpStatusPayload());
+  ipcMain.handle('language:get', () => deps.getLanguage());
+  ipcMain.handle('language:set', (_evt, language) => deps.setLanguage(language));
 
   /** Same data source as the MCP list_models tool, useful for UI validation. */
   ipcMain.handle('mcp:testListParts', () => deps.buildMcpContext().listParts());

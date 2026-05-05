@@ -11,22 +11,22 @@
     <div id="app">
       <aside class="sidebar">
         <h1 class="brand">
-          <span class="dot"></span>Forgent3D <small>Preview</small>
-          <button id="btn-toggle-left" class="panel-collapse-btn" type="button" title="Collapse left panel" aria-label="Collapse left panel">
-            <span class="collapse-icon">◀</span>
+          <span class="dot"></span>Forgent3D 
+          <button id="btn-toggle-left" class="panel-collapse-btn" type="button" title="Collapse left panel" aria-label="Collapse left panel" data-i18n-title="collapseLeftPanel" data-i18n-aria-label="collapseLeftPanel">
+            <span class="collapse-icon" aria-hidden="true"></span>
           </button>
         </h1>
 
         <section class="panel" id="parts-panel" style="display:none">
           <div class="panel-title">
-            <span>Models</span>
+            <span data-i18n="models">Models</span>
             <div class="parts-toolbar">
-              <select id="select-export-format" class="parts-format-select" title="Select export format">
+              <select id="select-export-format" class="parts-format-select" title="Select export format" data-i18n-title="selectExportFormat">
                 <option value="step">STEP</option>
                 <option value="stl">STL</option>
                 <option value="obj">OBJ</option>
               </select>
-              <button id="btn-export-active" class="link parts-export-link" type="button">Export</button>
+              <button id="btn-export-active" class="link parts-export-link" type="button" data-i18n="export">Export</button>
             </div>
           </div>
           <ul id="parts-list" class="parts-list"></ul>
@@ -34,34 +34,34 @@
 
         <section class="panel params-panel" id="params-panel" style="display:none">
           <div class="panel-title">
-            <span>Params</span>
+            <span data-i18n="params">Params</span>
             <div class="params-toolbar">
-              <button id="btn-params-revert" class="link params-link" type="button" disabled>Revert</button>
+              <button id="btn-params-revert" class="link params-link" type="button" disabled data-i18n="revert">Revert</button>
             </div>
           </div>
-          <div id="params-editor" class="params-editor" aria-label="Numeric params editor"></div>
-          <div id="params-status" class="params-status muted">Select a model to edit params.json</div>
+          <div id="params-editor" class="params-editor" aria-label="Numeric params editor" data-i18n-aria-label="numericParamsEditor"></div>
+          <div id="params-status" class="params-status muted" data-i18n="selectModelParams">Select a model to edit params.json</div>
         </section>
 
       </aside>
 
       <main class="viewport">
         <div id="canvas-host"></div>
+        <button id="btn-toggle-left-handle" class="edge-toggle edge-toggle-left hidden" type="button" title="Expand left panel" aria-label="Expand left panel" data-i18n-title="expandLeftPanel" data-i18n-aria-label="expandLeftPanel"><span class="collapse-icon" aria-hidden="true"></span></button>
         <div id="model-name-badge" class="model-name-badge hidden"></div>
         <div id="preview-toolbar" class="preview-toolbar hidden" aria-label="Preview display mode">
-          <button id="preview-solid" class="preview-mode-btn active" type="button" data-preview-mode="solid">Solid</button>
-          <button id="preview-xray" class="preview-mode-btn" type="button" data-preview-mode="xray">X-Ray</button>
-          <button id="preview-wireframe" class="preview-mode-btn" type="button" data-preview-mode="wireframe">Wire</button>
+          <button id="preview-solid" class="preview-mode-btn active" type="button" data-preview-mode="solid" aria-pressed="true" data-i18n="solid">Solid</button>
+          <button id="preview-xray" class="preview-mode-btn" type="button" data-preview-mode="xray" aria-pressed="false" data-i18n="xray">X-Ray</button>
         </div>
         <div id="viewcube-host" class="viewcube-host hidden" aria-label="ViewCube"></div>
-        <div id="view-control-panel" class="view-control-panel hidden" aria-label="View controls">
-          <button id="view-showcase" class="view-control-btn" type="button" aria-pressed="false">Showcase</button>
-          <button id="view-explode" class="view-control-btn" type="button" aria-pressed="false">Explode</button>
-          <input id="view-explode-distance" class="view-explode-distance" type="range" min="0" max="100" value="100" step="1" aria-label="Explode distance" disabled />
+        <div id="view-control-panel" class="view-control-panel hidden" aria-label="View controls" data-i18n-aria-label="viewControls">
+          <button id="view-showcase" class="view-control-btn" type="button" aria-pressed="false" data-i18n="showcase">Showcase</button>
+          <button id="view-explode" class="view-control-btn" type="button" aria-pressed="false" data-i18n="explode">Explode</button>
+          <input id="view-explode-distance" class="view-explode-distance" type="range" min="0" max="100" value="100" step="1" aria-label="Explode distance" data-i18n-aria-label="explodeDistance" disabled />
         </div>
 
         <div id="status-bar" class="status-bar">
-          <span id="status-text">Waiting for project...</span>
+          <span id="status-text" data-i18n="waitingForProject">Waiting for project...</span>
           <span id="status-spinner" class="spinner hidden"></span>
         </div>
 
@@ -71,20 +71,20 @@
           <div class="empty-hint-card">
             <h2>Welcome to Forgent3D Companion Previewer</h2>
             <div class="empty-hint-actions">
-              <button id="btn-empty-create-project" class="btn btn-primary empty-hint-btn" type="button">Create Project</button>
-              <button id="btn-empty-open-project" class="btn empty-hint-btn" type="button">Open Project</button>
+              <button id="btn-empty-create-project" class="btn btn-primary empty-hint-btn" type="button" data-i18n="createProject">Create Project</button>
+              <button id="btn-empty-open-project" class="btn empty-hint-btn" type="button" data-i18n="openProject">Open Project</button>
             </div>
           </div>
         </div>
       </main>
 
-      <aside class="log-rail debug-only hidden" aria-label="Build logs">
+      <aside class="log-rail debug-only hidden" aria-label="Build logs" data-i18n-aria-label="buildLogs">
         <header class="log-rail-head">
           <div class="panel-title">
-            <span>Build Logs</span>
-            <button id="btn-clear-log" class="link">Clear</button>
+            <span data-i18n="buildLogs">Build Logs</span>
+            <button id="btn-clear-log" class="link" data-i18n="clear">Clear</button>
           </div>
-          <p class="log-rail-hint muted">Python / export output</p>
+          <p class="log-rail-hint muted" data-i18n="pythonExportOutput">Python / export output</p>
         </header>
         <div id="log" class="log"></div>
       </aside>
@@ -95,23 +95,18 @@
         <div id="term-resize-handle" class="term-resize-handle"></div>
         <!-- Panel header -->
         <div class="term-header">
-          <span id="term-title" class="term-title">Terminal</span>
+          <span id="term-title" class="term-title" data-i18n="terminal">Terminal</span>
           <div class="term-header-actions">
-            <button id="btn-toggle-right" class="term-action-btn" title="Collapse right panel" aria-label="Collapse right panel">▶</button>
-            <button id="btn-term-kill" class="term-action-btn" title="Terminate current process">■</button>
-            <button id="btn-term-close" class="term-action-btn term-close-btn" title="Close panel">✕</button>
+            <button id="btn-term-close" class="term-action-btn term-close-btn" title="Close panel" data-i18n-title="closePanel">✕</button>
           </div>
         </div>
         <!-- xterm.js mount container -->
         <div id="term-container" class="term-container"></div>
       </div>
 
-      <button id="btn-toggle-left-handle" class="edge-toggle edge-toggle-left hidden" type="button" title="Expand left panel" aria-label="Expand left panel">▶</button>
-      <button id="btn-toggle-right-handle" class="edge-toggle edge-toggle-right hidden" type="button" title="Expand right panel" aria-label="Expand right panel">◀</button>
-
       <!-- Bottom Agent launcher bar -->
       <div id="agent-bar" class="agent-bar">
-        <span class="agent-bar-label">Code Agent</span>
+        <span class="agent-bar-label" data-i18n="codeAgent">Code Agent</span>
         <div class="agent-bar-btns">
           <button class="agent-btn" data-agent="codex" disabled>
             <!-- OpenAI mark — Simple Icons (CC0), https://simpleicons.org -->
@@ -145,23 +140,23 @@
     <!-- New part modal -->
     <div id="modal-part" class="modal hidden">
       <div class="modal-body">
-        <h3>New Model</h3>
-        <p class="muted" style="font-size:12px;margin:-6px 0 8px 0">
+        <h3 data-i18n="newModel">New Model</h3>
+        <p class="muted" style="font-size:12px;margin:-6px 0 8px 0" data-i18n-html="newModelHelp">
           This creates <code>models/&lt;name&gt;/part.py</code> or <code>models/&lt;name&gt;/asm.xml</code> and
           <code>README.md</code>. Name can only contain letters, numbers, underscores, and hyphens.
         </p>
-        <label>Model type</label>
+        <label data-i18n="modelType">Model type</label>
         <select id="select-model-kind">
-          <option value="part">Part (part.py)</option>
-          <option value="asm">Assembly (asm.xml)</option>
+          <option value="part" data-i18n="partKind">Part (part.py)</option>
+          <option value="asm" data-i18n="assemblyKind">Assembly (asm.xml)</option>
         </select>
-        <label>Model name</label>
-        <input id="input-part-name" type="text" placeholder="bracket" />
-        <label>One-line description (optional, written to README.md)</label>
-        <input id="input-part-desc" type="text" placeholder="Mounting bracket for XX" />
+        <label data-i18n="modelName">Model name</label>
+        <input id="input-part-name" type="text" placeholder="bracket" data-i18n-placeholder="modelNamePlaceholder" />
+        <label data-i18n="modelDescription">One-line description (optional, written to README.md)</label>
+        <input id="input-part-desc" type="text" placeholder="Mounting bracket for XX" data-i18n-placeholder="modelDescriptionPlaceholder" />
         <div class="modal-footer">
-          <button id="btn-part-cancel" class="btn btn-ghost">Cancel</button>
-          <button id="btn-part-confirm" class="btn btn-primary">Create</button>
+          <button id="btn-part-cancel" class="btn btn-ghost" data-i18n="cancel">Cancel</button>
+          <button id="btn-part-confirm" class="btn btn-primary" data-i18n="create">Create</button>
         </div>
       </div>
     </div>
@@ -169,18 +164,18 @@
     <!-- New project modal -->
     <div id="modal-new" class="modal hidden">
       <div class="modal-body">
-        <h3>New Project</h3>
-        <label>Project name</label>
+        <h3 data-i18n="newProject">New Project</h3>
+        <label data-i18n="projectName">Project name</label>
         <input id="input-project-name" type="text" value="my-cad-project" />
-        <label>Parent directory</label>
+        <label data-i18n="parentDirectory">Parent directory</label>
         <div class="row">
-          <input id="input-parent-dir" type="text" readonly placeholder="Click button on the right to select..." />
-          <button id="btn-pick-parent" class="btn">Browse...</button>
+          <input id="input-parent-dir" type="text" readonly placeholder="Click button on the right to select..." data-i18n-placeholder="pickParentPlaceholder" />
+          <button id="btn-pick-parent" class="btn" data-i18n="browse">Browse...</button>
         </div>
 
         <div class="modal-footer">
-          <button id="btn-modal-cancel" class="btn btn-ghost">Cancel</button>
-          <button id="btn-modal-confirm" class="btn btn-primary">Create</button>
+          <button id="btn-modal-cancel" class="btn btn-ghost" data-i18n="cancel">Cancel</button>
+          <button id="btn-modal-confirm" class="btn btn-primary" data-i18n="create">Create</button>
         </div>
       </div>
     </div>

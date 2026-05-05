@@ -30,10 +30,28 @@ function fallbackDirection(index: number): THREE.Vector3 {
   return new THREE.Vector3(Math.cos(angle), 0.28, Math.sin(angle)).normalize();
 }
 
+function siblingFanDirection(object: THREE.Object3D, index: number): THREE.Vector3 {
+  const childIndex = Number.isFinite(object.userData?.mjcfChildIndex)
+    ? Number(object.userData.mjcfChildIndex)
+    : index;
+  const depth = Math.max(0, Number(object.userData?.mjcfDepth) || 0);
+  const angle = childIndex * Math.PI * (3 - Math.sqrt(5)) + depth * 0.62;
+  return new THREE.Vector3(Math.cos(angle), 0.18 + depth * 0.04, Math.sin(angle)).normalize();
+}
+
 function removeTargetOffset(target: ExplodeTarget) {
   if (target.offset.lengthSq() <= 0) return;
   target.object.position.sub(target.offset);
   target.offset.set(0, 0, 0);
+}
+
+function hasTargetAncestor(object: THREE.Object3D, targetObjects: Set<THREE.Object3D>): boolean {
+  let parent = object.parent;
+  while (parent) {
+    if (targetObjects.has(parent)) return true;
+    parent = parent.parent;
+  }
+  return false;
 }
 
 export function createExplodeController({
@@ -46,10 +64,12 @@ export function createExplodeController({
   const rootCenter = new THREE.Vector3();
   const rootSize = new THREE.Vector3();
   const targetCenter = new THREE.Vector3();
+  const parentCenter = new THREE.Vector3();
   const explodedCenter = new THREE.Vector3();
   const centerCorrectionFull = new THREE.Vector3();
   const worldOffset = new THREE.Vector3();
   const parentQuat = new THREE.Quaternion();
+  const targetObjectSet = new Set<THREE.Object3D>();
   let enabled = false;
   let factor = 0;
   let targetFactor = 0;
@@ -70,6 +90,28 @@ export function createExplodeController({
       if ((child as THREE.Mesh).isMesh && !child.userData?.isWireframe) meshes.push(child);
     });
     return meshes.length >= 2 ? meshes : [];
+  }
+
+  function bodyTreeDirection(object: THREE.Object3D, index: number, maxSize: number): THREE.Vector3 | null {
+    if (!object.userData?.isMjcfBody) return null;
+    const parentBody = object.userData.mjcfParentBody;
+    const direction = new THREE.Vector3();
+    if (parentBody && hasSolidMesh(parentBody)) {
+      box.setFromObject(parentBody);
+      if (!box.isEmpty()) {
+        box.getCenter(parentCenter);
+        direction.copy(targetCenter).sub(parentCenter);
+      }
+    } else {
+      direction.copy(targetCenter).sub(rootCenter);
+    }
+    if (direction.lengthSq() < 1e-8) {
+      direction.copy(siblingFanDirection(object, index));
+    } else {
+      direction.y += maxSize * (0.05 + Math.min(0.08, (Number(object.userData.mjcfDepth) || 0) * 0.015));
+      direction.normalize();
+    }
+    return direction;
   }
 
   function rebuildTargets() {
@@ -94,17 +136,19 @@ export function createExplodeController({
       box.setFromObject(object);
       if (box.isEmpty()) continue;
       box.getCenter(targetCenter);
-      const direction = targetCenter.clone().sub(rootCenter);
+      const direction = bodyTreeDirection(object, i, maxSize) || targetCenter.clone().sub(rootCenter);
       if (direction.lengthSq() < 1e-8) direction.copy(fallbackDirection(i));
-      else {
+      else if (!object.userData?.isMjcfBody) {
         direction.y += maxSize * 0.08;
         direction.normalize();
       }
+      const depth = Math.max(0, Number(object.userData?.mjcfDepth) || 0);
+      const treeScale = object.userData?.isMjcfBody ? (0.72 + Math.min(depth, 4) * 0.12) : 1;
       object.parent?.getWorldQuaternion(parentQuat);
       targets.push({
         object,
         direction,
-        distance: baseDistance * (directSolidMeshCount(object) > 1 ? 0.78 : 1),
+        distance: baseDistance * treeScale * (directSolidMeshCount(object) > 1 ? 0.78 : 1),
         offset: new THREE.Vector3(),
         parentWorldQuaternion: parentQuat.clone()
       });
@@ -131,9 +175,11 @@ export function createExplodeController({
   }
 
   function applyOffsets(activeTargets: ExplodeTarget[], nextFactor: number, includeCenterCorrection = true) {
+    targetObjectSet.clear();
+    for (const target of activeTargets) targetObjectSet.add(target.object);
     for (const target of activeTargets) {
       worldOffset.copy(target.direction).multiplyScalar(target.distance * nextFactor);
-      if (includeCenterCorrection) {
+      if (includeCenterCorrection && !hasTargetAncestor(target.object, targetObjectSet)) {
         worldOffset.addScaledVector(centerCorrectionFull, nextFactor);
       }
       target.offset.copy(worldOffset);

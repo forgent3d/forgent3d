@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { createTerminalPanel } from './terminal-panel.js';
+import { applyDocumentI18n, initRendererI18n, onLanguageChange, setLanguage, t } from './i18n.js';
 import { createParamsEditorController } from './ui-params-editor.js';
 import { createViewerUiController } from './ui-viewer-controls.js';
 
@@ -14,16 +15,14 @@ export function initUI(viewer) {
     spinner: document.getElementById('status-spinner'),
     modelNameBadge: document.getElementById('model-name-badge'),
     previewToolbar: document.getElementById('preview-toolbar'),
-    previewModeBtns: document.querySelectorAll('[data-preview-mode]'),
     viewCubeHost: document.getElementById('viewcube-host'),
     viewControlPanel: document.getElementById('view-control-panel'),
+    viewModeBtns: document.querySelectorAll('[data-preview-mode]'),
     viewShowcaseBtn: document.getElementById('view-showcase'),
     viewExplodeBtn: document.getElementById('view-explode'),
     viewExplodeDistance: document.getElementById('view-explode-distance'),
     btnToggleLeft: document.getElementById('btn-toggle-left'),
-    btnToggleRight: document.getElementById('btn-toggle-right'),
     btnToggleLeftHandle: document.getElementById('btn-toggle-left-handle'),
-    btnToggleRightHandle: document.getElementById('btn-toggle-right-handle'),
     toast: document.getElementById('toast'),
     emptyHint: document.getElementById('empty-hint'),
     btnEmptyCreateProject: document.getElementById('btn-empty-create-project'),
@@ -61,7 +60,6 @@ export function initUI(viewer) {
     termContainer:   document.getElementById('term-container'),
     termTitle:       document.getElementById('term-title'),
     termResizeHandle:document.getElementById('term-resize-handle'),
-    btnTermKill:     document.getElementById('btn-term-kill'),
     btnTermClose:    document.getElementById('btn-term-close')
   };
 
@@ -106,7 +104,6 @@ export function initUI(viewer) {
   let partsCache = [];
   const LEFT_SIDEBAR_PREF_KEY = 'forgent3d.leftSidebarVisible';
   let leftSidebarVisible = false;
-  let rightRailVisible = true;
 
   function readLeftSidebarPreference() {
     try {
@@ -126,21 +123,12 @@ export function initUI(viewer) {
   function applyLayoutVisibility() {
     const hasProject = !!currentProject;
     el.app.classList.toggle('left-collapsed', !leftSidebarVisible);
-    el.app.classList.toggle('right-collapsed', !rightRailVisible);
     if (el.btnToggleLeft) {
-      el.btnToggleLeft.title = leftSidebarVisible ? 'Collapse left panel' : 'Expand left panel';
-      el.btnToggleLeft.setAttribute('aria-label', leftSidebarVisible ? 'Collapse left panel' : 'Expand left panel');
-      const icon = el.btnToggleLeft.querySelector('.collapse-icon');
-      if (icon) icon.textContent = leftSidebarVisible ? '◀' : '▶';
-    }
-    if (el.btnToggleRight) {
-      el.btnToggleRight.classList.toggle('active', rightRailVisible);
-      el.btnToggleRight.title = rightRailVisible ? 'Collapse right panel' : 'Expand right panel';
-      el.btnToggleRight.setAttribute('aria-label', rightRailVisible ? 'Collapse right panel' : 'Expand right panel');
-      el.btnToggleRight.textContent = rightRailVisible ? '▶' : '◀';
+      const label = leftSidebarVisible ? t('collapseLeftPanel') : t('expandLeftPanel');
+      el.btnToggleLeft.title = label;
+      el.btnToggleLeft.setAttribute('aria-label', label);
     }
     if (el.btnToggleLeftHandle) el.btnToggleLeftHandle.classList.toggle('hidden', leftSidebarVisible || !hasProject);
-    if (el.btnToggleRightHandle) el.btnToggleRightHandle.classList.toggle('hidden', rightRailVisible);
   }
 
   function syncExportControls() {
@@ -167,13 +155,15 @@ export function initUI(viewer) {
     getHasProject: () => !!currentProject,
     getHasModel: () => (typeof viewer.hasModel === 'function' ? viewer.hasModel() : !!activePart),
     appendLog
+    ,t
   });
 
   const paramsEditor = createParamsEditorController({
     api,
     elements: el,
     getCurrentProject: () => currentProject,
-    getActivePart: () => activePart
+    getActivePart: () => activePart,
+    t
   });
 
   function renderModelNameBadge() {
@@ -183,9 +173,23 @@ export function initUI(viewer) {
       el.modelNameBadge.classList.add('hidden');
       return;
     }
-    el.modelNameBadge.textContent = `Current model: ${activePart}`;
+    el.modelNameBadge.textContent = t('currentModel', { name: activePart });
     el.modelNameBadge.classList.remove('hidden');
   }
+
+  function refreshLocalizedUi() {
+    applyDocumentI18n();
+    applyLayoutVisibility();
+    renderModelNameBadge();
+    renderPartsList();
+    viewerUi.renderAll();
+    if (!currentProject) {
+      paramsEditor.setIdle(t('selectModelParams'));
+      setStatus(t('waitingForProject'));
+    }
+  }
+
+  onLanguageChange(refreshLocalizedUi);
 
   function setProject(p, meta = null) {
     currentProject = p;
@@ -205,7 +209,7 @@ export function initUI(viewer) {
     renderModelNameBadge();
     syncExportControls();
     viewerUi.renderAll();
-    if (!p) paramsEditor.setIdle('Select a model to edit params.json');
+    if (!p) paramsEditor.setIdle(t('selectModelParams'));
   }
 
   /* ---------------- Models List ---------------- */
@@ -214,7 +218,7 @@ export function initUI(viewer) {
     if (!partsCache.length) {
       const empty = document.createElement('li');
       empty.className = 'part-empty muted';
-      empty.textContent = 'No models yet. Click + in the top-right to create one';
+      empty.textContent = t('noModels');
       el.partsList.appendChild(empty);
       return;
     }
@@ -227,7 +231,7 @@ export function initUI(viewer) {
       main.className = 'part-main';
       const title = document.createElement('div');
       title.className = 'part-title';
-      title.textContent = p.kind === 'asm' ? `${p.name} (assembly)` : p.name;
+      title.textContent = p.kind === 'asm' ? t('assemblySuffix', { name: p.name }) : p.name;
       if (p.building) {
         const dot = document.createElement('span');
         dot.className = 'part-busy';
@@ -243,7 +247,7 @@ export function initUI(viewer) {
       actions.className = 'part-actions';
       const bReveal = document.createElement('button');
       bReveal.className = 'icon-btn';
-      bReveal.title = 'Open in file explorer';
+      bReveal.title = t('openInFileExplorer');
       bReveal.textContent = '📁';
       bReveal.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -251,7 +255,7 @@ export function initUI(viewer) {
       });
       const bBuild = document.createElement('button');
       bBuild.className = 'icon-btn';
-      bBuild.title = 'Rebuild this model (part models also refresh models/<name>/<name>.stl)';
+      bBuild.title = t('rebuildModelTitle');
       bBuild.textContent = '↻';
       bBuild.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -282,14 +286,14 @@ export function initUI(viewer) {
       syncExportControls();
       paramsEditor.refresh();
     } catch (e) {
-      appendLog(`Failed to read models list: ${e.message}`, 'error');
+      appendLog(t('failedReadModels', { message: e.message }), 'error');
     }
   }
 
   if (el.btnExportActive) {
     el.btnExportActive.addEventListener('click', async () => {
       if (!activePart) {
-        showToast('Please select a model on the left first');
+        showToast(t('selectModelFirst'));
         return;
       }
       const fmt = (el.selectExportFormat?.value || 'stl').toLowerCase();
@@ -297,11 +301,11 @@ export function initUI(viewer) {
         const res = await api.exportPart(activePart, fmt);
         if (!res?.canceled) {
           const label = String(fmt).toUpperCase();
-          showToast(`Exported <code>${escapeHtml(activePart)}</code> · <code>${label}</code>`);
+          showToast(t('exported', { name: escapeHtml(activePart), format: label }));
         }
       } catch (e) {
-        appendLog(`Export failed: ${e.message}`, 'error');
-        showToast(`Export failed: ${escapeHtml(e.message || String(e))}`, 3800);
+        appendLog(t('exportFailed', { message: e.message }), 'error');
+        showToast(t('exportFailed', { message: escapeHtml(e.message || String(e)) }), 3800);
       }
     });
   }
@@ -309,7 +313,7 @@ export function initUI(viewer) {
   el.btnPartCancel.addEventListener('click', () => el.modalPart.classList.add('hidden'));
   el.btnPartConfirm.addEventListener('click', () => {
     el.modalPart.classList.add('hidden');
-    showToast('Model creation from UI is disabled');
+    showToast(t('modelCreationDisabled'));
   });
 
   /* ---------------- Button Events ---------------- */
@@ -339,14 +343,14 @@ export function initUI(viewer) {
     if (!parent) { alert('Please select a parent directory first'); return; }
     if (!name) { alert('Please enter a project name'); return; }
     try {
-      setStatus('Creating project...', true);
+      setStatus(t('creatingProject'), true);
       const p = await api.createProject(parent, name, DEFAULT_PROJECT_KERNEL);
       el.modal.classList.add('hidden');
-      appendLog(`Project created (kernel: ${DEFAULT_PROJECT_KERNEL}): ${p}`);
+      appendLog(t('projectCreated', { kernel: DEFAULT_PROJECT_KERNEL, path: p }));
     } catch (e) {
-      appendLog(`Creation failed: ${e.message}`, 'error');
+      appendLog(t('creationFailedDetail', { message: e.message }), 'error');
       alert(e.message);
-      setStatus('Creation failed');
+      setStatus(t('creationFailed'));
     }
   });
 
@@ -358,8 +362,8 @@ export function initUI(viewer) {
       try {
         await api.openProject();
       } catch (e) {
-        appendLog(`Open project failed: ${e.message}`, 'error');
-        showToast(`Open project failed: ${escapeHtml(e.message || String(e))}`, 3500);
+        appendLog(t('openProjectFailed', { message: e.message }), 'error');
+        showToast(t('openProjectFailed', { message: escapeHtml(e.message || String(e)) }), 3500);
       }
     });
   }
@@ -371,12 +375,6 @@ export function initUI(viewer) {
       applyLayoutVisibility();
     });
   }
-  if (el.btnToggleRight) {
-    el.btnToggleRight.addEventListener('click', () => {
-      rightRailVisible = !rightRailVisible;
-      applyLayoutVisibility();
-    });
-  }
   if (el.btnToggleLeftHandle) {
     el.btnToggleLeftHandle.addEventListener('click', () => {
       if (!currentProject) return;
@@ -385,12 +383,7 @@ export function initUI(viewer) {
       applyLayoutVisibility();
     });
   }
-  if (el.btnToggleRightHandle) {
-    el.btnToggleRightHandle.addEventListener('click', () => {
-      rightRailVisible = true;
-      applyLayoutVisibility();
-    });
-  }
+  window.addEventListener('resize', applyLayoutVisibility);
   /* ============================================================
      Embedded terminal panel
      ============================================================ */
@@ -535,15 +528,6 @@ export function initUI(viewer) {
   /* Close button */
   el.btnTermClose.addEventListener('click', closeTermPanel);
 
-  /* Kill process button */
-  el.btnTermKill.addEventListener('click', () => {
-    const tid = termPanel?.getTermId();
-    if (tid) {
-      api.terminalKill(tid).catch(() => {});
-      termPanel?.printInfo('Process terminated');
-    }
-  });
-
   /* Drag handle to resize width */
   el.termResizeHandle.addEventListener('mousedown', (e) => {
     e.preventDefault();
@@ -598,18 +582,14 @@ export function initUI(viewer) {
         termPanel.attachSession(null);
         api.terminalKill(oldTid).catch(() => {});
         showToast(
-          `Previous terminal replaced with <code>${escapeHtml(AGENT_LABELS[agent] || agent)}</code>`,
+          t('previousTerminalReplaced', { agent: escapeHtml(AGENT_LABELS[agent] || agent) }),
           2200
         );
       }
 
       openTermPanel();
-      if (!rightRailVisible) {
-        rightRailVisible = true;
-        applyLayoutVisibility();
-      }
-      el.termTitle.textContent = `Terminal — ${AGENT_LABELS[agent] || agent}`;
-      termPanel?.printInfo(`Launching ${agent} · ${currentProject}`);
+      el.termTitle.textContent = t('terminalTitle', { agent: AGENT_LABELS[agent] || agent });
+      termPanel?.printInfo(t('launchingTerminal', { agent, project: currentProject }));
 
       try {
         await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -636,7 +616,7 @@ export function initUI(viewer) {
         }, 420);
       } catch (e) {
         termDebug('terminalCreate failed', { message: e?.message || String(e) });
-        appendLog(`Failed to launch ${agent}: ${e.message}`, 'error');
+        appendLog(t('launchFailed', { agent, message: e.message }), 'error');
         termPanel?.printInfo(`Error: ${e.message}`);
       }
     });
@@ -649,10 +629,14 @@ export function initUI(viewer) {
     switch (type) {
       case 'PROJECT_OPENED':
         setProject(payload.path, payload);
-        setStatus(`Project opened (${payload.kernelLabel || payload.kernel || ''}), waiting for first build...`);
-        appendLog(`Project opened: ${payload.path}`);
+        setStatus(t('projectOpenedStatus', { kernel: payload.kernelLabel || payload.kernel || '' }));
+        appendLog(t('projectOpenedLog', { path: payload.path }));
         if (payload.kernel) {
-          appendLog(`Kernel: ${payload.kernelLabel || payload.kernel} · Source file: ${payload.sourceFile} · Preview format: ${payload.previewFormat}`);
+          appendLog(t('kernelInfo', {
+            kernel: payload.kernelLabel || payload.kernel,
+            sourceFile: payload.sourceFile,
+            previewFormat: payload.previewFormat
+          }));
         }
         refreshParts();
         break;
@@ -674,17 +658,17 @@ export function initUI(viewer) {
         paramsEditor.refresh({ force: true });
         break;
       case 'BUILD_STARTED':
-        setStatus(payload?.part ? `Building ${payload.part} ...` : 'Building...', true);
+        setStatus(payload?.part ? t('buildingPart', { part: payload.part }) : t('building'), true);
         break;
       case 'BUILD_FAILED':
-        setStatus('Build failed (see logs)');
+        setStatus(t('buildFailedSeeLogs'));
         appendLog(
           (payload?.part ? `[${payload.part}] ` : '') +
-          (payload?.message || payload?.stderr || 'Build failed'),
+          (payload?.message || payload?.stderr || t('buildFailed')),
           'error'
         );
         if (payload?.reason === 'NO_PYTHON' || payload?.reason === 'NO_RUNTIME') {
-          showToast(payload?.message || 'No usable build runtime detected.', 4500);
+          showToast(payload?.message || t('noRuntime'), 4500);
         }
         break;
       case 'PART_BUILT':
@@ -700,13 +684,13 @@ export function initUI(viewer) {
         const partLabel = payload.part ? `[${payload.part}] ` : '';
         const fmt = (payload.format || 'BREP').toUpperCase();
         setStatus(
-          `${partLabel}${fmt === 'MJCF' ? 'Loading MJCF' : (fmt === 'STL' ? 'Parsing STL' : 'OCCT parsing BREP')} ...`,
+          `${partLabel}${fmt === 'MJCF' ? t('loadingMjcf') : (fmt === 'STL' ? t('parsingStl') : t('parsingBrep'))} ...`,
           true
         );
         const sizeKB = payload.size ? (payload.size / 1024).toFixed(1) + ' KB' : '';
         const url = payload.url;
         if (!url) {
-          appendLog('Main process did not return a URL, skipping load', 'warn');
+          appendLog(t('missingModelUrl'), 'warn');
           break;
         }
         const preserveView = !!payload.part && payload.part === loadedPart && typeof viewer.hasModel === 'function' && viewer.hasModel();
@@ -717,10 +701,10 @@ export function initUI(viewer) {
             if (explodeState.enabled && !explodeState.available) viewerUi.stopExplodedView();
             const { faceCount } = partInfo;
             const tail = fmt === 'MJCF'
-              ? 'MJCF assembly'
-              : (fmt === 'STL' ? 'STL mesh' : `${faceCount} BREP faces`);
+              ? t('mjcfAssembly')
+              : (fmt === 'STL' ? t('stlMesh') : t('brepFaces', { count: faceCount }));
             setStatus(
-              `${partLabel}Model ready${sizeKB ? ' · ' + sizeKB : ''} · ${tail}`
+              t('modelReady', { partLabel, sizeLabel: sizeKB ? ' · ' + sizeKB : '', tail })
             );
             viewerUi.renderAll();
             // Send part info and single-view screenshots back to main process (MCP cache)
@@ -746,14 +730,14 @@ export function initUI(viewer) {
                 snapshotDataURLs
               });
             } catch (e) {
-              appendLog(`Failed to report part info: ${e.message || e}`, 'warn');
+              appendLog(t('failedReportPartInfo', { message: e.message || e }), 'warn');
             }
           })
           .catch((e) => {
             viewerUi.stopAutoShow();
             viewerUi.stopExplodedView();
-            setStatus('Model load failed');
-            appendLog(`${partLabel}Failed to load ${fmt}: ${e.message || e}`, 'error');
+            setStatus(t('modelLoadFailed'));
+            appendLog(t('failedLoadModel', { partLabel, format: fmt, message: e.message || e }), 'error');
             viewerUi.renderAll();
           });
         break;
@@ -766,6 +750,9 @@ export function initUI(viewer) {
         break;
       case 'MENU_TOGGLE_DEBUG_TOOLS':
         setDebugToolsVisible(!!payload?.visible);
+        break;
+      case 'LANGUAGE_CHANGED':
+        setLanguage(payload?.language || 'en');
         break;
       case 'TERM_DATA':
         if (termPanel && termPanel.getTermId() === payload.termId) {
@@ -797,5 +784,6 @@ export function initUI(viewer) {
   syncExportControls();
   viewerUi.renderAll();
 
-  setStatus('Waiting for project...');
+  initRendererI18n(api).then(refreshLocalizedUi);
+  setStatus(t('waitingForProject'));
 }

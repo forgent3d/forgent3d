@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('aicad', {
   mcpTestListParts: () => ipcRenderer.invoke('mcp:testListParts'),
 
   pythonStatus: () => ipcRenderer.invoke('python:status'),
+  getLanguage: () => ipcRenderer.invoke('language:get'),
+  setLanguage: (language) => ipcRenderer.invoke('language:set', language),
 
   terminalCreate: (agent, projectPath, cols, rows) =>
     ipcRenderer.invoke('terminal:create', { agent, projectPath, cols, rows }),
