@@ -17,14 +17,10 @@ type ContactShadowController = {
 
 export function createPreviewModeController({
   getCurrentRoot,
-  contactShadow,
-  updateSectionFill = () => {},
-  afterApply = () => {}
+  contactShadow
 }: {
   getCurrentRoot: () => THREE.Object3D | null;
   contactShadow?: ContactShadowController;
-  updateSectionFill?: () => void;
-  afterApply?: () => void;
 }) {
   let mode: PreviewMode = 'solid';
 
@@ -95,19 +91,16 @@ export function createPreviewModeController({
     if (contactShadow?.object) {
       contactShadow.object.visible = !isWireframe && !isXray && !!currentRoot;
     }
-    updateSectionFill();
   }
 
   function setMode(nextMode: PreviewMode | string): PreviewMode {
     mode = normalizePreviewMode(nextMode);
     apply();
-    afterApply();
     return mode;
   }
 
   function refresh() {
     apply();
-    afterApply();
   }
 
   return {

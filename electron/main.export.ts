@@ -259,18 +259,60 @@ function createMainExportTools({ dialog, state, deps }) {
     return scene;
   }
 
+  function sceneGeometryStats(scene) {
+    const stats = { meshes: 0, triangles: 0, vertices: 0 };
+    scene.traverse((child) => {
+      if (!child.isMesh) return;
+      const geometry = child.geometry;
+      const position = geometry?.getAttribute?.('position');
+      if (!position) return;
+      const index = geometry.getIndex?.() || geometry.index || null;
+      stats.meshes += 1;
+      stats.vertices += position.count || 0;
+      stats.triangles += index ? Math.floor((index.count || 0) / 3) : Math.floor((position.count || 0) / 3);
+    });
+    return stats;
+  }
+
+  function exportPayloadToBuffer(data, label) {
+    if (data instanceof ArrayBuffer) return Buffer.from(new Uint8Array(data));
+    if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+    if (typeof data === 'string') return Buffer.from(data, 'utf-8');
+    throw new Error(`Unexpected ${label} exporter payload: ${Object.prototype.toString.call(data)}`);
+  }
+
   async function exportAssemblyScene(sourcePath, outFile, format) {
     const scene = await buildAssemblyScene(sourcePath);
     try {
+      scene.updateMatrixWorld(true);
+      const stats = sceneGeometryStats(scene);
+      if (stats.meshes <= 0 || stats.triangles <= 0) {
+        throw new Error('Assembly export found no mesh triangles. Check asm.xml mesh/geom references and STL asset contents.');
+      }
+      deps.sendLog(`[${path.basename(path.dirname(sourcePath))}] Assembly export geometry: ${stats.meshes} meshes, ${stats.triangles} triangles.`);
+
       if (format === 'stl') {
         const { STLExporter } = await dynamicImport('three/examples/jsm/exporters/STLExporter.js');
         const data = new STLExporter().parse(scene, { binary: true });
-        fs.writeFileSync(outFile, Buffer.from(data));
+        const buffer = exportPayloadToBuffer(data, 'STL');
+        const expectedBinaryStlSize = 84 + stats.triangles * 50;
+        if (buffer.byteLength !== expectedBinaryStlSize) {
+          throw new Error(`STL export produced ${buffer.byteLength} bytes, expected ${expectedBinaryStlSize} bytes for ${stats.triangles} triangles.`);
+        }
+        fs.writeFileSync(outFile, buffer);
+        const writtenSize = fs.statSync(outFile).size;
+        if (writtenSize !== expectedBinaryStlSize) {
+          throw new Error(`STL export wrote ${writtenSize} bytes, expected ${expectedBinaryStlSize} bytes.`);
+        }
         return;
       }
       if (format === 'obj') {
         const { OBJExporter } = await dynamicImport('three/examples/jsm/exporters/OBJExporter.js');
-        fs.writeFileSync(outFile, new OBJExporter().parse(scene), 'utf-8');
+        const objText = new OBJExporter().parse(scene);
+        if (!/\nf\s+/.test(`\n${objText}`)) {
+          throw new Error('OBJ export produced no faces.');
+        }
+        fs.writeFileSync(outFile, objText, 'utf-8');
         return;
       }
       throw new Error(`Assembly export supports STL/OBJ only, not ${format.toUpperCase()}.`);

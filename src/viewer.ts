@@ -6,15 +6,14 @@ import { createViewCubeOverlay } from './viewer-viewcube.js';
 import { buildSceneFromOcctResult, buildSceneFromStlBuffer } from './viewer-loaders.js';
 import { disposeMjcfSimulation, loadMjcfScene, stepMjcfSimulation } from './viewer-mjcf.js';
 import { createContactShadow, createViewerLighting, decorateModelForCadDisplay } from './viewer-scene.js';
-import { createSectionController } from './viewer-section.js';
 import { createSnapshotRenderer } from './viewer-snapshot.js';
 import { createViewController } from './viewer-navigation.js';
 import { createAppearanceController } from './viewer-appearance.js';
 import { createPreviewModeController } from './viewer-preview-mode.js';
 import { createReferenceAxesController } from './viewer-reference-axes.js';
-import { createSectionFillController } from './viewer-section-fill.js';
+import { createExplodeController } from './viewer-explode.js';
 import { disposeThreeObject } from './viewer-utils.js';
-import type { LoadModelOptions, LogHandler, PartInfo, PreviewMode, SectionAxis, Viewer, ViewSpec } from './types.js';
+import type { LoadModelOptions, LogHandler, PartInfo, PreviewMode, Viewer, ViewSpec } from './types.js';
 // Vite treats wasm as an asset and returns the final bundled URL
 import occtWasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
 import mujocoWasmUrl from '@mujoco/mujoco/mujoco.wasm?url';
@@ -80,22 +79,18 @@ export function createViewer(host: HTMLElement): Viewer {
 
   const referenceAxes = createReferenceAxesController(scene);
   const axes = referenceAxes.object;
-  renderer.localClippingEnabled = true;
 
   /* ---- State ---- */
   let currentRoot: THREE.Object3D | null = null;         // three.Group for current BREP model
   let currentMjcfRoot: THREE.Object3D | null = null;
   let mjcfSimulation: MjcfSimulation = null;
   let viewCube: ViewCubeOverlay | null = null;
-  const sectionController = createSectionController(renderer, () => currentRoot);
-  const sectionFill = createSectionFillController(scene, sectionController, () => currentRoot);
   const previewController = createPreviewModeController({
     getCurrentRoot: () => currentRoot,
-    contactShadow,
-    updateSectionFill: sectionFill.update,
-    afterApply: () => sectionController.apply()
+    contactShadow
   });
   const appearanceController = createAppearanceController({ getCurrentRoot: () => currentRoot });
+  const explodeController = createExplodeController({ getCurrentRoot: () => currentRoot });
   const viewController = createViewController({
     camera,
     controls,
@@ -106,6 +101,7 @@ export function createViewer(host: HTMLElement): Viewer {
   /* ---- Animation ---- */
   let running = true;
   let lastFrameTs = performance.now();
+  let autoOrbitSpeed = 0;
   function animateMjcfSimulation(dt: number) {
     if (!currentMjcfRoot) return;
     const sim = currentMjcfRoot.userData?.mjcfSimulation;
@@ -121,8 +117,11 @@ export function createViewer(host: HTMLElement): Viewer {
     const now = performance.now();
     const dt = Math.min(0.05, Math.max(0, (now - lastFrameTs) / 1000));
     lastFrameTs = now;
+    explodeController.removeOffsets();
     animateMjcfSimulation(dt);
+    explodeController.update(dt);
     controls.update();
+    if (autoOrbitSpeed && currentRoot) viewController.orbit(autoOrbitSpeed * dt);
     lighting.updateDirectionalLights(camera, controls.target);
     renderer.render(scene, camera);
     const activeViewCube = viewCube as ViewCubeOverlay | null;
@@ -172,11 +171,10 @@ export function createViewer(host: HTMLElement): Viewer {
     currentMjcfRoot = null;
     disposeMjcfSimulation(mjcfSimulation);
     mjcfSimulation = null;
-    sectionController.reset();
     appearanceController.reset();
+    explodeController.reset();
     contactShadow.hide();
     referenceAxes.hide();
-    sectionFill.hide();
     controls.target.set(0, 0, 0);
     controls.update();
     viewController.reset();
@@ -197,9 +195,8 @@ export function createViewer(host: HTMLElement): Viewer {
     mjcfSimulation = isMjcf ? (nextRoot.userData.mjcfSimulation || null) : null;
     const modelBox = prepareModelForCadDisplay(nextRoot);
     referenceAxes.updateForBox(modelBox);
-    sectionController.setRangesFromBox(modelBox);
-    sectionController.apply();
     appearanceController.apply();
+    explodeController.rebuildTargets();
     previewController.refresh();
 
     if (previousRoot) {
@@ -396,28 +393,24 @@ export function createViewer(host: HTMLElement): Viewer {
     return previewController.setMode(mode);
   }
 
+  function setAutoOrbitSpeed(radiansPerSecond: number) {
+    autoOrbitSpeed = Number.isFinite(radiansPerSecond) ? radiansPerSecond : 0;
+  }
+
   function refreshPreview() {
     previewController.refresh();
   }
 
-  function setSectionEnabled(enabled: boolean) {
-    sectionController.setSectionEnabled(enabled);
-    sectionFill.update();
+  function setExplodeEnabled(enabled: boolean) {
+    return explodeController.setEnabled(enabled);
   }
 
-  function setSectionNormalized(normalized: number) {
-    sectionController.setSectionNormalized(normalized);
-    sectionFill.update();
+  function setExplodeFactor(factor: number) {
+    return explodeController.setFactor(factor);
   }
 
-  function setSectionAxis(axis: SectionAxis | string) {
-    sectionController.setSectionAxis(axis);
-    sectionFill.update();
-  }
-
-  function resetSection() {
-    sectionController.resetSection();
-    sectionFill.update();
+  function getExplodeState() {
+    return explodeController.getState();
   }
 
   /* ---- Public API ---- */
@@ -437,11 +430,11 @@ export function createViewer(host: HTMLElement): Viewer {
     setView: viewController.setView,
     fitView: viewController.fitView,
     cycleView: viewController.cycleView,
-    setSectionEnabled,
-    setSectionNormalized,
-    setSectionAxis,
-    resetSection,
-    getSectionState: sectionController.getSectionState,
+    orbit: viewController.orbit,
+    setAutoOrbitSpeed,
+    setExplodeEnabled,
+    setExplodeFactor,
+    getExplodeState,
     refreshPreview,
     setMaterialParams: appearanceController.setMaterialParams,
     setPartMaterial: appearanceController.setPartMaterial,
@@ -462,7 +455,6 @@ export function createViewer(host: HTMLElement): Viewer {
       clearModel();
       contactShadow.dispose();
       lighting.dispose();
-      sectionFill.dispose();
       referenceAxes.dispose();
       renderer.dispose();
     }

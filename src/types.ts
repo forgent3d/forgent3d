@@ -1,29 +1,15 @@
 import type * as THREE from 'three';
 
 export type PreviewMode = 'solid' | 'xray' | 'wireframe';
-export type SectionAxis = 'x' | 'y' | 'z';
 export type ViewKey = 'iso' | 'front' | 'back' | 'side' | 'right' | 'left' | 'top' | 'bottom' | 'custom';
 
 export type Vec3Tuple = [number, number, number];
 
-export type BoundsRange = {
-  min: number;
-  max: number;
-};
-
-export type AxisRanges = Record<SectionAxis, BoundsRange>;
-
-export type SectionState = {
+export type ExplodeState = {
   enabled: boolean;
-  axis: SectionAxis;
-  normalized: number;
-};
-
-export type SectionPlaneInfo = {
-  enabled: boolean;
-  axis: SectionAxis;
-  coord: number;
-  ranges: AxisRanges;
+  factor: number;
+  available: boolean;
+  targets: number;
 };
 
 export type BBoxInfo = {
@@ -123,11 +109,11 @@ export type Viewer = {
   setView(viewInput?: ViewSpec | string, opts?: { distance?: number }): ViewKey | string;
   fitView(viewInput?: ViewSpec | string): ViewKey | string;
   cycleView(): ViewKey | string;
-  setSectionEnabled(enabled: boolean): void;
-  setSectionNormalized(normalized: number): void;
-  setSectionAxis(axis: SectionAxis | string): void;
-  resetSection(): void;
-  getSectionState(): SectionState;
+  orbit(deltaAzimuth: number, deltaElevation?: number): ViewKey | string;
+  setAutoOrbitSpeed(radiansPerSecond: number): void;
+  setExplodeEnabled(enabled: boolean): ExplodeState;
+  setExplodeFactor(factor: number): ExplodeState;
+  getExplodeState(): ExplodeState;
   refreshPreview(): void;
   setMaterialParams(params?: MaterialParams): void;
   setPartMaterial(partKey: string | number, config: MaterialSpec | THREE.ColorRepresentation): boolean;

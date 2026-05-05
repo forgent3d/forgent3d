@@ -54,18 +54,10 @@
           <button id="preview-wireframe" class="preview-mode-btn" type="button" data-preview-mode="wireframe">Wire</button>
         </div>
         <div id="viewcube-host" class="viewcube-host hidden" aria-label="ViewCube"></div>
-        <div id="section-panel" class="section-panel hidden" aria-label="Section clip controls">
-          <label class="section-toggle">
-            <input id="section-enabled" type="checkbox" />
-            <span>Section</span>
-          </label>
-          <select id="section-axis" class="section-axis" disabled>
-            <option value="x">X</option>
-            <option value="y" selected>Y</option>
-            <option value="z">Z</option>
-          </select>
-          <input id="section-slider" type="range" min="-100" max="100" value="0" step="1" disabled />
-          <button id="section-reset" type="button" class="section-reset" disabled>Center</button>
+        <div id="view-control-panel" class="view-control-panel hidden" aria-label="View controls">
+          <button id="view-showcase" class="view-control-btn" type="button" aria-pressed="false">Showcase</button>
+          <button id="view-explode" class="view-control-btn" type="button" aria-pressed="false">Explode</button>
+          <input id="view-explode-distance" class="view-explode-distance" type="range" min="0" max="100" value="100" step="1" aria-label="Explode distance" disabled />
         </div>
 
         <div id="status-bar" class="status-bar">

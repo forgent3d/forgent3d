@@ -172,6 +172,25 @@ export function createViewController({
     return setView(VIEW_CYCLE[nextIndex] ?? 'iso');
   }
 
+  function orbit(deltaAzimuth: number, deltaElevation = 0) {
+    const target = controls.target;
+    const offset = camera.position.clone().sub(target);
+    const orbitAxis = camera.up.clone().normalize();
+    if (orbitAxis.lengthSq() < 1e-8) orbitAxis.set(0, 1, 0);
+    offset.applyAxisAngle(orbitAxis, deltaAzimuth);
+    if (deltaElevation) {
+      const right = new THREE.Vector3().crossVectors(orbitAxis, offset).normalize();
+      if (right.lengthSq() > 1e-8) offset.applyAxisAngle(right, deltaElevation);
+    }
+    camera.position.copy(target).add(offset);
+    camera.lookAt(target);
+    camera.updateMatrixWorld();
+    controls.update();
+    updateDirectionalLights(camera, controls.target);
+    currentViewKey = 'custom';
+    return currentViewKey;
+  }
+
   function captureState() {
     return {
       cameraPosition: camera.position.clone(),
@@ -202,6 +221,7 @@ export function createViewController({
     setView,
     fitView,
     cycleView,
+    orbit,
     captureState,
     restoreState,
     reset,
