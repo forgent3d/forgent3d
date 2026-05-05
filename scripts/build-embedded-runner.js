@@ -4,7 +4,15 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { EXPORT_RUNNER_PYTHON } = require('../electron/main.templates.export-runner');
+function loadExportRunnerPython() {
+  const compiledTemplate = path.join(__dirname, '..', 'dist-electron', 'electron', 'main.templates.export-runner.js');
+  if (fs.existsSync(compiledTemplate)) {
+    return require(compiledTemplate).EXPORT_RUNNER_PYTHON;
+  }
+  throw new Error('Missing compiled Electron templates. Run `npm run build:electron` before `npm run build:runner`.');
+}
+
+const EXPORT_RUNNER_PYTHON = loadExportRunnerPython();
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const PLATFORM_TAG = `${process.platform}-${process.arch}`;

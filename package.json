@@ -2,18 +2,20 @@
   "name": "aicad-preview",
   "version": "0.1.0",
   "description": "Forgent3D companion previewer - watch build123d Python changes and render 3D in real time",
-  "main": "electron/main.js",
+  "main": "dist-electron/electron/main.js",
   "type": "commonjs",
   "scripts": {
     "dev:renderer": "vite",
-    "dev:electron": "wait-on tcp:7788 && cross-env NODE_ENV=development electron .",
-    "dev:electron:watch": "wait-on tcp:7788 && cross-env NODE_ENV=development electronmon .",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "dev:electron": "npm run build:electron && wait-on tcp:7788 && cross-env NODE_ENV=development electron .",
+    "dev:electron:watch": "npm run build:electron && concurrently -k -n TSC,ELECTRON -c blue,magenta \"tsc -p tsconfig.electron.json -w --preserveWatchOutput\" \"wait-on tcp:7788 && cross-env NODE_ENV=development electronmon .\"",
     "dev": "concurrently -k -n RENDERER,ELECTRON -c cyan,magenta \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "build:renderer": "vite build",
     "build:runner": "node scripts/build-embedded-runner.js",
-    "start": "electron .",
+    "start": "npm run build:electron && electron .",
     "mcp:curl-test": "bash scripts/mcp-curl-test.sh",
-    "build": "npm run build:renderer && npm run build:runner && electron-builder",
+    "build": "npm run build:renderer && npm run build:electron && npm run build:runner && electron-builder",
     "rebuild:native": "electron-rebuild -f -w node-pty"
   },
   "keywords": [
@@ -26,18 +28,21 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@types/three": "^0.184.0",
     "concurrently": "^9.0.1",
     "cross-env": "^7.0.3",
     "electron": "^32.0.0",
     "electron-builder": "^26.8.1",
     "electron-rebuild": "^3.2.9",
     "electronmon": "^2.0.4",
+    "typescript": "^6.0.3",
     "vite": "^5.4.0",
     "wait-on": "^8.0.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mujoco/mujoco": "^3.8.0",
+    "@types/node": "^25.6.0",
     "@xmldom/xmldom": "^0.9.10",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-unicode11": "^0.9.0",
@@ -73,7 +78,8 @@
       "allowToChangeInstallationDirectory": true
     },
     "files": [
-      "electron/**",
+      "dist-electron/electron/**",
+      "electron/skills/**",
       "dist/**",
       "assets/**",
       "package.json"
@@ -102,6 +108,7 @@
   "electronmon": {
     "patterns": [
       "electron/**",
+      "dist-electron/**",
       "!node_modules/**",
       "!dist/**"
     ]
