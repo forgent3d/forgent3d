@@ -7,3 +7,21 @@ export function vec3From(value) {
   }
   return new THREE.Vector3();
 }
+
+export function disposeThreeObject(obj) {
+  obj.traverse((child) => {
+    if (child.isMesh || child.isLineSegments) {
+      child.geometry?.dispose();
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      for (const material of materials) {
+        material?.map?.dispose?.();
+        material?.dispose?.();
+      }
+      return;
+    }
+    if (child.isSprite) {
+      child.material?.map?.dispose?.();
+      child.material?.dispose?.();
+    }
+  });
+}

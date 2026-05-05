@@ -39,7 +39,7 @@
 
 Forgent3D 是一个将大语言模型（LLM）生成的代码转化为三维模型，并进行实时预览的桌面工具（基于 Electron）。你可以用 AI 编程助手生成或修改参数化 CAD 代码，再通过 Forgent3D 立即查看真实的 3D 几何结果。
 
-![Forgent3D 参数化模型与 3D 预览](docs/forgent3d-preview.gif)
+![Forgent3D 参数化模型与 3D 预览](docs/forgent3d-preview.webp)
 
 ## ✨ 核心思路
 
