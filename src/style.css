@@ -973,6 +973,7 @@ html, body, #app {
 /* ---------- Embedded Terminal Panel ---------- */
 .terminal-panel {
   --term-w: 460px;
+  position: relative;
   grid-column: 3;
   grid-row: 1;
   align-self: stretch;
