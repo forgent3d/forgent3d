@@ -124,23 +124,94 @@ let _windowsPathPatchCache = null;
 // Cached PATH resolved from the user's login shell (computed once, async-safely).
 let _loginShellPath = null;
 
-function getLoginShellPath() {
-  if (_loginShellPath !== null) return _loginShellPath;
-  const shell = process.env.SHELL || '/bin/zsh';
+// Well-known bin dirs that should be on PATH on macOS/Linux but are often missed
+// when the app is launched from Finder/Dock (which inherits launchd's minimal PATH).
+// Most importantly nvm: the official installer wires nvm into ~/.zshrc, which is NOT
+// sourced by `zsh -lc` (non-interactive), so a desktop-launched Electron app can't
+// see node/codex/claude installed via `nvm install -g ...`.
+function getUnixCandidatePathDirs() {
+  const home = os.homedir();
+  const candidates = [
+    '/opt/homebrew/bin',
+    '/opt/homebrew/sbin',
+    '/usr/local/bin',
+    '/usr/local/sbin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+    path.join(home, '.local', 'bin'),
+    path.join(home, '.bun', 'bin'),
+    path.join(home, '.deno', 'bin'),
+    path.join(home, '.cargo', 'bin'),
+  ];
   try {
-    const r = spawnSync(shell, ['-lc', 'echo "$PATH"'], {
+    const nvmDir = process.env.NVM_DIR || path.join(home, '.nvm');
+    const versionsDir = path.join(nvmDir, 'versions', 'node');
+    if (fs.existsSync(versionsDir)) {
+      const versions = fs.readdirSync(versionsDir).sort().reverse();
+      for (const ver of versions) {
+        const binDir = path.join(versionsDir, ver, 'bin');
+        if (fs.existsSync(binDir)) candidates.push(binDir);
+      }
+    }
+  } catch {
+    // Best-effort enumeration; ignore failures.
+  }
+  return candidates;
+}
+
+const _PATH_MARK_START = '___AICAD_PATH_START___';
+const _PATH_MARK_END = '___AICAD_PATH_END___';
+
+function probeShellPath(shell, shellArgs) {
+  try {
+    const r = spawnSync(shell, shellArgs, {
       stdio: ['ignore', 'pipe', 'ignore'],
       encoding: 'utf8',
       env: process.env,
       timeout: 5000
     });
-    if (r.status === 0 && r.stdout.trim()) {
-      _loginShellPath = r.stdout.trim();
+    if (!r.stdout) return '';
+    const out = String(r.stdout);
+    const start = out.indexOf(_PATH_MARK_START);
+    const end = out.indexOf(_PATH_MARK_END, start + _PATH_MARK_START.length);
+    if (start !== -1 && end !== -1) {
+      return out.slice(start + _PATH_MARK_START.length, end).trim();
     }
+    if (r.status === 0) return out.trim();
+    return '';
   } catch {
-    // Fall through to process.env.PATH.
+    return '';
   }
-  _loginShellPath = _loginShellPath || process.env.PATH || '';
+}
+
+function getLoginShellPath() {
+  if (_loginShellPath !== null) return _loginShellPath;
+  const shell = process.env.SHELL || '/bin/zsh';
+  // Markers let us extract PATH cleanly even if .zshrc/.bashrc prints other stuff.
+  const probeCmd = `printf '%s%s%s' '${_PATH_MARK_START}' "$PATH" '${_PATH_MARK_END}'`;
+
+  // Try interactive+login first so .zshrc / .bashrc (where nvm typically lives)
+  // is sourced. Fall back to plain login shell, then to process.env.PATH.
+  let probed = probeShellPath(shell, ['-ilc', probeCmd]);
+  if (!probed) probed = probeShellPath(shell, ['-lc', probeCmd]);
+  if (!probed) probed = process.env.PATH || '';
+
+  const sep = ':';
+  const entries = probed.split(sep).map((p) => p.trim()).filter(Boolean);
+  const seen = new Set(entries.map((p) => p));
+  for (const dir of getUnixCandidatePathDirs()) {
+    if (seen.has(dir)) continue;
+    try {
+      if (!fs.existsSync(dir)) continue;
+    } catch {
+      continue;
+    }
+    entries.push(dir);
+    seen.add(dir);
+  }
+  _loginShellPath = entries.join(sep);
   return _loginShellPath;
 }
 
@@ -202,17 +273,16 @@ function pickCwd(projectPath) {
 
 function hasCommandOnUnix(command) {
   if (!command) return false;
-  try {
-    const shell = process.env.SHELL || '/bin/zsh';
-    const loginPath = getLoginShellPath();
-    const r = spawnSync(shell, ['-lc', `command -v ${command}`], {
-      stdio: 'ignore',
-      env: { ...process.env, PATH: loginPath }
-    });
-    return r.status === 0;
-  } catch {
-    return false;
+  // Resolve against the same PATH we'll actually inject into the PTY, instead of
+  // re-spawning a shell (which can miss nvm-installed CLIs depending on how the
+  // user's rc files are wired up).
+  const loginPath = getLoginShellPath();
+  const dirs = loginPath.split(':').map((p) => p.trim()).filter(Boolean);
+  for (const dir of dirs) {
+    const candidate = path.join(dir, command);
+    if (canExecuteFile(candidate)) return true;
   }
+  return false;
 }
 
 function canExecuteFile(filePath) {
