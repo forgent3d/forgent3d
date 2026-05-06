@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('aicad', {
     ipcRenderer.invoke('terminal:kill', { termId }),
   clipboardReadText: () => ipcRenderer.invoke('clipboard:readText'),
   clipboardWriteText: (text) => ipcRenderer.invoke('clipboard:writeText', text),
+  clipboardHasImage: () => ipcRenderer.invoke('clipboard:hasImage'),
 
   onEvent: (handler) => {
     const listener = (_evt, msg) => handler(msg);
