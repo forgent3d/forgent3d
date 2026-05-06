@@ -319,6 +319,12 @@ html, body, #app {
 
 #canvas-host {
   position: absolute; inset: 0;
+  background: transparent;
+  transition: background 0.18s ease;
+}
+#canvas-host[data-viewer-background="light"] {
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(255, 255, 255, 0.88) 0%, rgba(238, 242, 247, 0.95) 48%, #dce3ec 100%);
 }
 #canvas-host canvas { display: block; }
 

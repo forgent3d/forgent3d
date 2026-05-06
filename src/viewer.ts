@@ -12,8 +12,9 @@ import { createAppearanceController } from './viewer-appearance.js';
 import { createPreviewModeController } from './viewer-preview-mode.js';
 import { createReferenceAxesController } from './viewer-reference-axes.js';
 import { createExplodeController } from './viewer-explode.js';
+import { createAdaptiveBackgroundController } from './viewer-background.js';
 import { disposeThreeObject } from './viewer-utils.js';
-import type { LoadModelOptions, LogHandler, PartInfo, PreviewMode, Viewer, ViewSpec } from './types.js';
+import type { LoadModelOptions, LogHandler, MaterialParams, MaterialSpec, PartInfo, PreviewMode, Viewer, ViewSpec } from './types.js';
 // Vite treats wasm as an asset and returns the final bundled URL
 import occtWasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
 import mujocoWasmUrl from '@mujoco/mujoco/mujoco.wasm?url';
@@ -43,6 +44,44 @@ export function createViewer(host: HTMLElement): Viewer {
   );
   camera.position.set(80, 60, 100);
 
+  // Cached bounding sphere of the active model, used to keep camera near/far
+  // wide enough that parts never clip when the user zooms in/out.
+  const modelClipSphere = new THREE.Sphere(new THREE.Vector3(), 0);
+  const modelClipBox = new THREE.Box3();
+  let modelClipDirty = true;
+  function markModelClipDirty() { modelClipDirty = true; }
+  function refreshModelClipSphere() {
+    if (!currentRoot) {
+      modelClipSphere.center.set(0, 0, 0);
+      modelClipSphere.radius = 0;
+      return;
+    }
+    modelClipBox.setFromObject(currentRoot);
+    if (modelClipBox.isEmpty()) {
+      modelClipSphere.center.set(0, 0, 0);
+      modelClipSphere.radius = 0;
+      return;
+    }
+    modelClipBox.getBoundingSphere(modelClipSphere);
+  }
+  function updateCameraClipping() {
+    if (modelClipDirty) {
+      refreshModelClipSphere();
+      modelClipDirty = false;
+    }
+    const radius = modelClipSphere.radius;
+    if (!Number.isFinite(radius) || radius <= 0) return;
+    // 4x radius headroom comfortably covers exploded layouts (max factor ~3).
+    const dist = camera.position.distanceTo(modelClipSphere.center);
+    const farNeeded = Math.max(dist + radius * 4, radius * 8, 1000);
+    const nearNeeded = Math.max(0.01, farNeeded * 1e-5);
+    if (camera.far !== farNeeded || camera.near !== nearNeeded) {
+      camera.far = farNeeded;
+      camera.near = nearNeeded;
+      camera.updateProjectionMatrix();
+    }
+  }
+
   // preserveDrawingBuffer is required for stable canvas.toDataURL snapshots,
   // used by MCP screenshot_model tool
   const renderer = new THREE.WebGLRenderer({
@@ -68,6 +107,7 @@ export function createViewer(host: HTMLElement): Viewer {
 
   const lighting = createViewerLighting(scene, renderer, () => currentRoot);
   const contactShadow = createContactShadow(scene);
+  const backgroundController = createAdaptiveBackgroundController(host);
 
   function prepareModelForCadDisplay(root: THREE.Object3D): THREE.Box3 {
     const box = new THREE.Box3().setFromObject(root);
@@ -123,6 +163,7 @@ export function createViewer(host: HTMLElement): Viewer {
     controls.update();
     if (autoOrbitSpeed && currentRoot) viewController.orbit(autoOrbitSpeed * dt);
     lighting.updateDirectionalLights(camera, controls.target);
+    updateCameraClipping();
     renderer.render(scene, camera);
     const activeViewCube = viewCube as ViewCubeOverlay | null;
     if (activeViewCube) activeViewCube.render(camera.quaternion);
@@ -168,11 +209,13 @@ export function createViewer(host: HTMLElement): Viewer {
       disposeThreeObject(currentRoot);
       currentRoot = null;
     }
+    markModelClipDirty();
     currentMjcfRoot = null;
     disposeMjcfSimulation(mjcfSimulation);
     mjcfSimulation = null;
     appearanceController.reset();
     explodeController.reset();
+    backgroundController.reset();
     contactShadow.hide();
     referenceAxes.hide();
     controls.target.set(0, 0, 0);
@@ -195,7 +238,9 @@ export function createViewer(host: HTMLElement): Viewer {
     mjcfSimulation = isMjcf ? (nextRoot.userData.mjcfSimulation || null) : null;
     const modelBox = prepareModelForCadDisplay(nextRoot);
     referenceAxes.updateForBox(modelBox);
+    markModelClipDirty();
     appearanceController.apply();
+    backgroundController.update(nextRoot);
     explodeController.rebuildTargets();
     previewController.refresh();
 
@@ -366,6 +411,7 @@ export function createViewer(host: HTMLElement): Viewer {
     }
     const params = await loadViewerParams(opts.paramsUrl, onLog);
     appearanceController.setMaterialParams(params);
+    backgroundController.update(currentRoot);
     previewController.refresh();
     return partInfo;
   }
@@ -399,6 +445,28 @@ export function createViewer(host: HTMLElement): Viewer {
 
   function refreshPreview() {
     previewController.refresh();
+  }
+
+  function setMaterialParams(params: MaterialParams = {}) {
+    appearanceController.setMaterialParams(params);
+    backgroundController.update(currentRoot);
+  }
+
+  function setPartMaterial(partKey: string | number, config: MaterialSpec | THREE.ColorRepresentation): boolean {
+    const matched = appearanceController.setPartMaterial(partKey, config);
+    backgroundController.update(currentRoot);
+    return matched;
+  }
+
+  function setPartMaterialColor(partKey: string | number, color: THREE.ColorRepresentation): boolean {
+    const matched = appearanceController.setPartMaterialColor(partKey, color);
+    backgroundController.update(currentRoot);
+    return matched;
+  }
+
+  function setPartMaterialColors(colorsByPart: Record<string, THREE.ColorRepresentation>) {
+    appearanceController.setPartMaterialColors(colorsByPart);
+    backgroundController.update(currentRoot);
   }
 
   function setExplodeEnabled(enabled: boolean) {
@@ -436,10 +504,10 @@ export function createViewer(host: HTMLElement): Viewer {
     setExplodeFactor,
     getExplodeState,
     refreshPreview,
-    setMaterialParams: appearanceController.setMaterialParams,
-    setPartMaterial: appearanceController.setPartMaterial,
-    setPartMaterialColor: appearanceController.setPartMaterialColor,
-    setPartMaterialColors: appearanceController.setPartMaterialColors,
+    setMaterialParams,
+    setPartMaterial,
+    setPartMaterialColor,
+    setPartMaterialColors,
     getMaterialParts: appearanceController.getMaterialParts,
     getPartMaterialState: appearanceController.getPartMaterialState,
     getCurrentView: viewController.getCurrentView,

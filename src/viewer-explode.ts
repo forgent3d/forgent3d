@@ -210,8 +210,10 @@ export function createExplodeController({
     return getState();
   }
 
+  const FACTOR_MAX = 3;
+
   function setFactor(nextFactor: number) {
-    targetFactor = THREE.MathUtils.clamp(Number(nextFactor) || 0, 0, 1);
+    targetFactor = THREE.MathUtils.clamp(Number(nextFactor) || 0, 0, FACTOR_MAX);
     factor = targetFactor;
     enabled = targetFactor > 0;
     apply();
