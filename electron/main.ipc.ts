@@ -39,6 +39,17 @@ function registerIpcHandlers({
     clipboard.writeText(String(text ?? ''));
     return true;
   });
+  // Codex CLI's Ctrl+V image paste errors out when only text is on the clipboard,
+  // so the renderer needs a synchronous-feeling probe to decide whether to forward
+  // Ctrl+V to Codex (image present) or fall back to a plain text paste.
+  ipcMain.handle('clipboard:hasImage', () => {
+    try {
+      const img = clipboard.readImage();
+      return !!img && !img.isEmpty();
+    } catch {
+      return false;
+    }
+  });
 
   ipcMain.handle('mcp:status', () => deps.getMcpStatusPayload());
   ipcMain.handle('language:get', () => deps.getLanguage());

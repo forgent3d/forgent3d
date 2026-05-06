@@ -109,10 +109,28 @@ export function createTerminalPanel(containerEl: HTMLElement, api: AicadApi) {
         return false;
       }
 
-      // Codex handles Ctrl/Alt+V itself and reads image data from the native clipboard.
-      // Keep those chords available in Codex sessions so pasted images can be attached.
+      // Codex handles Ctrl/Alt+V itself for image paste, but errors with
+      // "Failed to paste image: no image on clipboard" when only text is on the clipboard.
+      // Probe the clipboard: if an image is present, forward the keystroke as the raw control
+      // byte so Codex grabs it natively; otherwise fall back to a plain text paste.
       if (isCodexSession && key === 'v' && !isShift && (ev.ctrlKey || ev.altKey) && !ev.metaKey) {
-        return true;
+        const useAlt = ev.altKey && !ev.ctrlKey;
+        ev.preventDefault();
+        api.clipboardHasImage()
+          .then((hasImage: boolean) => {
+            if (!termId) return;
+            if (hasImage) {
+              // Ctrl+V = 0x16 (SYN); Alt+V = ESC + 'v'. Same bytes xterm would have sent.
+              api.terminalWrite(termId, useAlt ? '\x1bv' : '\x16');
+              return;
+            }
+            return api.clipboardReadText().then((text: string) => {
+              if (!termId || !text) return;
+              api.terminalWrite(termId, String(text));
+            });
+          })
+          .catch(() => {});
+        return false;
       }
 
       // Paste text:

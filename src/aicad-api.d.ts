@@ -77,6 +77,7 @@ type AicadApi = {
   terminalKill(termId: string): Promise<void>;
   clipboardReadText(): Promise<string>;
   clipboardWriteText(text: string): Promise<boolean>;
+  clipboardHasImage(): Promise<boolean>;
 
   onEvent(handler: AicadEventHandler): () => void;
 };
