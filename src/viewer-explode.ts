@@ -8,50 +8,32 @@ type ExplodeTarget = {
   parentWorldQuaternion: THREE.Quaternion;
 };
 
+function isSolidMesh(child: THREE.Object3D): boolean {
+  return (child as THREE.Mesh).isMesh === true && !child.userData?.isWireframe;
+}
+
 function hasSolidMesh(object: THREE.Object3D): boolean {
   let found = false;
   object.traverse((child) => {
     if (found) return;
-    if ((child as THREE.Mesh).isMesh && !child.userData?.isWireframe) found = true;
+    if (isSolidMesh(child)) found = true;
   });
   return found;
 }
 
 function hasDirectSolidMesh(object: THREE.Object3D): boolean {
-  return object.children.some((child) => (child as THREE.Mesh).isMesh && !child.userData?.isWireframe);
-}
-
-function directSolidMeshCount(object: THREE.Object3D): number {
-  return object.children.filter((child) => (child as THREE.Mesh).isMesh && !child.userData?.isWireframe).length;
+  return object.children.some(isSolidMesh);
 }
 
 function fallbackDirection(index: number): THREE.Vector3 {
   const angle = index * Math.PI * (3 - Math.sqrt(5));
-  return new THREE.Vector3(Math.cos(angle), 0.28, Math.sin(angle)).normalize();
-}
-
-function siblingFanDirection(object: THREE.Object3D, index: number): THREE.Vector3 {
-  const childIndex = Number.isFinite(object.userData?.mjcfChildIndex)
-    ? Number(object.userData.mjcfChildIndex)
-    : index;
-  const depth = Math.max(0, Number(object.userData?.mjcfDepth) || 0);
-  const angle = childIndex * Math.PI * (3 - Math.sqrt(5)) + depth * 0.62;
-  return new THREE.Vector3(Math.cos(angle), 0.18 + depth * 0.04, Math.sin(angle)).normalize();
+  return new THREE.Vector3(Math.cos(angle), 0.18, Math.sin(angle)).normalize();
 }
 
 function removeTargetOffset(target: ExplodeTarget) {
   if (target.offset.lengthSq() <= 0) return;
   target.object.position.sub(target.offset);
   target.offset.set(0, 0, 0);
-}
-
-function hasTargetAncestor(object: THREE.Object3D, targetObjects: Set<THREE.Object3D>): boolean {
-  let parent = object.parent;
-  while (parent) {
-    if (targetObjects.has(parent)) return true;
-    parent = parent.parent;
-  }
-  return false;
 }
 
 export function createExplodeController({
@@ -64,12 +46,10 @@ export function createExplodeController({
   const rootCenter = new THREE.Vector3();
   const rootSize = new THREE.Vector3();
   const targetCenter = new THREE.Vector3();
-  const parentCenter = new THREE.Vector3();
   const explodedCenter = new THREE.Vector3();
   const centerCorrectionFull = new THREE.Vector3();
   const worldOffset = new THREE.Vector3();
   const parentQuat = new THREE.Quaternion();
-  const targetObjectSet = new Set<THREE.Object3D>();
   let enabled = false;
   let factor = 0;
   let targetFactor = 0;
@@ -77,41 +57,35 @@ export function createExplodeController({
   let targetRoot: THREE.Object3D | null = null;
 
   function candidateTargets(root: THREE.Object3D): THREE.Object3D[] {
-    const mjcfBodies = Array.isArray(root.userData?.mjcfBodies)
-      ? root.userData.mjcfBodies.filter((body: THREE.Object3D) => hasDirectSolidMesh(body))
+    const mjcfBodies: THREE.Object3D[] = Array.isArray(root.userData?.mjcfBodies)
+      ? (root.userData.mjcfBodies as THREE.Object3D[]).filter(hasDirectSolidMesh)
       : [];
-    if (mjcfBodies.length >= 2) return mjcfBodies;
 
-    const direct = root.children.filter((child) => hasSolidMesh(child));
-    if (direct.length >= 2) return direct;
-
-    const meshes: THREE.Object3D[] = [];
-    root.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh && !child.userData?.isWireframe) meshes.push(child);
-    });
-    return meshes.length >= 2 ? meshes : [];
-  }
-
-  function bodyTreeDirection(object: THREE.Object3D, index: number, maxSize: number): THREE.Vector3 | null {
-    if (!object.userData?.isMjcfBody) return null;
-    const parentBody = object.userData.mjcfParentBody;
-    const direction = new THREE.Vector3();
-    if (parentBody && hasSolidMesh(parentBody)) {
-      box.setFromObject(parentBody);
-      if (!box.isEmpty()) {
-        box.getCenter(parentCenter);
-        direction.copy(targetCenter).sub(parentCenter);
+    let pool: THREE.Object3D[];
+    if (mjcfBodies.length >= 2) {
+      pool = mjcfBodies;
+    } else {
+      const direct = root.children.filter(hasSolidMesh);
+      if (direct.length >= 2) {
+        pool = direct;
+      } else {
+        const meshes: THREE.Object3D[] = [];
+        root.traverse((child) => {
+          if (isSolidMesh(child)) meshes.push(child);
+        });
+        pool = meshes;
       }
-    } else {
-      direction.copy(targetCenter).sub(rootCenter);
     }
-    if (direction.lengthSq() < 1e-8) {
-      direction.copy(siblingFanDirection(object, index));
-    } else {
-      direction.y += maxSize * (0.05 + Math.min(0.08, (Number(object.userData.mjcfDepth) || 0) * 0.015));
-      direction.normalize();
-    }
-    return direction;
+
+    const set = new Set(pool);
+    return pool.filter((object) => {
+      let parent = object.parent;
+      while (parent) {
+        if (set.has(parent)) return false;
+        parent = parent.parent;
+      }
+      return true;
+    });
   }
 
   function rebuildTargets() {
@@ -127,8 +101,10 @@ export function createExplodeController({
     if (rootBox.isEmpty()) return targets;
     rootBox.getCenter(rootCenter);
     rootBox.getSize(rootSize);
-    const maxSize = Math.max(rootSize.x, rootSize.y, rootSize.z, 1);
-    const baseDistance = maxSize * 0.72;
+
+    const sortedSize = [rootSize.x, rootSize.y, rootSize.z].sort((a, b) => a - b);
+    const medianSize = sortedSize[1] || sortedSize[2] || 1;
+    const minRadius = Math.max(medianSize * 0.18, 1e-3);
 
     const candidates = candidateTargets(root);
     for (let i = 0; i < candidates.length; i++) {
@@ -136,23 +112,25 @@ export function createExplodeController({
       box.setFromObject(object);
       if (box.isEmpty()) continue;
       box.getCenter(targetCenter);
-      const direction = bodyTreeDirection(object, i, maxSize) || targetCenter.clone().sub(rootCenter);
-      if (direction.lengthSq() < 1e-8) direction.copy(fallbackDirection(i));
-      else if (!object.userData?.isMjcfBody) {
-        direction.y += maxSize * 0.08;
-        direction.normalize();
+
+      const direction = new THREE.Vector3().copy(targetCenter).sub(rootCenter);
+      const radial = direction.length();
+      if (radial < 1e-6) {
+        direction.copy(fallbackDirection(i));
+      } else {
+        direction.divideScalar(radial);
       }
-      const depth = Math.max(0, Number(object.userData?.mjcfDepth) || 0);
-      const treeScale = object.userData?.isMjcfBody ? (0.72 + Math.min(depth, 4) * 0.12) : 1;
+
       object.parent?.getWorldQuaternion(parentQuat);
       targets.push({
         object,
         direction,
-        distance: baseDistance * treeScale * (directSolidMeshCount(object) > 1 ? 0.78 : 1),
+        distance: Math.max(radial, minRadius),
         offset: new THREE.Vector3(),
         parentWorldQuaternion: parentQuat.clone()
       });
     }
+
     if (targets.length < 2) {
       enabled = false;
       targetFactor = 0;
@@ -175,16 +153,30 @@ export function createExplodeController({
   }
 
   function applyOffsets(activeTargets: ExplodeTarget[], nextFactor: number, includeCenterCorrection = true) {
-    targetObjectSet.clear();
-    for (const target of activeTargets) targetObjectSet.add(target.object);
+    const desiredWorld = new Map<THREE.Object3D, THREE.Vector3>();
     for (const target of activeTargets) {
-      worldOffset.copy(target.direction).multiplyScalar(target.distance * nextFactor);
-      if (includeCenterCorrection && !hasTargetAncestor(target.object, targetObjectSet)) {
-        worldOffset.addScaledVector(centerCorrectionFull, nextFactor);
+      const wo = new THREE.Vector3()
+        .copy(target.direction)
+        .multiplyScalar(target.distance * nextFactor);
+      if (includeCenterCorrection) {
+        wo.addScaledVector(centerCorrectionFull, nextFactor);
       }
-      target.offset.copy(worldOffset);
+      desiredWorld.set(target.object, wo);
+    }
+
+    const ancestorAccum = new THREE.Vector3();
+    for (const target of activeTargets) {
+      const desired = desiredWorld.get(target.object)!;
+      ancestorAccum.set(0, 0, 0);
+      let p: THREE.Object3D | null = target.object.parent;
+      while (p) {
+        const ancestorOffset = desiredWorld.get(p);
+        if (ancestorOffset) ancestorAccum.add(ancestorOffset);
+        p = p.parent;
+      }
+      worldOffset.copy(desired).sub(ancestorAccum);
       target.object.parent?.getWorldQuaternion(target.parentWorldQuaternion);
-      target.offset.applyQuaternion(target.parentWorldQuaternion.invert());
+      target.offset.copy(worldOffset).applyQuaternion(target.parentWorldQuaternion.invert());
       target.object.position.add(target.offset);
     }
     targetRoot?.updateMatrixWorld(true);
