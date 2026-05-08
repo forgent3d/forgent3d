@@ -10,6 +10,8 @@ const { DOMParser } = require('@xmldom/xmldom');
 const dynamicImport = new Function('specifier', 'return import(specifier)');
 
 function createMainExportTools({ dialog, state, deps }) {
+  const stlExportPromises = new Map();
+
   function exportExt(format) {
     switch (String(format || '').toLowerCase()) {
       case 'step': return '.step';
@@ -60,6 +62,48 @@ function createMainExportTools({ dialog, state, deps }) {
     if (ret.code !== 0) {
       throw new Error((ret.stderr || ret.stdout || `Python export failed with exit code ${ret.code}`).trim());
     }
+  }
+
+  function statMtimeMs(filePath) {
+    try {
+      return fs.existsSync(filePath) ? fs.statSync(filePath).mtimeMs : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  function modelInputMtime(partName, source = null) {
+    if (!state.currentProjectPath() || !partName) return 0;
+    const resolved = source || deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
+    if (!resolved) return 0;
+    const paramsPath = path.join(path.dirname(resolved.sourcePath), 'params.json');
+    return Math.max(statMtimeMs(resolved.sourcePath), statMtimeMs(paramsPath));
+  }
+
+  function isExportFresh(outFile, partName, source = null) {
+    const outMtime = statMtimeMs(outFile);
+    return outMtime > 0 && outMtime >= modelInputMtime(partName, source);
+  }
+
+  async function generateStlIfNeeded(partName, outFile, source = null) {
+    const normalizedOut = path.resolve(outFile);
+    if (isExportFresh(normalizedOut, partName, source)) {
+      return { path: normalizedOut, skipped: true, reason: 'fresh' };
+    }
+    const key = normalizedOut.toLowerCase();
+    if (stlExportPromises.has(key)) return stlExportPromises.get(key);
+    const promise = (async () => {
+      fs.mkdirSync(path.dirname(normalizedOut), { recursive: true });
+      if (isExportFresh(normalizedOut, partName, source)) {
+        return { path: normalizedOut, skipped: true, reason: 'fresh' };
+      }
+      await generateExportFile(partName, 'stl', normalizedOut, source);
+      return { path: normalizedOut, skipped: false };
+    })().finally(() => {
+      stlExportPromises.delete(key);
+    });
+    stlExportPromises.set(key, promise);
+    return promise;
   }
 
   async function convertStlToObj(stlPath, outPath, format) {
@@ -350,7 +394,8 @@ function createMainExportTools({ dialog, state, deps }) {
 
   async function ensurePartStlArtifact(partName) {
     const stlPath = path.join(deps.modelDir(state.currentProjectPath(), partName), `${partName}.stl`);
-    await runPythonExport(partName, 'stl', stlPath);
+    const source = deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
+    await generateStlIfNeeded(partName, stlPath, source);
     return stlPath;
   }
 
@@ -371,8 +416,7 @@ function createMainExportTools({ dialog, state, deps }) {
     if (normalizedOut !== root && !normalizedOut.startsWith(`${root}${path.sep}`)) {
       throw new Error('Output path must stay inside the current project.');
     }
-    fs.mkdirSync(path.dirname(normalizedOut), { recursive: true });
-    await generateExportFile(clean, 'stl', normalizedOut, source);
+    const exportResult = await generateStlIfNeeded(clean, normalizedOut, source);
     const size = fs.existsSync(normalizedOut) ? fs.statSync(normalizedOut).size : 0;
     return {
       ok: true,
@@ -380,7 +424,9 @@ function createMainExportTools({ dialog, state, deps }) {
       format: 'stl',
       path: normalizedOut,
       relativePath: path.relative(state.currentProjectPath(), normalizedOut).replace(/\\/g, '/'),
-      size
+      size,
+      skipped: !!exportResult.skipped,
+      reason: exportResult.reason || (exportResult.skipped ? 'fresh' : undefined)
     };
   }
 
