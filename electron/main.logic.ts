@@ -13,6 +13,8 @@ global.DOMParser = DOMParser;
 function createMainLogicTools({ state, deps }) {
   /** Part names whose next completed Python build should write project STL (same path as MCP build_stl default). */
   const pendingStlAfterBuild = new Set();
+  const dirtyBuildInputs = new Map();
+  const runningBuildInputs = new Map();
 
   function writeIfChanged(filePath, content) {
     try {
@@ -200,6 +202,87 @@ function createMainLogicTools({ state, deps }) {
     return null;
   }
 
+  function statMtimeMs(filePath) {
+    try {
+      return fs.existsSync(filePath) ? fs.statSync(filePath).mtimeMs : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  function modelInputMtime(name, source = null) {
+    if (!state.currentProjectPath() || !name) return 0;
+    const resolved = source || deps.resolveModelSource(state.currentProjectPath(), name, state.currentKernel());
+    if (!resolved) return 0;
+    const paramsPath = deps.modelParamsPath(state.currentProjectPath(), name);
+    return Math.max(statMtimeMs(resolved.sourcePath), statMtimeMs(paramsPath));
+  }
+
+  function defaultStlPath(name) {
+    return path.join(deps.modelDir(state.currentProjectPath(), name), `${name}.stl`);
+  }
+
+  function isFileFreshForInput(filePath, inputMtime) {
+    const fileMtime = statMtimeMs(filePath);
+    return fileMtime > 0 && fileMtime >= inputMtime;
+  }
+
+  function refreshModelDirtyState(name, source = null) {
+    if (!state.currentProjectPath() || !name) return { inputMtime: 0, buildDirty: false };
+    const resolved = source || deps.resolveModelSource(state.currentProjectPath(), name, state.currentKernel());
+    if (!resolved) return { inputMtime: 0, buildDirty: false };
+    const inputMtime = modelInputMtime(name, resolved);
+    const cacheFile = deps.modelCacheFile(state.currentProjectPath(), name, resolved, state.currentKernel());
+    const cacheFresh = !!cacheFile && isFileFreshForInput(cacheFile, inputMtime);
+    const markedDirtyAt = dirtyBuildInputs.get(name) || 0;
+    if (!cacheFresh || markedDirtyAt > inputMtime) {
+      dirtyBuildInputs.set(name, Math.max(inputMtime, markedDirtyAt));
+    } else {
+      dirtyBuildInputs.delete(name);
+    }
+    return { inputMtime, buildDirty: dirtyBuildInputs.has(name), cacheFresh, cacheFile };
+  }
+
+  function markModelDirty(name) {
+    if (!state.currentProjectPath() || !name) return;
+    const source = deps.resolveModelSource(state.currentProjectPath(), name, state.currentKernel());
+    if (!source) return;
+    dirtyBuildInputs.set(name, modelInputMtime(name, source));
+  }
+
+  function isDefaultStlFresh(name, source = null) {
+    if (!state.currentProjectPath() || !name) return false;
+    const resolved = source || deps.resolveModelSource(state.currentProjectPath(), name, state.currentKernel());
+    if (!resolved || resolved.kind !== 'part') return true;
+    return isFileFreshForInput(defaultStlPath(name), modelInputMtime(name, resolved));
+  }
+
+  function cachedBuildResult(name, source = null, extra = {}) {
+    const resolved = source || deps.resolveModelSource(state.currentProjectPath(), name, state.currentKernel());
+    const cacheFile = deps.modelCacheFile(state.currentProjectPath(), name, resolved, state.currentKernel());
+    const size = cacheFile && fs.existsSync(cacheFile) ? fs.statSync(cacheFile).size : 0;
+    return {
+      ok: true,
+      part: name,
+      kernel: state.currentKernel(),
+      cacheFile: cacheFile ? path.basename(cacheFile) : null,
+      cacheSize: size,
+      faceCount: resolved?.kind === 'asm' ? null : (state.partInfoCache().get(name)?.faceCount ?? null),
+      skipped: true,
+      reason: 'fresh',
+      ...extra
+    };
+  }
+
+  function finishBuildPass(partName, builtInputMtime) {
+    runningBuildInputs.delete(partName);
+    const source = deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
+    const freshness = refreshModelDirtyState(partName, source);
+    if (freshness.buildDirty && freshness.inputMtime > builtInputMtime) {
+      state.pendingParts().add(partName);
+    }
+  }
+
   function stopWatcher() {
     const watcher = state.watcher();
     if (watcher) {
@@ -219,6 +302,8 @@ function createMainLogicTools({ state, deps }) {
     state.partInfoCache().clear();
     state.buildWaiters().clear();
     state.partLoadedWaiters().clear();
+    dirtyBuildInputs.clear();
+    runningBuildInputs.clear();
     pendingStlAfterBuild.clear();
 
     deps.saveLastProjectPath(resolvedProjectPath);
@@ -254,11 +339,13 @@ function createMainLogicTools({ state, deps }) {
       const entry = partNameFromPath(filePath);
       if (!entry) return;
       deps.sendLog(`Model changed: models/${entry.name}/${entry.fileName}`);
+      markModelDirty(entry.name);
       scheduleBuild(entry.name);
     });
     watcher.on('add', (filePath) => {
       const entry = partNameFromPath(filePath);
       if (entry) {
+        markModelDirty(entry.name);
         broadcastPartsList();
         scheduleBuild(entry.name);
       }
@@ -271,7 +358,8 @@ function createMainLogicTools({ state, deps }) {
     if (runImmediately && state.activePart()) {
       const source = deps.resolveModelSource(state.currentProjectPath(), state.activePart(), state.currentKernel());
       const cache = deps.modelCacheFile(state.currentProjectPath(), state.activePart(), source, state.currentKernel());
-      if (fs.existsSync(cache)) deps.sendModelUpdated(state.activePart());
+      const freshness = refreshModelDirtyState(state.activePart(), source);
+      if (cache && fs.existsSync(cache) && !freshness.buildDirty) deps.sendModelUpdated(state.activePart());
       else scheduleBuild(state.activePart());
     }
   }
@@ -287,15 +375,30 @@ function createMainLogicTools({ state, deps }) {
 
     const source = deps.resolveModelSource(state.currentProjectPath(), name, state.currentKernel());
     const cache = deps.modelCacheFile(state.currentProjectPath(), name, source, state.currentKernel());
-    if (fs.existsSync(cache)) deps.sendModelUpdated(name);
+    const freshness = refreshModelDirtyState(name, source);
+    if (cache && fs.existsSync(cache) && !freshness.buildDirty) deps.sendModelUpdated(name);
     else scheduleBuild(name);
   }
 
   function scheduleBuild(partName, { exportProjectStl = false } = {}) {
     if (!state.currentProjectPath() || !partName) return;
-    if (exportProjectStl) pendingStlAfterBuild.add(partName);
+    const source = deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
+    if (!source) return;
+    const freshness = refreshModelDirtyState(partName, source);
+    const needsStl = exportProjectStl && source.kind === 'part' && !isDefaultStlFresh(partName, source);
+    if (needsStl) pendingStlAfterBuild.add(partName);
     if (state.buildingParts().has(partName)) {
-      state.pendingParts().add(partName);
+      const runningInputMtime = runningBuildInputs.get(partName) || 0;
+      if (freshness.buildDirty && freshness.inputMtime > runningInputMtime) {
+        state.pendingParts().add(partName);
+      }
+      return;
+    }
+    if (!freshness.buildDirty && !needsStl) {
+      if (freshness.cacheFile && fs.existsSync(freshness.cacheFile) && partName === state.activePart()) {
+        deps.sendModelUpdated(partName);
+      }
+      resolveBuildWaiters(partName, cachedBuildResult(partName, source));
       return;
     }
     runBuild(partName);
@@ -308,12 +411,41 @@ function createMainLogicTools({ state, deps }) {
       deps.sendToRenderer('BUILD_FAILED', { part: partName, message: `Model source not found: ${partName}` });
       return;
     }
+    const freshness = refreshModelDirtyState(partName, source);
     const exportProjectStl = pendingStlAfterBuild.has(partName);
-    if (exportProjectStl) pendingStlAfterBuild.delete(partName);
+    const needsStl = exportProjectStl && source.kind === 'part' && !isDefaultStlFresh(partName, source);
+    if (!freshness.buildDirty && !needsStl) {
+      if (exportProjectStl) pendingStlAfterBuild.delete(partName);
+      resolveBuildWaiters(partName, cachedBuildResult(partName, source));
+      if (state.pendingParts().has(partName)) state.pendingParts().delete(partName);
+      broadcastPartsList();
+      return;
+    }
+    if (exportProjectStl && !needsStl) pendingStlAfterBuild.delete(partName);
     state.buildingParts().add(partName);
     state.pendingParts().delete(partName);
     deps.sendToRenderer('BUILD_STARTED', { part: partName });
     broadcastPartsList();
+    runningBuildInputs.set(partName, freshness.inputMtime);
+    if (!freshness.buildDirty && needsStl) {
+      try {
+        const stlPath = await deps.ensurePartStlArtifact(partName);
+        pendingStlAfterBuild.delete(partName);
+        deps.sendLog(`[${partName}] Project STL ready (${path.relative(state.currentProjectPath(), stlPath).replace(/\\/g, '/')})`);
+        resolveBuildWaiters(partName, cachedBuildResult(partName, source, { stlPath }));
+      } catch (err) {
+        const msg = `Failed to generate STL artifact for "${partName}": ${err.message || err}`;
+        deps.sendLog(msg, 'error');
+        deps.sendToRenderer('BUILD_FAILED', { part: partName, message: msg });
+        resolveBuildWaiters(partName, { ok: false, part: partName, error: msg });
+      } finally {
+        state.buildingParts().delete(partName);
+        finishBuildPass(partName, freshness.inputMtime);
+        broadcastPartsList();
+        if (state.pendingParts().has(partName)) runBuild(partName);
+      }
+      return;
+    }
     return source.kind === 'asm' ? runBuildMjcf(partName, source) : runBuildPython(partName, exportProjectStl);
   }
 
@@ -321,6 +453,7 @@ function createMainLogicTools({ state, deps }) {
     const runtime = await deps.detectBuildRuntime(state.currentKernel());
     if (!runtime) {
       state.buildingParts().delete(partName);
+      finishBuildPass(partName, runningBuildInputs.get(partName) || 0);
       const msg = deps.missingRuntimeMessage(state.currentKernel());
       deps.sendLog(msg, 'error');
       deps.sendToRenderer('BUILD_FAILED', { part: partName, message: msg, reason: 'NO_RUNTIME' });
@@ -492,6 +625,7 @@ function createMainLogicTools({ state, deps }) {
     if (!fs.existsSync(sourcePath)) {
       const message = `asm.xml was not generated for model "${partName}"`;
       state.buildingParts().delete(partName);
+      finishBuildPass(partName, runningBuildInputs.get(partName) || 0);
       deps.sendToRenderer('BUILD_FAILED', { part: partName, message });
       resolveBuildWaiters(partName, { ok: false, part: partName, error: message });
       broadcastPartsList();
@@ -501,6 +635,7 @@ function createMainLogicTools({ state, deps }) {
     const mjcfValidation = await validateMjcfAssemblyReferences(sourcePath, partName);
     if (!mjcfValidation.ok) {
       state.buildingParts().delete(partName);
+      finishBuildPass(partName, runningBuildInputs.get(partName) || 0);
       deps.sendToRenderer('BUILD_FAILED', { part: partName, message: mjcfValidation.error });
       resolveBuildWaiters(partName, { ok: false, part: partName, error: mjcfValidation.error });
       broadcastPartsList();
@@ -516,6 +651,7 @@ function createMainLogicTools({ state, deps }) {
       ok: true, part: partName, kernel: state.currentKernel(), cacheFile: path.basename(sourcePath), cacheSize: size, faceCount: null
     });
     state.buildingParts().delete(partName);
+    finishBuildPass(partName, runningBuildInputs.get(partName) || 0);
     broadcastPartsList();
     if (state.pendingParts().has(partName)) runBuild(partName);
   }
@@ -527,26 +663,30 @@ function createMainLogicTools({ state, deps }) {
     child.stderr?.on('data', (d) => { const s = d.toString(); stderr += s; deps.sendLog(s.trimEnd(), 'warn'); });
     child.on('error', (err) => {
       state.buildingParts().delete(partName);
+      finishBuildPass(partName, runningBuildInputs.get(partName) || 0);
       const friendlyMsg = err.message;
       deps.sendLog(`[${partName}] ${label} failed: ${friendlyMsg}`, 'error');
       deps.sendToRenderer('BUILD_FAILED', { part: partName, message: friendlyMsg });
       broadcastPartsList();
       resolveBuildWaiters(partName, { ok: false, part: partName, error: friendlyMsg });
     });
-    child.on('close', (code) => {
+    child.on('close', async (code) => {
+      const builtInputMtime = runningBuildInputs.get(partName) || 0;
       state.buildingParts().delete(partName);
       const source = deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
       const cacheFile = deps.modelCacheFile(state.currentProjectPath(), partName, source, state.currentKernel());
       const cacheBase = cacheFile ? path.basename(cacheFile) : `${partName}.cache`;
-      if (code !== 0) {
-        deps.sendLog(`[${partName}] ${label} exited with code ${code}`, 'error');
-        deps.sendToRenderer('BUILD_FAILED', { part: partName, code, stderr });
-        resolveBuildWaiters(partName, { ok: false, part: partName, exitCode: code, stderr: stderr.trim(), stdout: stdout.trim() });
-      } else if (cacheFile && fs.existsSync(cacheFile)) {
-        const size = fs.statSync(cacheFile).size;
-        const finalizeSuccess = async () => {
+      try {
+        if (code !== 0) {
+          deps.sendLog(`[${partName}] ${label} exited with code ${code}`, 'error');
+          deps.sendToRenderer('BUILD_FAILED', { part: partName, code, stderr });
+          resolveBuildWaiters(partName, { ok: false, part: partName, exitCode: code, stderr: stderr.trim(), stdout: stdout.trim() });
+          finishBuildPass(partName, builtInputMtime);
+        } else if (cacheFile && fs.existsSync(cacheFile)) {
+          const size = fs.statSync(cacheFile).size;
           if (exportProjectStl && source?.kind === 'part') {
             await deps.ensurePartStlArtifact(partName);
+            pendingStlAfterBuild.delete(partName);
             deps.sendLog(`[${partName}] Project STL updated (models/${partName}/${partName}.stl)`);
           }
           deps.sendLog(`[${partName}] Model cache updated (${(size / 1024).toFixed(1)} KB)`);
@@ -561,19 +701,22 @@ function createMainLogicTools({ state, deps }) {
             faceCount: source?.kind === 'asm' ? null : (state.partInfoCache().get(partName)?.faceCount ?? null),
             stdout: stdout.trim()
           });
-        };
-        finalizeSuccess().catch((err) => {
+          finishBuildPass(partName, builtInputMtime);
+        } else {
+          deps.sendToRenderer('BUILD_FAILED', { part: partName, message: `${cacheBase} was not generated` });
+          resolveBuildWaiters(partName, { ok: false, part: partName, error: `${cacheBase} was not generated`, stderr: stderr.trim() });
+          finishBuildPass(partName, builtInputMtime);
+        }
+      } catch (err) {
           const msg = `Failed to generate STL artifact for "${partName}": ${err.message || err}`;
           deps.sendLog(msg, 'error');
           deps.sendToRenderer('BUILD_FAILED', { part: partName, message: msg });
           resolveBuildWaiters(partName, { ok: false, part: partName, error: msg });
-        });
-      } else {
-        deps.sendToRenderer('BUILD_FAILED', { part: partName, message: `${cacheBase} was not generated` });
-        resolveBuildWaiters(partName, { ok: false, part: partName, error: `${cacheBase} was not generated`, stderr: stderr.trim() });
+          finishBuildPass(partName, builtInputMtime);
+      } finally {
+        broadcastPartsList();
+        if (state.pendingParts().has(partName)) runBuild(partName);
       }
-      broadcastPartsList();
-      if (state.pendingParts().has(partName)) runBuild(partName);
     });
   }
 
@@ -724,11 +867,23 @@ function createMainLogicTools({ state, deps }) {
       async rebuildPartSync(name) {
         if (!state.currentProjectPath()) return { ok: false, error: 'No project is open in the preview app.' };
         if (!deps.resolveModelSource(state.currentProjectPath(), name)) return { ok: false, error: `Model does not exist: ${name}` };
-        const result = await new Promise((resolve) => {
-          if (!state.buildWaiters().has(name)) state.buildWaiters().set(name, []);
-          state.buildWaiters().get(name).push(resolve);
-          scheduleBuild(name);
-        });
+        let result = null;
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const source = deps.resolveModelSource(state.currentProjectPath(), name, state.currentKernel());
+          const freshness = refreshModelDirtyState(name, source);
+          if (!state.buildingParts().has(name) && !freshness.buildDirty) {
+            result = cachedBuildResult(name, source);
+            break;
+          }
+          result = await new Promise((resolve) => {
+            if (!state.buildWaiters().has(name)) state.buildWaiters().set(name, []);
+            state.buildWaiters().get(name).push(resolve);
+            scheduleBuild(name);
+          });
+          if (!result?.ok) return result;
+          const after = refreshModelDirtyState(name, source);
+          if (!state.buildingParts().has(name) && !after.buildDirty) break;
+        }
         if (!result?.ok) return result;
         const refreshed = await refreshViewerCachesAfterBuild(name);
         return { ...result, ...refreshed };
