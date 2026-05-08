@@ -6,8 +6,7 @@ const fs = require('fs');
 const path = require('path');
 
 const {
-  CODEX_MCP_QUICK_BLOCK,
-  CODEX_INSTRUCTION_META
+  CODEX_MCP_QUICK_BLOCK
 } = require('./main.templates.prompts.mcp');
 
 function agentBlocks(agentHint) {
@@ -30,7 +29,7 @@ function readSkillContent(relativePath) {
 }
 
 const SKILL_CORE = {
-  filename: 'aicad-core.mdc',
+  filename: 'skill-core.mdc',
   description: 'AI CAD companion core project rules: geometry deliverables, layout, and validation policy',
   globs: '*',
   alwaysApply: true,
@@ -51,15 +50,7 @@ const SKILL_MJCF = {
   content: readSkillContent('./skills/aicad-mjcf-skill-content.md')
 };
 
-const SKILL_MCP_WORKFLOW = {
-  filename: 'skill-mcp-workflow.mdc',
-  description: 'MCP tools usage, generation protocol, accuracy contract, and failure recovery workflow',
-  globs: '*',
-  content: readSkillContent('./skills/aicad-mcp-skill-content.md')
-
-};
-
-const ALL_SKILLS = [SKILL_CORE, SKILL_BUILD123D, SKILL_MJCF, SKILL_MCP_WORKFLOW];
+const ALL_SKILLS = [SKILL_CORE, SKILL_BUILD123D, SKILL_MJCF];
 
 module.exports = {
   ALL_SKILLS,

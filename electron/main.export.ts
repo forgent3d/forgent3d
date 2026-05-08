@@ -11,6 +11,7 @@ const dynamicImport = new Function('specifier', 'return import(specifier)');
 
 function createMainExportTools({ dialog, state, deps }) {
   const stlExportPromises = new Map();
+  let occtPromise = null;
 
   function exportExt(format) {
     switch (String(format || '').toLowerCase()) {
@@ -80,9 +81,95 @@ function createMainExportTools({ dialog, state, deps }) {
     return Math.max(statMtimeMs(resolved.sourcePath), statMtimeMs(paramsPath));
   }
 
+  function modelExportDependencyMtime(partName, source = null) {
+    const inputMtime = modelInputMtime(partName, source);
+    const resolved = source || deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
+    if (!resolved || resolved.kind !== 'part') return inputMtime;
+    const cacheFile = deps.modelCacheFile?.(state.currentProjectPath(), partName, resolved, state.currentKernel());
+    return Math.max(inputMtime, statMtimeMs(cacheFile));
+  }
+
+  function freshBrepPath(partName, source = null) {
+    if (!state.currentProjectPath() || !partName) return null;
+    const resolved = source || deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
+    if (!resolved || resolved.kind !== 'part') return null;
+    const cacheFile = deps.modelCacheFile?.(state.currentProjectPath(), partName, resolved, state.currentKernel());
+    if (!cacheFile || path.extname(cacheFile).toLowerCase() !== '.brep') return null;
+    const cacheMtime = statMtimeMs(cacheFile);
+    if (cacheMtime <= 0 || cacheMtime < modelInputMtime(partName, resolved)) return null;
+    return cacheFile;
+  }
+
   function isExportFresh(outFile, partName, source = null) {
     const outMtime = statMtimeMs(outFile);
-    return outMtime > 0 && outMtime >= modelInputMtime(partName, source);
+    return outMtime > 0 && outMtime >= modelExportDependencyMtime(partName, source);
+  }
+
+  async function getOcct() {
+    if (!occtPromise) {
+      const occtImportJs = require('occt-import-js');
+      occtPromise = occtImportJs();
+    }
+    return occtPromise;
+  }
+
+  function occtMeshToThreeMesh(mesh, THREE) {
+    const posArr = mesh?.attributes?.position?.array;
+    const idxArr = mesh?.index?.array;
+    if (!posArr || !idxArr || posArr.length < 9 || idxArr.length < 3) return null;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(posArr, 3));
+    const normalArr = mesh?.attributes?.normal?.array;
+    if (normalArr && normalArr.length === posArr.length) {
+      geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normalArr, 3));
+    }
+    geometry.setIndex(Array.from(idxArr));
+    if (!geometry.getAttribute('normal')) geometry.computeVertexNormals();
+    return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xb0b0b0 }));
+  }
+
+  async function exportFreshBrepToStl(partName, outFile, source = null) {
+    const brepPath = freshBrepPath(partName, source);
+    if (!brepPath) return false;
+    const THREE = require('three');
+    const { STLExporter } = await dynamicImport('three/examples/jsm/exporters/STLExporter.js');
+    const occt = await getOcct();
+    const bytes = fs.readFileSync(brepPath);
+    const result = occt.ReadBrepFile(bytes, {
+      linearUnit: 'millimeter',
+      linearDeflectionType: 'bounding_box_ratio',
+      linearDeflection: 0.001,
+      angularDeflection: 0.5
+    });
+    if (!result?.success) throw new Error('OCCT failed to parse fresh BREP cache.');
+
+    const scene = new THREE.Scene();
+    try {
+      for (const mesh of result.meshes || []) {
+        const threeMesh = occtMeshToThreeMesh(mesh, THREE);
+        if (threeMesh) scene.add(threeMesh);
+      }
+      scene.updateMatrixWorld(true);
+      const stats = sceneGeometryStats(scene);
+      if (stats.meshes <= 0 || stats.triangles <= 0) {
+        throw new Error('Fresh BREP cache produced no STL triangles.');
+      }
+      const data = new STLExporter().parse(scene, { binary: true });
+      const buffer = exportPayloadToBuffer(data, 'STL');
+      const expectedBinaryStlSize = 84 + stats.triangles * 50;
+      if (buffer.byteLength !== expectedBinaryStlSize) {
+        throw new Error(`BREP to STL produced ${buffer.byteLength} bytes, expected ${expectedBinaryStlSize} bytes for ${stats.triangles} triangles.`);
+      }
+      fs.writeFileSync(outFile, buffer);
+      deps.sendLog(`[${partName}] STL generated from fresh BREP (${stats.triangles} triangles).`);
+      return true;
+    } finally {
+      scene.traverse((child) => {
+        child.geometry?.dispose?.();
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        for (const material of materials) material?.dispose?.();
+      });
+    }
   }
 
   async function generateStlIfNeeded(partName, outFile, source = null) {
@@ -97,7 +184,14 @@ function createMainExportTools({ dialog, state, deps }) {
       if (isExportFresh(normalizedOut, partName, source)) {
         return { path: normalizedOut, skipped: true, reason: 'fresh' };
       }
-      await generateExportFile(partName, 'stl', normalizedOut, source);
+      try {
+        if (await exportFreshBrepToStl(partName, normalizedOut, source)) {
+          return { path: normalizedOut, skipped: false, reason: 'fresh-brep' };
+        }
+      } catch (err) {
+        deps.sendLog(`[${partName}] BREP to STL failed, falling back to build123d export: ${err?.message || err}`, 'warn');
+      }
+      await generateExportFile(partName, 'stl', normalizedOut, source, { preferBrep: false });
       return { path: normalizedOut, skipped: false };
     })().finally(() => {
       stlExportPromises.delete(key);
@@ -369,7 +463,7 @@ function createMainExportTools({ dialog, state, deps }) {
     }
   }
 
-  async function generateExportFile(partName, format, outFile, source = null) {
+  async function generateExportFile(partName, format, outFile, source = null, opts = {}) {
     if (source?.kind === 'asm') {
       await exportAssemblyScene(source.sourcePath, outFile, format);
       return;
@@ -379,13 +473,20 @@ function createMainExportTools({ dialog, state, deps }) {
       return;
     }
     if (format === 'stl') {
+      if (opts.preferBrep !== false) {
+        try {
+          if (await exportFreshBrepToStl(partName, outFile, source)) return;
+        } catch (err) {
+          deps.sendLog(`[${partName}] BREP to STL failed, falling back to build123d export: ${err?.message || err}`, 'warn');
+        }
+      }
       await runPythonExport(partName, 'stl', outFile);
       return;
     }
 
     const tmpStl = path.join(os.tmpdir(), `aicad-export-${partName}-${Date.now()}.stl`);
     try {
-      await runPythonExport(partName, 'stl', tmpStl);
+      await generateExportFile(partName, 'stl', tmpStl, source);
       await convertStlToObj(tmpStl, outFile, format);
     } finally {
       try { fs.unlinkSync(tmpStl); } catch {}
@@ -397,37 +498,6 @@ function createMainExportTools({ dialog, state, deps }) {
     const source = deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
     await generateStlIfNeeded(partName, stlPath, source);
     return stlPath;
-  }
-
-  async function buildStlForModel(modelName, outputPath = null) {
-    if (!state.currentProjectPath()) throw new Error('No project is open in the preview app.');
-    const clean = String(modelName || '').trim();
-    if (!clean) throw new Error('Model name is required.');
-    const source = deps.resolveModelSource(state.currentProjectPath(), clean, state.currentKernel());
-    if (!source) throw new Error(`Model does not exist: ${clean}`);
-    if (source.kind === 'asm') {
-      throw new Error('build_stl currently supports part models only.');
-    }
-    const outFile = outputPath
-      ? path.resolve(state.currentProjectPath(), String(outputPath))
-      : path.join(deps.modelDir(state.currentProjectPath(), clean), `${clean}.stl`);
-    const root = path.resolve(state.currentProjectPath());
-    const normalizedOut = path.resolve(outFile);
-    if (normalizedOut !== root && !normalizedOut.startsWith(`${root}${path.sep}`)) {
-      throw new Error('Output path must stay inside the current project.');
-    }
-    const exportResult = await generateStlIfNeeded(clean, normalizedOut, source);
-    const size = fs.existsSync(normalizedOut) ? fs.statSync(normalizedOut).size : 0;
-    return {
-      ok: true,
-      model: clean,
-      format: 'stl',
-      path: normalizedOut,
-      relativePath: path.relative(state.currentProjectPath(), normalizedOut).replace(/\\/g, '/'),
-      size,
-      skipped: !!exportResult.skipped,
-      reason: exportResult.reason || (exportResult.skipped ? 'fresh' : undefined)
-    };
   }
 
   async function exportPartByRequest(partName, format) {
@@ -467,7 +537,6 @@ function createMainExportTools({ dialog, state, deps }) {
     convertStlToObj,
     generateExportFile,
     ensurePartStlArtifact,
-    buildStlForModel,
     exportPartByRequest
   };
 }
@@ -498,6 +567,7 @@ function initMainExportTools(mainContext) {
       missingRuntimeMessage: runtime.missingRuntimeMessage,
       buildRuntimeSpawn: runtime.buildRuntimeSpawn,
       modelDir: model.modelDir,
+      modelCacheFile: model.modelCacheFile,
       resolveModelSource: model.resolveModelSource,
       sendLog: logging.sendLog
     }

@@ -11,7 +11,7 @@ const { spawn } = require('child_process');
 global.DOMParser = DOMParser;
 
 function createMainLogicTools({ state, deps }) {
-  /** Part names whose next completed Python build should write project STL (same path as MCP build_stl default). */
+  /** Part names whose next completed Python build should write the default project STL. */
   const pendingStlAfterBuild = new Set();
   const dirtyBuildInputs = new Map();
   const runningBuildInputs = new Map();
@@ -254,7 +254,9 @@ function createMainLogicTools({ state, deps }) {
     if (!state.currentProjectPath() || !name) return false;
     const resolved = source || deps.resolveModelSource(state.currentProjectPath(), name, state.currentKernel());
     if (!resolved || resolved.kind !== 'part') return true;
-    return isFileFreshForInput(defaultStlPath(name), modelInputMtime(name, resolved));
+    const cacheFile = deps.modelCacheFile(state.currentProjectPath(), name, resolved, state.currentKernel());
+    const dependencyMtime = Math.max(modelInputMtime(name, resolved), statMtimeMs(cacheFile));
+    return isFileFreshForInput(defaultStlPath(name), dependencyMtime);
   }
 
   function cachedBuildResult(name, source = null, extra = {}) {
@@ -394,7 +396,7 @@ function createMainLogicTools({ state, deps }) {
       }
       return;
     }
-    if (!freshness.buildDirty && !needsStl) {
+    if (!freshness.buildDirty && !needsStl && source.kind !== 'asm') {
       if (freshness.cacheFile && fs.existsSync(freshness.cacheFile) && partName === state.activePart()) {
         deps.sendModelUpdated(partName);
       }
@@ -414,7 +416,7 @@ function createMainLogicTools({ state, deps }) {
     const freshness = refreshModelDirtyState(partName, source);
     const exportProjectStl = pendingStlAfterBuild.has(partName);
     const needsStl = exportProjectStl && source.kind === 'part' && !isDefaultStlFresh(partName, source);
-    if (!freshness.buildDirty && !needsStl) {
+    if (!freshness.buildDirty && !needsStl && source.kind !== 'asm') {
       if (exportProjectStl) pendingStlAfterBuild.delete(partName);
       resolveBuildWaiters(partName, cachedBuildResult(partName, source));
       if (state.pendingParts().has(partName)) state.pendingParts().delete(partName);
@@ -871,7 +873,7 @@ function createMainLogicTools({ state, deps }) {
         for (let attempt = 0; attempt < 4; attempt++) {
           const source = deps.resolveModelSource(state.currentProjectPath(), name, state.currentKernel());
           const freshness = refreshModelDirtyState(name, source);
-          if (!state.buildingParts().has(name) && !freshness.buildDirty) {
+          if (!state.buildingParts().has(name) && !freshness.buildDirty && source?.kind !== 'asm') {
             result = cachedBuildResult(name, source);
             break;
           }
@@ -888,15 +890,6 @@ function createMainLogicTools({ state, deps }) {
         const refreshed = await refreshViewerCachesAfterBuild(name);
         return { ...result, ...refreshed };
       },
-      async buildStl(name, output = null) {
-        try {
-          const result = await deps.buildStlForModel(name, output);
-          deps.sendLog(`[${result.model}] MCP build_stl exported: ${result.relativePath}`);
-          return result;
-        } catch (error) {
-          return { ok: false, model: name, error: error?.message || String(error) };
-        }
-      }
     };
   }
 
@@ -991,7 +984,6 @@ function initMainLogicTools(mainContext) {
       buildRuntimeSpawn: runtime.buildRuntimeSpawn,
       getBuildRuntimeStatus: runtime.getBuildRuntimeStatus,
       ensurePartStlArtifact: build.ensurePartStlArtifact,
-      buildStlForModel: exportApi.buildStlForModel,
       rebuildAppMenu: ui.rebuildAppMenu,
       sendToRenderer: ui.sendToRenderer,
       sendLog: ui.sendLog,

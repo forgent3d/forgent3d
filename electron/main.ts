@@ -473,7 +473,6 @@ function initModuleTools() {
       sendModelUpdated: (...args) => sendModelUpdated(...args)
     },
     exportApi: {
-      buildStlForModel: (...args) => buildStlForModel(...args),
       exportPartByRequest: (...args) => exportPartByRequest(...args),
       handleExportFromMenu: (...args) => handleExportFromMenu(...args)
     },
@@ -608,10 +607,6 @@ function sendModelUpdated(partName) {
   return logicTools.sendModelUpdated(partName);
 }
 
-
-async function buildStlForModel(modelName, outputPath = null) {
-  return exportTools.buildStlForModel(modelName, outputPath);
-}
 
 async function exportPartByRequest(partName, format) {
   return exportTools.exportPartByRequest(partName, format);
