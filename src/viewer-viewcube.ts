@@ -4,8 +4,8 @@ import { vec3From } from './viewer-utils.js';
 
 function composeViewCubeLabel(signs) {
   const labels = [];
-  if (signs.y) labels.push(signs.y > 0 ? 'Top' : 'Bottom');
-  if (signs.z) labels.push(signs.z > 0 ? 'Front' : 'Back');
+  if (signs.z) labels.push(signs.z > 0 ? 'Top' : 'Bottom');
+  if (signs.y) labels.push(signs.y > 0 ? 'Back' : 'Front');
   if (signs.x) labels.push(signs.x > 0 ? 'Right' : 'Left');
   return labels.join(' ');
 }
@@ -120,12 +120,12 @@ export function createViewCubeOverlay(host, { onNavigate }) {
   }
 
   const faceSpecs = [
-    { key: 'top', label: 'Top', text: 'Top', normal: [0, 1, 0], color: 0x4978b6 },
-    { key: 'front', label: 'Front', text: 'Front', normal: [0, 0, 1], color: 0x355d96 },
+    { key: 'top', label: 'Top', text: 'Top', normal: [0, 0, 1], color: 0x4978b6 },
+    { key: 'front', label: 'Front', text: 'Front', normal: [0, -1, 0], color: 0x355d96 },
     { key: 'right', label: 'Right', text: 'Right', normal: [1, 0, 0], color: 0x2a4f80 },
     { key: 'left', label: 'Left', text: 'Left', normal: [-1, 0, 0], color: 0x213650 },
-    { key: 'back', label: 'Back', text: 'Back', normal: [0, 0, -1], color: 0x1a293f },
-    { key: 'bottom', label: 'Bottom', text: 'Bottom', normal: [0, -1, 0], color: 0x162033 }
+    { key: 'back', label: 'Back', text: 'Back', normal: [0, 1, 0], color: 0x1a293f },
+    { key: 'bottom', label: 'Bottom', text: 'Bottom', normal: [0, 0, -1], color: 0x162033 }
   ];
 
   for (const spec of faceSpecs) {

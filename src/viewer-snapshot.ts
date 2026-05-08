@@ -4,31 +4,31 @@ import { VIEWER_BACKGROUND_COLOR } from './viewer-materials.js';
 
 const SNAPSHOT_VIEWS = {
   iso: {
-    dir: new THREE.Vector3(1, 0.85, 1).normalize(),
-    up: new THREE.Vector3(0, 1, 0)
+    dir: new THREE.Vector3(1, -1, 0.85).normalize(),
+    up: new THREE.Vector3(0, 0, 1)
   },
   front: {
-    dir: new THREE.Vector3(0, 0, 1),
-    up: new THREE.Vector3(0, 1, 0)
+    dir: new THREE.Vector3(0, -1, 0),
+    up: new THREE.Vector3(0, 0, 1)
   },
   side: {
     dir: new THREE.Vector3(1, 0, 0),
-    up: new THREE.Vector3(0, 1, 0)
+    up: new THREE.Vector3(0, 0, 1)
   },
   top: {
-    dir: new THREE.Vector3(0, 1, 0.02).normalize(),
-    up: new THREE.Vector3(0, 0, -1)
+    dir: new THREE.Vector3(0, 0, 1),
+    up: new THREE.Vector3(0, 1, 0)
   }
 };
 
 function buildViewBasis(dir, upHint) {
   const forward = dir.clone().normalize();
-  let up = (upHint || new THREE.Vector3(0, 1, 0)).clone().normalize();
+  let up = (upHint || new THREE.Vector3(0, 0, 1)).clone().normalize();
   let right = new THREE.Vector3().crossVectors(forward, up);
   if (right.lengthSq() < 1e-8) {
-    up = Math.abs(forward.y) < 0.95
-      ? new THREE.Vector3(0, 1, 0)
-      : new THREE.Vector3(0, 0, 1);
+    up = Math.abs(forward.z) < 0.95
+      ? new THREE.Vector3(0, 0, 1)
+      : new THREE.Vector3(0, forward.z > 0 ? 1 : -1, 0);
     right = new THREE.Vector3().crossVectors(forward, up);
   }
   right.normalize();
