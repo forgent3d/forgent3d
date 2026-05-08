@@ -14,52 +14,52 @@ type ResolvedViewSpec = {
 const VIEW_PRESETS: Record<string, ResolvedViewSpec> = {
   iso: {
     key: 'iso',
-    dir: new THREE.Vector3(1, 0.85, 1).normalize(),
-    up: new THREE.Vector3(0, 1, 0)
+    dir: new THREE.Vector3(1, -1, 0.85).normalize(),
+    up: new THREE.Vector3(0, 0, 1)
   },
   front: {
     key: 'front',
-    dir: new THREE.Vector3(0, 0, 1),
-    up: new THREE.Vector3(0, 1, 0)
+    dir: new THREE.Vector3(0, -1, 0),
+    up: new THREE.Vector3(0, 0, 1)
   },
   back: {
     key: 'back',
-    dir: new THREE.Vector3(0, 0, -1),
-    up: new THREE.Vector3(0, 1, 0)
+    dir: new THREE.Vector3(0, 1, 0),
+    up: new THREE.Vector3(0, 0, 1)
   },
   side: {
     key: 'side',
     dir: new THREE.Vector3(1, 0, 0),
-    up: new THREE.Vector3(0, 1, 0)
+    up: new THREE.Vector3(0, 0, 1)
   },
   right: {
     key: 'right',
     dir: new THREE.Vector3(1, 0, 0),
-    up: new THREE.Vector3(0, 1, 0)
+    up: new THREE.Vector3(0, 0, 1)
   },
   left: {
     key: 'left',
     dir: new THREE.Vector3(-1, 0, 0),
-    up: new THREE.Vector3(0, 1, 0)
+    up: new THREE.Vector3(0, 0, 1)
   },
   top: {
     key: 'top',
-    dir: new THREE.Vector3(0, 1, 0),
-    up: new THREE.Vector3(0, 0, -1)
+    dir: new THREE.Vector3(0, 0, 1),
+    up: new THREE.Vector3(0, 1, 0)
   },
   bottom: {
     key: 'bottom',
-    dir: new THREE.Vector3(0, -1, 0),
-    up: new THREE.Vector3(0, 0, 1)
+    dir: new THREE.Vector3(0, 0, -1),
+    up: new THREE.Vector3(0, -1, 0)
   }
 };
 
 function resolveViewUp(dir: THREE.Vector3): THREE.Vector3 {
   const unitDir = dir.clone().normalize();
-  if (Math.abs(unitDir.y) > 0.95) {
-    return new THREE.Vector3(0, 0, unitDir.y > 0 ? -1 : 1);
+  if (Math.abs(unitDir.z) > 0.95) {
+    return new THREE.Vector3(0, unitDir.z > 0 ? 1 : -1, 0);
   }
-  return new THREE.Vector3(0, 1, 0);
+  return new THREE.Vector3(0, 0, 1);
 }
 
 function inferViewKeyFromDirection(dir: THREE.Vector3): ViewKey {
