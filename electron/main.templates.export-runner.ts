@@ -8,7 +8,7 @@ export_runner.py - Auto-managed by AI CAD Companion Viewer (do not edit manually
 Responsibilities:
   * Accept --model <name> (and legacy --part <name>);
   * Optionally support on-demand exports via --export-format/--output (step/stl/brep);
-  * Load models/<name>/part.py and read a geometry object named result;
+  * Load parts/<name>/part.py and read a geometry object named result;
   * Export build123d geometry to .cache/<name>.brep (and STEP/STL) via OCCT APIs;
   * Let the frontend parse BREP via occt-import-js for geometry inspection.
 """
@@ -17,10 +17,11 @@ import json
 import os
 import sys
 import runpy
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = HERE
-MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
+PARTS_DIR = os.path.join(PROJECT_ROOT, "parts")
 CACHE_DIR = os.path.join(PROJECT_ROOT, ".cache")
 MODEL_KINDS = ("part",)
 
@@ -93,7 +94,7 @@ def _write_stl(shape, path_out):
 
 def _resolve_model_source(model_name: str):
     for kind in MODEL_KINDS:
-        source_path = os.path.join(MODELS_DIR, model_name, f"{kind}.py")
+        source_path = os.path.join(PARTS_DIR, model_name, f"{kind}.py")
         if os.path.isfile(source_path):
             return source_path
     return None
@@ -132,7 +133,7 @@ def _write_metadata(model_name: str, ns: dict):
         payload = _json_safe(metadata)
     except Exception as exc:
         raise RuntimeError(f"Invalid metadata: {exc}")
-    model_dir = os.path.join(MODELS_DIR, model_name)
+    model_dir = os.path.join(PARTS_DIR, model_name)
     os.makedirs(model_dir, exist_ok=True)
     metadata_path = os.path.join(model_dir, "metadata.json")
     tmp_path = metadata_path + ".tmp"
@@ -146,7 +147,7 @@ def _build_namespace(model_name: str):
     source_path = _resolve_model_source(model_name)
     if not source_path:
         print(
-            f"[export_runner] models/{model_name}/part.py does not exist",
+            f"[export_runner] parts/{model_name}/part.py does not exist",
             file=sys.stderr
         )
         return None, None, 2
@@ -164,9 +165,12 @@ def _build_namespace(model_name: str):
 
 
 def build_one(model_name: str, export_format: str = "brep", output: str = None) -> int:
+    build_started = time.perf_counter()
     ns, source_path, err = _build_namespace(model_name)
+    build_elapsed = time.perf_counter() - build_started
     if err:
         return err
+    print(f"[export_runner] {model_name} build_model time: {build_elapsed:.3f}s")
     result = ns.get("result", None)
     if result is None:
         print(f"[export_runner] {source_path} must define a global result object (build123d).",
@@ -191,12 +195,14 @@ def build_one(model_name: str, export_format: str = "brep", output: str = None) 
         out = os.path.join(CACHE_DIR, f"{model_name}.{fmt}")
 
     try:
+        export_started = time.perf_counter()
         if fmt == "brep":
             method = _write_brep(result, out)
         elif fmt == "step":
             method = _write_step(result, out)
         else:
             method = _write_stl(result, out)
+        export_elapsed = time.perf_counter() - export_started
     except Exception as exc:
         print(f"[export_runner] Failed to export {fmt.upper()}: {exc}", file=sys.stderr)
         return 5
@@ -205,21 +211,22 @@ def build_one(model_name: str, export_format: str = "brep", output: str = None) 
     if size <= 0:
         print("[export_runner] Generated output file is empty", file=sys.stderr)
         return 6
+    print(f"[export_runner] {model_name} {fmt.upper()} export time: {export_elapsed:.3f}s")
     print(f"[export_runner] {model_name} export succeeded [{fmt.upper()}] ({method}): {out} ({size} bytes)")
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--project", default=None, help="Project root path (contains models/ and .cache/)")
+    parser.add_argument("--project", default=None, help="Project root path (contains parts/, assemblies/, and .cache/)")
     parser.add_argument("--model", default=None, help="Model directory name")
     parser.add_argument("--part", default=None, help="Legacy alias for --model")
     parser.add_argument("--export-format", default="brep", choices=["brep", "step", "stl"])
     parser.add_argument("--output", default=None, help="Optional absolute path for exported file")
     args = parser.parse_args()
-    global PROJECT_ROOT, MODELS_DIR, CACHE_DIR
+    global PROJECT_ROOT, PARTS_DIR, CACHE_DIR
     PROJECT_ROOT = os.path.abspath(args.project) if args.project else HERE
-    MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
+    PARTS_DIR = os.path.join(PROJECT_ROOT, "parts")
     CACHE_DIR = os.path.join(PROJECT_ROOT, ".cache")
     model_name = args.model or args.part
     if not model_name:

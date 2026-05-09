@@ -38,6 +38,7 @@ export function initUI(viewer) {
 
     partsPanel: document.getElementById('parts-panel'),
     partsList: document.getElementById('parts-list'),
+    modelKindBtns: document.querySelectorAll('[data-kind-filter]'),
     selectExportFormat: document.getElementById('select-export-format'),
     btnExportActive: document.getElementById('btn-export-active'),
     paramsPanel: document.getElementById('params-panel'),
@@ -102,6 +103,7 @@ export function initUI(viewer) {
   let activePart = null;
   let loadedPart = null;
   let partsCache = [];
+  let modelListKind = 'asm';
   const LEFT_SIDEBAR_PREF_KEY = 'forgent3d.leftSidebarVisible';
   let leftSidebarVisible = false;
 
@@ -177,6 +179,33 @@ export function initUI(viewer) {
     el.modelNameBadge.classList.remove('hidden');
   }
 
+  function getModelInfo(name) {
+    return partsCache.find((part) => part.name === name) || null;
+  }
+
+  function getModelListKindForName(name) {
+    return getModelInfo(name)?.kind === 'asm' ? 'asm' : 'part';
+  }
+
+  function syncModelKindButtons() {
+    el.modelKindBtns?.forEach((btn) => {
+      const active = btn.dataset.kindFilter === modelListKind;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+
+  function setModelListKind(kind, { render = true } = {}) {
+    modelListKind = kind === 'part' ? 'part' : 'asm';
+    syncModelKindButtons();
+    if (render) renderPartsList();
+  }
+
+  function syncModelListKindToModel(name, opts = {}) {
+    if (!name) setModelListKind('asm', opts);
+    else setModelListKind(getModelListKindForName(name), opts);
+  }
+
   function refreshLocalizedUi() {
     applyDocumentI18n();
     applyLayoutVisibility();
@@ -198,6 +227,7 @@ export function initUI(viewer) {
     if (!p) {
       activePart = null;
       loadedPart = null;
+      modelListKind = 'asm';
       viewerUi.stopAutoShow();
       viewerUi.stopExplodedView();
     }
@@ -206,6 +236,7 @@ export function initUI(viewer) {
     if (el.paramsPanel) el.paramsPanel.style.display = p ? '' : 'none';
     el.agentBtns.forEach((btn) => { btn.disabled = !p; });
     applyLayoutVisibility();
+    syncModelKindButtons();
     renderModelNameBadge();
     syncExportControls();
     viewerUi.renderAll();
@@ -215,14 +246,16 @@ export function initUI(viewer) {
   /* ---------------- Models List ---------------- */
   function renderPartsList() {
     el.partsList.innerHTML = '';
-    if (!partsCache.length) {
+    syncModelKindButtons();
+    const visibleParts = partsCache.filter((p) => modelListKind === 'asm' ? p.kind === 'asm' : p.kind !== 'asm');
+    if (!visibleParts.length) {
       const empty = document.createElement('li');
       empty.className = 'part-empty muted';
-      empty.textContent = t('noModels');
+      empty.textContent = modelListKind === 'asm' ? 'No assemblies yet' : 'No parts yet';
       el.partsList.appendChild(empty);
       return;
     }
-    for (const p of partsCache) {
+    for (const p of visibleParts) {
       const li = document.createElement('li');
       li.className = 'part-item' + (p.name === activePart ? ' active' : '');
       li.dataset.name = p.name;
@@ -281,6 +314,7 @@ export function initUI(viewer) {
       const { parts, active } = await api.listParts();
       partsCache = parts || [];
       activePart = active;
+      syncModelListKindToModel(activePart, { render: false });
       renderPartsList();
       renderModelNameBadge();
       syncExportControls();
@@ -309,6 +343,12 @@ export function initUI(viewer) {
       }
     });
   }
+
+  el.modelKindBtns?.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setModelListKind(btn.dataset.kindFilter);
+    });
+  });
 
   el.btnPartCancel.addEventListener('click', () => el.modalPart.classList.add('hidden'));
   el.btnPartConfirm.addEventListener('click', () => {
@@ -643,6 +683,7 @@ export function initUI(viewer) {
       case 'PARTS_LIST':
         partsCache = payload.parts || [];
         activePart = payload.active;
+        syncModelListKindToModel(activePart, { render: false });
         renderPartsList();
         renderModelNameBadge();
         syncExportControls();
@@ -651,6 +692,7 @@ export function initUI(viewer) {
         break;
       case 'ACTIVE_PART_CHANGED':
         activePart = payload?.name || null;
+        syncModelListKindToModel(activePart, { render: false });
         renderPartsList();
         renderModelNameBadge();
         syncExportControls();
@@ -658,6 +700,10 @@ export function initUI(viewer) {
         paramsEditor.refresh({ force: true });
         break;
       case 'BUILD_STARTED':
+        if (payload?.part && payload.part === activePart) {
+          syncModelListKindToModel(payload.part, { render: false });
+          renderPartsList();
+        }
         setStatus(payload?.part ? t('buildingPart', { part: payload.part }) : t('building'), true);
         break;
       case 'BUILD_FAILED':
@@ -679,6 +725,8 @@ export function initUI(viewer) {
         if (payload?.part) {
           if (payload.part !== loadedPart) viewerUi.stopAutoShow();
           activePart = payload.part;
+          syncModelListKindToModel(activePart, { render: false });
+          renderPartsList();
           renderModelNameBadge();
         }
         const partLabel = payload.part ? `[${payload.part}] ` : '';

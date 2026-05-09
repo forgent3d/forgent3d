@@ -1,13 +1,13 @@
 ## When To Use MJCF
 
 - Use `asm.xml` for multi-body systems, articulated mechanisms, vehicles, robots, drones, repeated subassemblies, or separable components.
-- Keep each rigid body as its own `models/<part_name>/part.py`; do not fuse an assembly into one monolithic `part.py`.
-- Assembly source is `models/<assembly_name>/asm.xml` plus `params.json`.
+- Keep each rigid body as its own `parts/<part_name>/part.py`; do not fuse an assembly into one monolithic `part.py`.
+- Assembly source is `assemblies/<assembly_name>/asm.xml` plus `params.json`.
 
 ## Assembly Rules
 
 - Visual geometry must reference existing part meshes through `<asset><mesh ... file="..."/></asset>` and `<geom type="mesh" mesh="..."/>`.
-- Mesh files should point at `models/<part>/<part>.stl`; the viewer can generate missing/stale STL assets from fresh BREP caches during rebuild.
+- Mesh files should point at `parts/<part>/<part>.stl`, usually as `../../parts/<part>/<part>.stl` from an assembly directory; the viewer can generate missing/stale STL assets from fresh BREP caches during rebuild.
 - Use `${...}` substitutions for mesh filenames, positions, scales, axes, ranges, and other tunable values.
 - Body origins should be meaningful anchors. If the body origin is an anchor, move the visual mesh with `geom pos`, not the joint/site.
 - Copy derived anchors from part `metadata.json` into assembly `params.json`; do not hand-maintain duplicate anchor math in `params.json`.

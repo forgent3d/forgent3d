@@ -724,6 +724,32 @@ html, body, #app {
   max-height: 240px;
   overflow-y: auto;
 }
+.model-kind-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid #262c3c;
+  border-radius: 6px;
+  background: #0c0f16;
+}
+.model-kind-btn {
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #8993a6;
+  cursor: pointer;
+  font-size: 11px;
+  height: 24px;
+  padding: 0 8px;
+}
+.model-kind-btn:hover {
+  color: #e8ecf3;
+}
+.model-kind-btn.active {
+  background: #2a3143;
+  color: #e8ecf3;
+}
 .part-empty {
   font-size: 12px;
   padding: 10px 4px;

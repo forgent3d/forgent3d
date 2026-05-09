@@ -21,6 +21,10 @@
           <div class="panel-title">
             <span data-i18n="models">Models</span>
             <div class="parts-toolbar">
+              <div class="model-kind-switch" role="tablist" aria-label="Model directory">
+                <button id="btn-list-asm" class="model-kind-btn active" type="button" data-kind-filter="asm" aria-pressed="true">Asm</button>
+                <button id="btn-list-part" class="model-kind-btn" type="button" data-kind-filter="part" aria-pressed="false">Part</button>
+              </div>
               <select id="select-export-format" class="parts-format-select" title="Select export format" data-i18n-title="selectExportFormat">
                 <option value="step">STEP</option>
                 <option value="stl">STL</option>
@@ -142,7 +146,7 @@
       <div class="modal-body">
         <h3 data-i18n="newModel">New Model</h3>
         <p class="muted" style="font-size:12px;margin:-6px 0 8px 0" data-i18n-html="newModelHelp">
-          This creates <code>models/&lt;name&gt;/part.py</code> or <code>models/&lt;name&gt;/asm.xml</code> and
+          This creates <code>parts/&lt;name&gt;/part.py</code> or <code>assemblies/&lt;name&gt;/asm.xml</code> and
           <code>README.md</code>. Name can only contain letters, numbers, underscores, and hyphens.
         </p>
         <label data-i18n="modelType">Model type</label>

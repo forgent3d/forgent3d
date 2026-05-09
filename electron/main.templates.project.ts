@@ -64,7 +64,7 @@ function build123dModelSourceTemplate(kind, _name, desc) {
       '    <mesh name="cuboid" file="${parts.cuboid.mesh}" scale="${parts.cuboid.scale}"/>',
       '  </asset>',
       '  <worldbody>',
-      '    <body name="base" pos="${parts.cuboid.pose.pos}" euler="${parts.cuboid.pose.euler}">',
+      '    <body name="base" pos="${placement.x} ${placement.y} ${placement.z}" euler="${placement.roll} ${placement.pitch} ${placement.yaw}">',
       '      <geom type="mesh" mesh="cuboid" pos="${parts.cuboid.mesh_pos}"/>',
       '      <site name="base_origin" pos="${parts.cuboid.anchors.origin}" size="0.01"/>',
       '    </body>',
@@ -129,19 +129,23 @@ function modelSourceTemplate(kernel, kind, name, description) {
   return build123dModelSourceTemplate(kind, name, desc);
 }
 
-function modelParamsTemplate(kind, _name, description) {
+function modelParamsTemplate(kind, name, description) {
   if (kind === 'asm') {
     return JSON.stringify({
       description: description || 'Assembly parameters',
-      modelName: 'assembly',
+      modelName: name || 'assembly',
+      placement: {
+        x: 0,
+        y: 0,
+        z: 0,
+        roll: 0,
+        pitch: 0,
+        yaw: 0
+      },
       parts: {
         cuboid: {
-          mesh: '../cuboid/cuboid.stl',
+          mesh: '../../parts/cuboid/cuboid.stl',
           scale: [1, 1, 1],
-          pose: {
-            pos: [0, 0, 0],
-            euler: [0, 0, 0]
-          },
           mesh_pos: [0, 0, 0],
           anchors: {
             origin: [0, 0, 0],

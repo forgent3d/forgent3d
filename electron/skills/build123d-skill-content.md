@@ -1,5 +1,5 @@
 ## 1. Architecture & Scaffold
-- **File & Output**: Code lives in `models/<model_name>/part.py`. The final build123d object must be assigned to the global `result` variable. Do NOT use manual `export_*()` calls. Unit: mm.
+- **File & Output**: Code lives in `parts/<model_name>/part.py`. The final build123d object must be assigned to the global `result` variable. Do NOT use manual `export_*()` calls. Unit: mm.
 - **Scaffold**: Strictly enforce this block order: `# === Parameters ===` -> `# === Derived Parameters ===` -> `# === Geometry ===`.
 - **Parameterization**: Load tunable variables from `params.json` in the Parameters block. No hardcoded dimensions in the Geometry block. Use flat vars/dicts; avoid over-engineering.
 - **Viewer Materials**: Treat `__viewer` values as preview-only renderer metadata.

@@ -132,7 +132,7 @@ function buildMcpServer(ctx, { McpServer, z }) {
       title: 'Force rebuild a model and wait for completion',
       description: [
         'Purpose: synchronously rebuild the model and return ok/stderr/cacheSize/faceCount/kernel; this is the only trusted verification entry.',
-        'Prerequisite: the model must exist under models/<name>/ and the latest code must be saved.',
+        'Prerequisite: the model must exist under parts/<name>/ or assemblies/<name>/ and the latest code must be saved.',
         'If failed: make minimal fix based on stderr and retry; after success call get_model_info/screenshot_model.'
       ].join('\n'),
       inputSchema: {

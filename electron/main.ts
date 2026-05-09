@@ -14,6 +14,7 @@ const { registerIpcHandlers } = require('./main.ipc');
 const { initMainExportTools } = require('./main.export');
 const { initMainUiTools } = require('./main.ui');
 const { initMainLogicTools } = require('./main.logic');
+const { migrateLegacyModelsLayout } = require('./project-migration');
 const {
   KERNELS,
   assertKernel,
@@ -64,8 +65,10 @@ let appLanguage = 'en';
 const buildingParts = new Set();   // Models currently being built.
 const pendingParts = new Set();    // Models queued for another build pass.
 
-const MODELS_DIR = 'models';
 const MODEL_KINDS = ['part', 'asm'];
+const PARTS_DIR = 'parts';
+const ASSEMBLIES_DIR = 'assemblies';
+const MODEL_KIND_DIRS = { part: PARTS_DIR, asm: ASSEMBLIES_DIR };
 const MODEL_PARAMS_FILE = 'params.json';
 const CACHE_DIR = '.cache';
 const PROJECT_META_DIR = '.aicad';
@@ -85,30 +88,43 @@ function appIconPath() {
   return path.join(__dirname, '..', '..', 'assets', 'images', 'logo.png');
 }
 
-function modelDir(projectPath, name) { return path.join(projectPath, MODELS_DIR, name); }
-function modelParamsPath(projectPath, name) { return path.join(modelDir(projectPath, name), MODEL_PARAMS_FILE); }
+function modelKindDir(kind) {
+  return MODEL_KIND_DIRS[kind] || MODEL_KIND_DIRS.part;
+}
+function modelDir(projectPath, name, kind = null) {
+  if (kind) return path.join(projectPath, modelKindDir(kind), name);
+  const source = resolveModelSource(projectPath, name, currentKernel, { allowMissingKernel: true });
+  return source ? path.dirname(source.sourcePath) : path.join(projectPath, PARTS_DIR, name);
+}
+function modelParamsPath(projectPath, name, kind = null) { return path.join(modelDir(projectPath, name, kind), MODEL_PARAMS_FILE); }
 function sourceExt(kernel = currentKernel) { return path.extname(kernelMeta(kernel).sourceFile); }
 function modelSourceFilename(kernel = currentKernel, kind = 'part') {
   if (kind === 'asm') return 'asm.xml';
   return `${kind}${sourceExt(kernel)}`;
 }
-function resolveModelSource(projectPath, name, kernel = currentKernel) {
-  const k = assertKernel(kernel);
+function resolveModelSource(projectPath, name, kernel = currentKernel, opts = {}) {
+  if (!projectPath || !name) return null;
+  let k = kernel;
+  if (!k && opts.allowMissingKernel) {
+    try { k = readProjectKernel(projectPath); } catch {}
+  }
+  if (!k) return null;
+  k = assertKernel(k);
   for (const kind of MODEL_KINDS) {
     const fileName = modelSourceFilename(k, kind);
-    const sourcePath = path.join(modelDir(projectPath, name), fileName);
+    const sourcePath = path.join(projectPath, modelKindDir(kind), name, fileName);
     if (fs.existsSync(sourcePath)) return { kind, fileName, sourcePath };
   }
   return null;
 }
 function partSource(projectPath, name, kernel = currentKernel, kind = null) {
-  if (kind) return path.join(modelDir(projectPath, name), modelSourceFilename(kernel, kind));
+  if (kind) return path.join(modelDir(projectPath, name, kind), modelSourceFilename(kernel, kind));
   return resolveModelSource(projectPath, name, kernel)?.sourcePath
-    || path.join(modelDir(projectPath, name), modelSourceFilename(kernel, 'part'));
+    || path.join(modelDir(projectPath, name, 'part'), modelSourceFilename(kernel, 'part'));
 }
 function partReadme(projectPath, name) { return path.join(modelDir(projectPath, name), 'README.md'); }
 function partCache(projectPath, name, kernel = currentKernel) {
-  return path.join(modelDir(projectPath, name), `${name}${kernelMeta(kernel).cacheExt}`);
+  return path.join(modelDir(projectPath, name, 'part'), `${name}${kernelMeta(kernel).cacheExt}`);
 }
 function modelCacheFile(projectPath, name, source = null, kernel = currentKernel) {
   const s = source || resolveModelSource(projectPath, name, kernel);
@@ -390,7 +406,8 @@ function initModuleTools() {
     env: { isDev },
     constants: {
       MCP_PORT,
-      MODELS_DIR,
+      PARTS_DIR,
+      ASSEMBLIES_DIR,
       MODEL_KINDS,
       MODEL_PARAMS_FILE,
       CACHE_DIR,
@@ -453,6 +470,7 @@ function initModuleTools() {
       setLanguage,
       saveLastProjectPath,
       clearLastProjectPath,
+      migrateLegacyModelsLayout,
       openProject: (...args) => openProject(...args),
       openProjectByDialog: (...args) => openProjectByDialog(...args),
       restoreLastProjectIfAvailable: (...args) => restoreLastProjectIfAvailable(...args),
@@ -557,9 +575,9 @@ function bootstrapAgentWorkspace(projectPath, agent) {
 /**
  * Initialize a new project layout:
  *   - .aicad/project.json
- *   - models/cuboid/part.py as a sample part
+ *   - parts/cuboid/part.py as a sample part
  *   - params.json beside each model source
- *   - models/assembly_demo/asm.xml as a sample assembly that references cuboid
+ *   - assemblies/assembly_demo/asm.xml as a sample assembly that references cuboid
  *   - .cache/ for preview artifacts
  *   - .gitignore
  *   - agent-specific rules, skills, and MCP configs
