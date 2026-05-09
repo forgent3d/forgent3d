@@ -13,6 +13,16 @@ function createMainExportTools({ dialog, state, deps }) {
   const stlExportPromises = new Map();
   let occtPromise = null;
 
+  function elapsedMs(startMs) {
+    return Math.max(0, Date.now() - startMs);
+  }
+
+  function formatDuration(ms) {
+    const safe = Math.max(0, Math.round(Number(ms) || 0));
+    if (safe < 1000) return `${safe} ms`;
+    return `${(safe / 1000).toFixed(safe < 10000 ? 2 : 1)} s`;
+  }
+
   function exportExt(format) {
     switch (String(format || '').toLowerCase()) {
       case 'step': return '.step';
@@ -55,14 +65,18 @@ function createMainExportTools({ dialog, state, deps }) {
       '--output',
       outFile
     ]);
+    const startedAt = Date.now();
     const ret = await runCommandCollect(cmd.cmd, cmd.args, {
       cwd: state.currentProjectPath(),
       shell: false,
       windowsHide: true
     });
+    if (ret.stdout?.trim()) deps.sendLog(ret.stdout.trimEnd());
+    if (ret.stderr?.trim() && ret.code === 0) deps.sendLog(ret.stderr.trimEnd(), 'warn');
     if (ret.code !== 0) {
       throw new Error((ret.stderr || ret.stdout || `Python export failed with exit code ${ret.code}`).trim());
     }
+    deps.sendLog(`[${partName}] ${String(format || '').toUpperCase()} export command time: ${formatDuration(elapsedMs(startedAt))}`);
   }
 
   function statMtimeMs(filePath) {
@@ -129,6 +143,7 @@ function createMainExportTools({ dialog, state, deps }) {
   }
 
   async function exportFreshBrepToStl(partName, outFile, source = null) {
+    const startedAt = Date.now();
     const brepPath = freshBrepPath(partName, source);
     if (!brepPath) return false;
     const THREE = require('three');
@@ -161,7 +176,7 @@ function createMainExportTools({ dialog, state, deps }) {
         throw new Error(`BREP to STL produced ${buffer.byteLength} bytes, expected ${expectedBinaryStlSize} bytes for ${stats.triangles} triangles.`);
       }
       fs.writeFileSync(outFile, buffer);
-      deps.sendLog(`[${partName}] STL generated from fresh BREP (${stats.triangles} triangles).`);
+      deps.sendLog(`[${partName}] STL generated from fresh BREP (${stats.triangles} triangles, STL ${formatDuration(elapsedMs(startedAt))}).`);
       return true;
     } finally {
       scene.traverse((child) => {
@@ -494,7 +509,7 @@ function createMainExportTools({ dialog, state, deps }) {
   }
 
   async function ensurePartStlArtifact(partName) {
-    const stlPath = path.join(deps.modelDir(state.currentProjectPath(), partName), `${partName}.stl`);
+    const stlPath = path.join(deps.modelDir(state.currentProjectPath(), partName, 'part'), `${partName}.stl`);
     const source = deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
     await generateStlIfNeeded(partName, stlPath, source);
     return stlPath;

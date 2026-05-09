@@ -72,13 +72,14 @@ npm run build:runner
 npm run dev
 ```
 
-The app creates a project with a `models/` directory. Each model lives in its own folder with source code and parameters:
+The app creates top-level `parts/` and `assemblies/` directories. Each model lives in its own folder with source code and parameters:
 
 ```text
-models/
+parts/
   bracket/
     part.py
     params.json
+assemblies/
   linkage_demo/
     asm.xml
     params.json
@@ -90,8 +91,8 @@ models/
 AI agent or editor
         |
         v
-models/<name>/part.py or asm.xml
-models/<name>/params.json
+parts/<name>/part.py or assemblies/<name>/asm.xml
+adjacent params.json
         |
         v
 Forgent3D build runner

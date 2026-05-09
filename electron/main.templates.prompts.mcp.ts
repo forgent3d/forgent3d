@@ -3,7 +3,7 @@ export {};
 'use strict';
 
 
-// Do not create or depend on models/README.md. The file tree and UI already provide project overview.
+// Do not create or depend on aggregate README files under parts/ or assemblies/. The file tree and UI already provide project overview.
 
 const CODEX_MCP_QUICK_BLOCK = '\n> **Agent / MCP**: keep **AI CAD Companion Viewer** running while using MCP tools; launch your agent from the viewer so repo config stays in sync.\n';
 

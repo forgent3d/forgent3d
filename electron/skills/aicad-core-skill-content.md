@@ -1,9 +1,9 @@
 ## Core Rules
 
 - CAD requests must produce editable source, not images.
-- Single rigid bodies live in `models/<model_name>/part.py` and assign the final build123d object to global `result`.
-- Complex multi-part systems, articulated mechanisms, vehicles, robots, drones, and separable tools use `models/<model_name>/asm.xml` plus reusable part models.
-- Store tunable dimensions in `models/<model_name>/params.json`; source files must read or substitute those values instead of hardcoding them in geometry.
+- Single rigid bodies live in `parts/<model_name>/part.py` and assign the final build123d object to global `result`.
+- Complex multi-part systems, articulated mechanisms, vehicles, robots, drones, and separable tools use `assemblies/<model_name>/asm.xml` plus reusable part models.
+- Store tunable dimensions in the model's adjacent `params.json`; source files must read or substitute those values instead of hardcoding them in geometry.
 - For assembly-ready parts, expose derived anchors through global `metadata`; the viewer writes `metadata.json` after rebuild.
 - Do not create project overview docs unless the user asks. The file tree and UI are the overview.
 
@@ -21,9 +21,12 @@
 ```
 ./
 |- .aicad/project.json
-|- models/
-|  |- <model_name>/
-|  |  |- part.py or asm.xml
+|- parts/
+|  |- <part_name>/
+|  |  |- part.py
+|- assemblies/
+|  |- <assembly_name>/
+|  |  |- asm.xml
 |  |  |- params.json
 |  |  |- metadata.json        (auto-generated when `metadata` exists)
 |- .cache/                    (viewer cache, screenshots, transient artifacts)

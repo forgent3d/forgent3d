@@ -16,6 +16,16 @@ function createMainLogicTools({ state, deps }) {
   const dirtyBuildInputs = new Map();
   const runningBuildInputs = new Map();
 
+  function elapsedMs(startMs) {
+    return Math.max(0, Date.now() - startMs);
+  }
+
+  function formatDuration(ms) {
+    const safe = Math.max(0, Math.round(Number(ms) || 0));
+    if (safe < 1000) return `${safe} ms`;
+    return `${(safe / 1000).toFixed(safe < 10000 ? 2 : 1)} s`;
+  }
+
   function writeIfChanged(filePath, content) {
     try {
       const prev = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null;
@@ -74,7 +84,8 @@ function createMainLogicTools({ state, deps }) {
 
     writeIfChanged(deps.projectMetaPath(projectPath), deps.aicadProjectJson(k));
     writeIfChanged(path.join(projectPath, '.gitignore'), '# AI CAD Companion Preview\n.cache/\n__pycache__/\n*.pyc\n');
-    fs.mkdirSync(path.join(projectPath, deps.MODELS_DIR), { recursive: true });
+    fs.mkdirSync(path.join(projectPath, deps.PARTS_DIR), { recursive: true });
+    fs.mkdirSync(path.join(projectPath, deps.ASSEMBLIES_DIR), { recursive: true });
     fs.mkdirSync(path.join(projectPath, deps.CACHE_DIR), { recursive: true });
 
     const samplePartName = 'cuboid';
@@ -84,7 +95,7 @@ function createMainLogicTools({ state, deps }) {
     fs.mkdirSync(path.dirname(cuboidSrcPath), { recursive: true });
     fs.mkdirSync(path.dirname(asmSrcPath), { recursive: true });
     writeIfMissing(
-      deps.modelParamsPath(projectPath, samplePartName),
+      deps.modelParamsPath(projectPath, samplePartName, 'part'),
       deps.modelParamsTemplate('part', samplePartName, 'Default cuboid model parameters.')
     );
     writeIfMissing(
@@ -92,29 +103,37 @@ function createMainLogicTools({ state, deps }) {
       deps.modelSourceTemplate(k, 'part', samplePartName, `Default cuboid model. Edit ${meta.sourceFile} to preview changes.`)
     );
     writeIfMissing(
-      deps.modelParamsPath(projectPath, sampleAsmName),
+      deps.modelParamsPath(projectPath, sampleAsmName, 'asm'),
       deps.modelParamsTemplate('asm', sampleAsmName, 'Sample assembly parameters.')
     );
     const asmTemplate = deps.modelSourceTemplate(k, 'asm', sampleAsmName, 'Sample assembly that references the cuboid part mesh.');
     writeIfMissing(asmSrcPath, asmTemplate.replace(/cuboid/g, samplePartName));
-    deps.sendLog(`Sample models created: models/${samplePartName}/${deps.modelSourceFilename(k, 'part')} + models/${samplePartName}/params.json + models/${sampleAsmName}/asm.xml + models/${sampleAsmName}/params.json`);
+    deps.sendLog(`Sample models created: parts/${samplePartName}/${deps.modelSourceFilename(k, 'part')} + parts/${samplePartName}/params.json + assemblies/${sampleAsmName}/asm.xml + assemblies/${sampleAsmName}/params.json`);
   }
 
   function ensureRuntimeDirs(projectPath) {
-    fs.mkdirSync(path.join(projectPath, deps.MODELS_DIR), { recursive: true });
+    fs.mkdirSync(path.join(projectPath, deps.PARTS_DIR), { recursive: true });
+    fs.mkdirSync(path.join(projectPath, deps.ASSEMBLIES_DIR), { recursive: true });
     fs.mkdirSync(path.join(projectPath, deps.CACHE_DIR), { recursive: true });
   }
 
   function listPartsRaw(projectPath, kernel = state.currentKernel()) {
     const k = deps.assertKernel(kernel);
-    const dir = path.join(projectPath, deps.MODELS_DIR);
-    if (!fs.existsSync(dir)) return [];
-    return fs.readdirSync(dir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name)
-      .map((name) => ({ name, source: deps.resolveModelSource(projectPath, name, k) }))
-      .filter(({ source }) => !!source)
-      .sort((a, b) => a.name.localeCompare(b.name))
+    const roots = [
+      { kind: 'part', dir: path.join(projectPath, deps.PARTS_DIR) },
+      { kind: 'asm', dir: path.join(projectPath, deps.ASSEMBLIES_DIR) }
+    ];
+    const entries = [];
+    for (const root of roots) {
+      if (!fs.existsSync(root.dir)) continue;
+      for (const d of fs.readdirSync(root.dir, { withFileTypes: true })) {
+        if (!d.isDirectory()) continue;
+        const source = deps.resolveModelSource(projectPath, d.name, k);
+        if (source?.kind === root.kind) entries.push({ name: d.name, source });
+      }
+    }
+    return entries
+      .sort((a, b) => a.source.kind.localeCompare(b.source.kind) || a.name.localeCompare(b.name))
       .map(({ name, source }) => ({
         name,
         kind: source.kind,
@@ -189,15 +208,17 @@ function createMainLogicTools({ state, deps }) {
   function partNameFromPath(filePath) {
     const rel = path.relative(state.currentProjectPath() || '', filePath).replace(/\\/g, '/');
     const ext = deps.sourceExt(state.currentKernel()).replace(/^\./, '');
-    const partRe = new RegExp(`^models/([^/]+)/part\\.${ext}$`, 'i');
+    const partRe = new RegExp(`^parts/([^/]+)/part\\.${ext}$`, 'i');
     const partMatch = partRe.exec(rel);
     if (partMatch) return { name: partMatch[1], kind: 'part', fileName: `part${deps.sourceExt(state.currentKernel())}` };
-    const asmMatch = /^models\/([^/]+)\/asm\.xml$/i.exec(rel);
+    const asmMatch = /^assemblies\/([^/]+)\/asm\.xml$/i.exec(rel);
     if (asmMatch) return { name: asmMatch[1], kind: 'asm', fileName: 'asm.xml' };
-    const paramsMatch = /^models\/([^/]+)\/params\.json$/i.exec(rel);
+    const paramsMatch = /^(parts|assemblies)\/([^/]+)\/params\.json$/i.exec(rel);
     if (paramsMatch) {
-      const source = deps.resolveModelSource(state.currentProjectPath(), paramsMatch[1], state.currentKernel());
-      return { name: paramsMatch[1], kind: source?.kind || 'part', fileName: 'params.json' };
+      const name = paramsMatch[2];
+      const pathKind = paramsMatch[1].toLowerCase() === 'assemblies' ? 'asm' : 'part';
+      const source = deps.resolveModelSource(state.currentProjectPath(), name, state.currentKernel());
+      return { name, kind: source?.kind || pathKind, fileName: 'params.json' };
     }
     return null;
   }
@@ -219,7 +240,7 @@ function createMainLogicTools({ state, deps }) {
   }
 
   function defaultStlPath(name) {
-    return path.join(deps.modelDir(state.currentProjectPath(), name), `${name}.stl`);
+    return path.join(deps.modelDir(state.currentProjectPath(), name, 'part'), `${name}.stl`);
   }
 
   function isFileFreshForInput(filePath, inputMtime) {
@@ -296,6 +317,10 @@ function createMainLogicTools({ state, deps }) {
   async function openProject(projectPath, { runImmediately = false } = {}) {
     const resolvedProjectPath = path.resolve(projectPath);
     const nextKernel = deps.readProjectKernel(resolvedProjectPath);
+    const migration = deps.migrateLegacyModelsLayout?.(resolvedProjectPath, { sendLog: deps.sendLog }) || null;
+    if (migration?.migrated) {
+      deps.sendLog(`Legacy models/ layout migrated (${migration.moved} models, ${migration.rewritten} reference files updated).`);
+    }
     ensureRuntimeDirs(resolvedProjectPath);
 
     stopWatcher();
@@ -312,7 +337,7 @@ function createMainLogicTools({ state, deps }) {
     deps.sendLog(`Project kernel: ${deps.kernelMeta(state.currentKernel()).label} (${state.currentKernel()})`);
 
     const parts = listPartsRaw(resolvedProjectPath, state.currentKernel());
-    const preferred = parts.find((p) => p.kind === 'part') || parts[0];
+    const preferred = parts.find((p) => p.kind === 'asm') || parts[0];
     state.setActivePart(preferred ? preferred.name : null);
 
     deps.sendToRenderer('PROJECT_OPENED', {
@@ -327,10 +352,12 @@ function createMainLogicTools({ state, deps }) {
     broadcastPartsList();
     deps.rebuildAppMenu();
 
-    const globs = deps.MODEL_KINDS.map((kind) =>
-      path.join(resolvedProjectPath, deps.MODELS_DIR, '*', deps.modelSourceFilename(state.currentKernel(), kind)).replace(/\\/g, '/')
-    );
-    globs.push(path.join(resolvedProjectPath, deps.MODELS_DIR, '*', 'params.json').replace(/\\/g, '/'));
+    const globs = [
+      path.join(resolvedProjectPath, deps.PARTS_DIR, '*', deps.modelSourceFilename(state.currentKernel(), 'part')).replace(/\\/g, '/'),
+      path.join(resolvedProjectPath, deps.ASSEMBLIES_DIR, '*', deps.modelSourceFilename(state.currentKernel(), 'asm')).replace(/\\/g, '/'),
+      path.join(resolvedProjectPath, deps.PARTS_DIR, '*', 'params.json').replace(/\\/g, '/'),
+      path.join(resolvedProjectPath, deps.ASSEMBLIES_DIR, '*', 'params.json').replace(/\\/g, '/')
+    ];
     const watcher = chokidar.watch(globs, {
       ignoreInitial: true,
       awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 }
@@ -340,7 +367,8 @@ function createMainLogicTools({ state, deps }) {
     watcher.on('change', (filePath) => {
       const entry = partNameFromPath(filePath);
       if (!entry) return;
-      deps.sendLog(`Model changed: models/${entry.name}/${entry.fileName}`);
+      const group = entry.kind === 'asm' ? 'assemblies' : 'parts';
+      deps.sendLog(`Model changed: ${group}/${entry.name}/${entry.fileName}`);
       markModelDirty(entry.name);
       scheduleBuild(entry.name);
     });
@@ -361,7 +389,7 @@ function createMainLogicTools({ state, deps }) {
       const source = deps.resolveModelSource(state.currentProjectPath(), state.activePart(), state.currentKernel());
       const cache = deps.modelCacheFile(state.currentProjectPath(), state.activePart(), source, state.currentKernel());
       const freshness = refreshModelDirtyState(state.activePart(), source);
-      if (cache && fs.existsSync(cache) && !freshness.buildDirty) deps.sendModelUpdated(state.activePart());
+      if (cache && fs.existsSync(cache) && !freshness.buildDirty && source?.kind !== 'asm') deps.sendModelUpdated(state.activePart());
       else scheduleBuild(state.activePart());
     }
   }
@@ -378,7 +406,7 @@ function createMainLogicTools({ state, deps }) {
     const source = deps.resolveModelSource(state.currentProjectPath(), name, state.currentKernel());
     const cache = deps.modelCacheFile(state.currentProjectPath(), name, source, state.currentKernel());
     const freshness = refreshModelDirtyState(name, source);
-    if (cache && fs.existsSync(cache) && !freshness.buildDirty) deps.sendModelUpdated(name);
+    if (cache && fs.existsSync(cache) && !freshness.buildDirty && source?.kind !== 'asm') deps.sendModelUpdated(name);
     else scheduleBuild(name);
   }
 
@@ -431,9 +459,11 @@ function createMainLogicTools({ state, deps }) {
     runningBuildInputs.set(partName, freshness.inputMtime);
     if (!freshness.buildDirty && needsStl) {
       try {
+        const stlStartedAt = Date.now();
         const stlPath = await deps.ensurePartStlArtifact(partName);
+        const stlMs = elapsedMs(stlStartedAt);
         pendingStlAfterBuild.delete(partName);
-        deps.sendLog(`[${partName}] Project STL ready (${path.relative(state.currentProjectPath(), stlPath).replace(/\\/g, '/')})`);
+        deps.sendLog(`[${partName}] Project STL ready (${path.relative(state.currentProjectPath(), stlPath).replace(/\\/g, '/')}, STL ${formatDuration(stlMs)})`);
         resolveBuildWaiters(partName, cachedBuildResult(partName, source, { stlPath }));
       } catch (err) {
         const msg = `Failed to generate STL artifact for "${partName}": ${err.message || err}`;
@@ -476,12 +506,14 @@ function createMainLogicTools({ state, deps }) {
         ? `[${partName}] Build using bundled build123d runtime`
         : `[${partName}] Build using Python ${runtime.cmd} (v${runtime.version}) with ${deps.kernelMeta(state.currentKernel()).label}`
     );
+    const buildStartedAt = Date.now();
     const child = spawn(cmd.cmd, cmd.args, { cwd: state.currentProjectPath(), shell: false, windowsHide: true });
     finalizeBuildChild(
       child,
       partName,
       runtime.kind === 'bundled-runner' ? 'bundled build123d runtime' : 'electron/export_runner.py',
-      exportProjectStl
+      exportProjectStl,
+      buildStartedAt
     );
   }
 
@@ -561,6 +593,22 @@ function createMainLogicTools({ state, deps }) {
       .filter((child) => child.nodeType === 1 && (!tagName || child.nodeName === tagName));
   }
 
+  async function ensurePartBrepArtifact(partName) {
+    const source = deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
+    if (!source || source.kind !== 'part') {
+      return { ok: false, error: `Model "${partName}" is not a part model.` };
+    }
+    const freshness = refreshModelDirtyState(partName, source);
+    if (!freshness.buildDirty && freshness.cacheFile && fs.existsSync(freshness.cacheFile)) {
+      return { ok: true, skipped: true, cacheFile: freshness.cacheFile };
+    }
+    return await new Promise((resolve) => {
+      if (!state.buildWaiters().has(partName)) state.buildWaiters().set(partName, []);
+      state.buildWaiters().get(partName).push(resolve);
+      scheduleBuild(partName);
+    });
+  }
+
   async function validateMjcfAssemblyReferences(sourcePath, asmName) {
     let text;
     try {
@@ -597,6 +645,7 @@ function createMainLogicTools({ state, deps }) {
     const asmDir = path.dirname(sourcePath);
     const projectRoot = path.resolve(state.currentProjectPath());
     const referencedParts = new Set();
+    const partTimings = [];
     for (const meshRef of meshRefs) {
       if (!meshRef) return { ok: false, error: `${sourceLabel} for "${asmName}" has an empty mesh file.` };
       const normalized = meshRef.replace(/^package:\/\//i, '').replace(/\\/g, '/');
@@ -604,22 +653,34 @@ function createMainLogicTools({ state, deps }) {
       if (abs !== projectRoot && !abs.startsWith(`${projectRoot}${path.sep}`)) return { ok: false, error: `${sourceLabel} mesh path escapes project root: ${meshRef}` };
       if (path.extname(abs).toLowerCase() !== '.stl') return { ok: false, error: `${sourceLabel} currently supports STL meshes only: ${meshRef}` };
       const base = path.basename(abs, path.extname(abs));
-      const partSourcePath = path.join(deps.modelDir(state.currentProjectPath(), base), deps.modelSourceFilename(state.currentKernel(), 'part'));
+      const partSourcePath = path.join(deps.modelDir(state.currentProjectPath(), base, 'part'), deps.modelSourceFilename(state.currentKernel(), 'part'));
       if (!fs.existsSync(partSourcePath)) {
-        return { ok: false, error: `${sourceLabel} mesh "${meshRef}" is not linked to an existing part model "${base}" (expected models/${base}/part${deps.sourceExt(state.currentKernel())}).` };
+        return { ok: false, error: `${sourceLabel} mesh "${meshRef}" is not linked to an existing part model "${base}" (expected parts/${base}/part${deps.sourceExt(state.currentKernel())}).` };
       }
-      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+      if (!referencedParts.has(base)) {
+        const brepStartedAt = Date.now();
+        const brepResult = await ensurePartBrepArtifact(base);
+        const brepMs = elapsedMs(brepStartedAt);
+        if (!brepResult?.ok) {
+          return { ok: false, error: `${sourceLabel} mesh "${meshRef}" BREP build failed for part "${base}": ${brepResult?.error || brepResult?.stderr || 'unknown error'}` };
+        }
+
+        const partSource = deps.resolveModelSource(state.currentProjectPath(), base, state.currentKernel());
+        const stlWasFresh = isDefaultStlFresh(base, partSource);
+        const stlStartedAt = Date.now();
         try {
-          deps.sendLog(`[${asmName}] Building missing mesh asset: models/${base}/${base}.stl`);
           await deps.ensurePartStlArtifact(base);
         } catch (e) {
           return { ok: false, error: `${sourceLabel} mesh file not found and could not be built: ${meshRef} (${e.message || String(e)})` };
         }
+        const stlMs = elapsedMs(stlStartedAt);
+        partTimings.push({ name: base, brepMs, stlMs });
+        deps.sendLog(`[${asmName}] Part "${base}" ready: BREP ${formatDuration(brepMs)}${brepResult.skipped ? ' (fresh)' : ''}, STL ${formatDuration(stlMs)}${stlWasFresh ? ' (fresh)' : ''}.`);
       }
       if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return { ok: false, error: `${sourceLabel} mesh file not found: ${meshRef}` };
       referencedParts.add(base);
     }
-    return { ok: true, meshCount: meshRefs.length, referencedParts: Array.from(referencedParts) };
+    return { ok: true, meshCount: meshRefs.length, referencedParts: Array.from(referencedParts), partTimings };
   }
 
   async function runBuildMjcf(partName, source) {
@@ -658,7 +719,7 @@ function createMainLogicTools({ state, deps }) {
     if (state.pendingParts().has(partName)) runBuild(partName);
   }
 
-  function finalizeBuildChild(child, partName, label, exportProjectStl = false) {
+  function finalizeBuildChild(child, partName, label, exportProjectStl = false, buildStartedAt = Date.now()) {
     let stderr = '';
     let stdout = '';
     child.stdout?.on('data', (d) => { const s = d.toString(); stdout += s; deps.sendLog(s.trimEnd()); });
@@ -686,11 +747,15 @@ function createMainLogicTools({ state, deps }) {
           finishBuildPass(partName, builtInputMtime);
         } else if (cacheFile && fs.existsSync(cacheFile)) {
           const size = fs.statSync(cacheFile).size;
+          const brepMs = elapsedMs(buildStartedAt);
           if (exportProjectStl && source?.kind === 'part') {
+            const stlStartedAt = Date.now();
             await deps.ensurePartStlArtifact(partName);
+            const stlMs = elapsedMs(stlStartedAt);
             pendingStlAfterBuild.delete(partName);
-            deps.sendLog(`[${partName}] Project STL updated (models/${partName}/${partName}.stl)`);
+            deps.sendLog(`[${partName}] Project STL updated (parts/${partName}/${partName}.stl, STL ${formatDuration(stlMs)})`);
           }
+          deps.sendLog(`[${partName}] BREP time: ${formatDuration(brepMs)}`);
           deps.sendLog(`[${partName}] Model cache updated (${(size / 1024).toFixed(1)} KB)`);
           deps.sendToRenderer('PART_BUILT', { part: partName, size });
           if (partName === state.activePart()) deps.sendModelUpdated(partName);
@@ -784,12 +849,16 @@ function createMainLogicTools({ state, deps }) {
     const format = deps.modelPreviewFormat(source, state.currentKernel());
     const sourceFile = source?.fileName || path.basename(cache);
     const suffix = source?.kind === 'asm' ? path.extname(sourceFile) : deps.kernelMeta(state.currentKernel()).cacheExt;
+    const assetUrl = (filePath) => {
+      const rel = path.relative(state.currentProjectPath(), filePath).replace(/\\/g, '/');
+      return `aicad://asset/${rel.split('/').map((segment) => encodeURIComponent(segment)).join('/')}?t=${ts}`;
+    };
     const url = source?.kind === 'asm'
-      ? `aicad://asset/models/${encodeURIComponent(partName)}/${encodeURIComponent(sourceFile)}?t=${ts}`
+      ? assetUrl(source.sourcePath)
       : `aicad://model/${encodeURIComponent(partName)}${suffix}?t=${ts}`;
     const paramsPath = deps.modelParamsPath(state.currentProjectPath(), partName);
     const paramsUrl = fs.existsSync(paramsPath)
-      ? `aicad://asset/models/${encodeURIComponent(partName)}/params.json?t=${ts}`
+      ? assetUrl(paramsPath)
       : null;
     deps.sendToRenderer('MODEL_UPDATED', {
       part: partName,
@@ -949,7 +1018,8 @@ function initMainLogicTools(mainContext) {
     },
     deps: {
       MCP_PORT: constants.MCP_PORT,
-      MODELS_DIR: constants.MODELS_DIR,
+      PARTS_DIR: constants.PARTS_DIR,
+      ASSEMBLIES_DIR: constants.ASSEMBLIES_DIR,
       MODEL_KINDS: constants.MODEL_KINDS,
       CACHE_DIR: constants.CACHE_DIR,
       assertKernel: templates.assertKernel,
@@ -979,6 +1049,7 @@ function initMainLogicTools(mainContext) {
       partPng: model.partPng,
       readProjectKernel: project.readProjectKernel,
       saveLastProjectPath: project.saveLastProjectPath,
+      migrateLegacyModelsLayout: project.migrateLegacyModelsLayout,
       detectBuildRuntime: runtime.detectBuildRuntime,
       missingRuntimeMessage: runtime.missingRuntimeMessage,
       buildRuntimeSpawn: runtime.buildRuntimeSpawn,
