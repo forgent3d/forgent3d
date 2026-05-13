@@ -50,7 +50,7 @@ function getAgentSkills(agentHint) {
 function baseMarkdown(agentHint) {
   const { agentHintBlock, codexQuickBlock } = agentBlocks(agentHint);
   let md = `# AI CAD Project Rules (build123d)${agentHintBlock}${codexQuickBlock}\n`;
-  md += `Current CAD kernel: **build123d (Python)**. Single bodies use \`parts/<name>/part.py\` + \`params.json\`; assemblies use \`assemblies/<name>/asm.xml\` + \`params.json\`. Validate through the viewer MCP tools.\n\n`;
+  md += `Current CAD kernel: **build123d (Python)**. Each model is a self-contained package at \`models/<model>/\` with root \`asm.xml\` + \`params.json\` and local parts under \`models/<model>/parts/<part>/part.py\` + \`params.json\`. Validate through the viewer MCP tools.\n\n`;
   if (agentHint === 'Claude Code') {
      md += `Detailed rules are located in \`.claude/rules/\`.\n`;
   } else if (agentHint === 'OpenAI Codex') {

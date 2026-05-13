@@ -52,13 +52,15 @@ function createMainExportTools({ dialog, state, deps }) {
     });
   }
 
-  async function runPythonExport(partName, format, outFile) {
+  async function runPythonExport(modelName, partName, format, outFile) {
     const runtime = await deps.detectBuildRuntime(state.currentKernel());
     if (!runtime) throw new Error(deps.missingRuntimeMessage(state.currentKernel()));
     const cmd = deps.buildRuntimeSpawn(runtime, [
       '--project',
       state.currentProjectPath(),
       '--model',
+      modelName,
+      '--part-name',
       partName,
       '--export-format',
       format,
@@ -76,7 +78,7 @@ function createMainExportTools({ dialog, state, deps }) {
     if (ret.code !== 0) {
       throw new Error((ret.stderr || ret.stdout || `Python export failed with exit code ${ret.code}`).trim());
     }
-    deps.sendLog(`[${partName}] ${String(format || '').toUpperCase()} export command time: ${formatDuration(elapsedMs(startedAt))}`);
+    deps.sendLog(`[${modelName}/${partName}] ${String(format || '').toUpperCase()} export command time: ${formatDuration(elapsedMs(startedAt))}`);
   }
 
   function statMtimeMs(filePath) {
@@ -87,36 +89,40 @@ function createMainExportTools({ dialog, state, deps }) {
     }
   }
 
-  function modelInputMtime(partName, source = null) {
-    if (!state.currentProjectPath() || !partName) return 0;
-    const resolved = source || deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
+  function modelInputMtime(modelName, source = null) {
+    if (!state.currentProjectPath() || !modelName) return 0;
+    const resolved = source || deps.resolveModelSource(state.currentProjectPath(), modelName, state.currentKernel());
     if (!resolved) return 0;
     const paramsPath = path.join(path.dirname(resolved.sourcePath), 'params.json');
     return Math.max(statMtimeMs(resolved.sourcePath), statMtimeMs(paramsPath));
   }
 
-  function modelExportDependencyMtime(partName, source = null) {
-    const inputMtime = modelInputMtime(partName, source);
-    const resolved = source || deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
-    if (!resolved || resolved.kind !== 'part') return inputMtime;
-    const cacheFile = deps.modelCacheFile?.(state.currentProjectPath(), partName, resolved, state.currentKernel());
+  function modelPartInputMtime(modelName, partName) {
+    if (!state.currentProjectPath() || !modelName || !partName) return 0;
+    return Math.max(
+      statMtimeMs(deps.modelPartSource(state.currentProjectPath(), modelName, partName, state.currentKernel())),
+      statMtimeMs(deps.modelPartParamsPath(state.currentProjectPath(), modelName, partName))
+    );
+  }
+
+  function modelPartExportDependencyMtime(modelName, partName) {
+    const inputMtime = modelPartInputMtime(modelName, partName);
+    const cacheFile = deps.partCache?.(state.currentProjectPath(), modelName, partName, state.currentKernel());
     return Math.max(inputMtime, statMtimeMs(cacheFile));
   }
 
-  function freshBrepPath(partName, source = null) {
-    if (!state.currentProjectPath() || !partName) return null;
-    const resolved = source || deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
-    if (!resolved || resolved.kind !== 'part') return null;
-    const cacheFile = deps.modelCacheFile?.(state.currentProjectPath(), partName, resolved, state.currentKernel());
+  function freshBrepPath(modelName, partName) {
+    if (!state.currentProjectPath() || !modelName || !partName) return null;
+    const cacheFile = deps.partCache?.(state.currentProjectPath(), modelName, partName, state.currentKernel());
     if (!cacheFile || path.extname(cacheFile).toLowerCase() !== '.brep') return null;
     const cacheMtime = statMtimeMs(cacheFile);
-    if (cacheMtime <= 0 || cacheMtime < modelInputMtime(partName, resolved)) return null;
+    if (cacheMtime <= 0 || cacheMtime < modelPartInputMtime(modelName, partName)) return null;
     return cacheFile;
   }
 
-  function isExportFresh(outFile, partName, source = null) {
+  function isPartExportFresh(outFile, modelName, partName) {
     const outMtime = statMtimeMs(outFile);
-    return outMtime > 0 && outMtime >= modelExportDependencyMtime(partName, source);
+    return outMtime > 0 && outMtime >= modelPartExportDependencyMtime(modelName, partName);
   }
 
   async function getOcct() {
@@ -142,9 +148,9 @@ function createMainExportTools({ dialog, state, deps }) {
     return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xb0b0b0 }));
   }
 
-  async function exportFreshBrepToStl(partName, outFile, source = null) {
+  async function exportFreshBrepToStl(modelName, partName, outFile) {
     const startedAt = Date.now();
-    const brepPath = freshBrepPath(partName, source);
+    const brepPath = freshBrepPath(modelName, partName);
     if (!brepPath) return false;
     const THREE = require('three');
     const { STLExporter } = await dynamicImport('three/examples/jsm/exporters/STLExporter.js');
@@ -176,7 +182,7 @@ function createMainExportTools({ dialog, state, deps }) {
         throw new Error(`BREP to STL produced ${buffer.byteLength} bytes, expected ${expectedBinaryStlSize} bytes for ${stats.triangles} triangles.`);
       }
       fs.writeFileSync(outFile, buffer);
-      deps.sendLog(`[${partName}] STL generated from fresh BREP (${stats.triangles} triangles, STL ${formatDuration(elapsedMs(startedAt))}).`);
+      deps.sendLog(`[${modelName}/${partName}] STL generated from fresh BREP (${stats.triangles} triangles, STL ${formatDuration(elapsedMs(startedAt))}).`);
       return true;
     } finally {
       scene.traverse((child) => {
@@ -187,26 +193,26 @@ function createMainExportTools({ dialog, state, deps }) {
     }
   }
 
-  async function generateStlIfNeeded(partName, outFile, source = null) {
+  async function generateStlIfNeeded(modelName, partName, outFile) {
     const normalizedOut = path.resolve(outFile);
-    if (isExportFresh(normalizedOut, partName, source)) {
+    if (isPartExportFresh(normalizedOut, modelName, partName)) {
       return { path: normalizedOut, skipped: true, reason: 'fresh' };
     }
     const key = normalizedOut.toLowerCase();
     if (stlExportPromises.has(key)) return stlExportPromises.get(key);
     const promise = (async () => {
       fs.mkdirSync(path.dirname(normalizedOut), { recursive: true });
-      if (isExportFresh(normalizedOut, partName, source)) {
+      if (isPartExportFresh(normalizedOut, modelName, partName)) {
         return { path: normalizedOut, skipped: true, reason: 'fresh' };
       }
       try {
-        if (await exportFreshBrepToStl(partName, normalizedOut, source)) {
+        if (await exportFreshBrepToStl(modelName, partName, normalizedOut)) {
           return { path: normalizedOut, skipped: false, reason: 'fresh-brep' };
         }
       } catch (err) {
-        deps.sendLog(`[${partName}] BREP to STL failed, falling back to build123d export: ${err?.message || err}`, 'warn');
+        deps.sendLog(`[${modelName}/${partName}] BREP to STL failed, falling back to build123d export: ${err?.message || err}`, 'warn');
       }
-      await generateExportFile(partName, 'stl', normalizedOut, source, { preferBrep: false });
+      await runPythonExport(modelName, partName, 'stl', normalizedOut);
       return { path: normalizedOut, skipped: false };
     })().finally(() => {
       stlExportPromises.delete(key);
@@ -247,6 +253,8 @@ function createMainExportTools({ dialog, state, deps }) {
 
   function interpolateAssemblyParams(text, params = {}, sourceLabel = 'asm.xml') {
     const PARAM_PATH_RE = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/;
+    const PARAM_TOKEN_RE = /\b[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\b/g;
+    const NUMERIC_EXPR_RE = /^[\d+\-*/().\sA-Za-z_$]+$/;
     const formatValue = (value) => Array.isArray(value)
       ? value.map((item) => formatValue(item)).join(' ')
       : String(value ?? '');
@@ -266,9 +274,29 @@ function createMainExportTools({ dialog, state, deps }) {
       }
       return current;
     };
+    const evaluateExpression = (expression) => {
+      const expr = String(expression || '').trim();
+      if (PARAM_PATH_RE.test(expr)) return getPath(expr);
+      if (!NUMERIC_EXPR_RE.test(expr)) throw new Error(`${sourceLabel} has unsupported parameter expression: \${${expr}}`);
+      const values = [];
+      const jsExpr = expr.replace(PARAM_TOKEN_RE, (key) => {
+        const value = getPath(key);
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
+          throw new Error(`${sourceLabel} expression requires numeric params.json value: \${${key}}`);
+        }
+        values.push(value);
+        return `__v[${values.length - 1}]`;
+      });
+      if (!/^[\d+\-*/().\s_[\]v]+$/.test(jsExpr)) throw new Error(`${sourceLabel} has unsupported parameter expression: \${${expr}}`);
+      const result = Function('__v', `"use strict"; return (${jsExpr});`)(values);
+      if (typeof result !== 'number' || !Number.isFinite(result)) {
+        throw new Error(`${sourceLabel} parameter expression did not produce a finite number: \${${expr}}`);
+      }
+      return result;
+    };
     return String(text || '').replace(/<!--[\s\S]*?-->|(\$\{([^}]+)\})/g, (match, expr, rawKey) => {
       if (!expr) return match;
-      return escapeAttr(formatValue(getPath(String(rawKey || '').trim())));
+      return escapeAttr(formatValue(evaluateExpression(String(rawKey || '').trim())));
     });
   }
 
@@ -330,9 +358,9 @@ function createMainExportTools({ dialog, state, deps }) {
     if (/^(https?:|aicad:)/i.test(raw)) throw new Error(`Assembly export only supports local STL mesh paths: ${raw}`);
     const normalized = raw.replace(/^package:\/\//i, '').replace(/\\/g, '/');
     const abs = path.resolve(path.dirname(sourcePath), normalized);
-    const projectRoot = path.resolve(state.currentProjectPath());
-    if (abs !== projectRoot && !abs.startsWith(`${projectRoot}${path.sep}`)) {
-      throw new Error(`MJCF mesh path escapes project root: ${raw}`);
+    const partsRoot = path.join(path.dirname(sourcePath), 'parts');
+    if (!abs.startsWith(`${partsRoot}${path.sep}`)) {
+      throw new Error(`MJCF mesh path must stay inside this model package's parts/ directory: ${raw}`);
     }
     if (path.extname(abs).toLowerCase() !== '.stl') throw new Error(`Assembly export supports STL mesh assets only: ${raw}`);
     return abs;
@@ -342,6 +370,7 @@ function createMainExportTools({ dialog, state, deps }) {
     const THREE = require('three');
     const { STLLoader } = await dynamicImport('three/examples/jsm/loaders/STLLoader.js');
     const document = parseAssemblyDocument(sourcePath);
+    const modelName = path.basename(path.dirname(sourcePath));
     const angleScale = compilerAngleScale(document);
     const scene = new THREE.Scene();
     const meshAssets = new Map();
@@ -352,10 +381,8 @@ function createMainExportTools({ dialog, state, deps }) {
       if (!name || !file) continue;
       const meshPath = resolveAssemblyMeshPath(sourcePath, file);
       const partName = path.basename(meshPath, path.extname(meshPath));
-      if (!fs.existsSync(meshPath)) {
-        deps.sendLog(`[${path.basename(path.dirname(sourcePath))}] Building missing assembly mesh asset: ${path.relative(state.currentProjectPath(), meshPath).replace(/\\/g, '/')}`);
-        await ensurePartStlArtifact(partName);
-      }
+      deps.sendLog(`[${modelName}] Preparing assembly mesh asset: ${path.relative(state.currentProjectPath(), meshPath).replace(/\\/g, '/')}`);
+      await ensurePartStlArtifact(modelName, partName);
       if (!fs.existsSync(meshPath)) throw new Error(`MJCF mesh file not found: ${file}`);
       const data = fs.readFileSync(meshPath);
       const geometry = new STLLoader().parse(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
@@ -479,39 +506,19 @@ function createMainExportTools({ dialog, state, deps }) {
   }
 
   async function generateExportFile(partName, format, outFile, source = null, opts = {}) {
-    if (source?.kind === 'asm') {
+    if (format === 'step') {
+      throw new Error('Model package assemblies can be exported as STL or OBJ only.');
+    }
+    if (format === 'stl' || format === 'obj') {
       await exportAssemblyScene(source.sourcePath, outFile, format);
       return;
     }
-    if (format === 'step') {
-      await runPythonExport(partName, 'step', outFile);
-      return;
-    }
-    if (format === 'stl') {
-      if (opts.preferBrep !== false) {
-        try {
-          if (await exportFreshBrepToStl(partName, outFile, source)) return;
-        } catch (err) {
-          deps.sendLog(`[${partName}] BREP to STL failed, falling back to build123d export: ${err?.message || err}`, 'warn');
-        }
-      }
-      await runPythonExport(partName, 'stl', outFile);
-      return;
-    }
-
-    const tmpStl = path.join(os.tmpdir(), `aicad-export-${partName}-${Date.now()}.stl`);
-    try {
-      await generateExportFile(partName, 'stl', tmpStl, source);
-      await convertStlToObj(tmpStl, outFile, format);
-    } finally {
-      try { fs.unlinkSync(tmpStl); } catch {}
-    }
+    throw new Error(`Unsupported export format: ${format}`);
   }
 
-  async function ensurePartStlArtifact(partName) {
-    const stlPath = path.join(deps.modelDir(state.currentProjectPath(), partName, 'part'), `${partName}.stl`);
-    const source = deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
-    await generateStlIfNeeded(partName, stlPath, source);
+  async function ensurePartStlArtifact(modelName, partName) {
+    const stlPath = deps.modelPartStlPath(state.currentProjectPath(), modelName, partName);
+    await generateStlIfNeeded(modelName, partName, stlPath);
     return stlPath;
   }
 
@@ -523,14 +530,10 @@ function createMainExportTools({ dialog, state, deps }) {
     if (!source) {
       throw new Error(`Model does not exist: ${cleanPart}`);
     }
-    if (source.kind === 'asm' && !['stl', 'obj'].includes(String(format || '').toLowerCase())) {
-      throw new Error('Assembly MJCF models can be exported as STL or OBJ only.');
-    }
-
     const fmt = ensureExportFormat(format);
     const ext = exportExt(fmt);
-    if (source.kind === 'asm' && fmt === 'step') {
-      throw new Error('Assembly MJCF models can be exported as STL or OBJ only.');
+    if (fmt === 'step') {
+      throw new Error('Model package assemblies can be exported as STL or OBJ only.');
     }
     const saveRes = await dialog.showSaveDialog(state.mainWindow(), {
       title: `Export ${cleanPart} as ${fmt.toUpperCase()}`,
@@ -582,6 +585,10 @@ function initMainExportTools(mainContext) {
       missingRuntimeMessage: runtime.missingRuntimeMessage,
       buildRuntimeSpawn: runtime.buildRuntimeSpawn,
       modelDir: model.modelDir,
+      modelPartSource: model.modelPartSource,
+      modelPartParamsPath: model.modelPartParamsPath,
+      modelPartStlPath: model.modelPartStlPath,
+      partCache: model.partCache,
       modelCacheFile: model.modelCacheFile,
       resolveModelSource: model.resolveModelSource,
       sendLog: logging.sendLog

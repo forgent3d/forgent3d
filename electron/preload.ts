@@ -11,11 +11,13 @@ contextBridge.exposeInMainWorld('aicad', {
   rebuild: () => ipcRenderer.invoke('project:rebuild'),
   revealInFolder: () => ipcRenderer.invoke('project:revealInFolder'),
 
-  listParts: () => ipcRenderer.invoke('parts:list'),
-  selectPart: (name) => ipcRenderer.invoke('parts:select', name),
-  rebuildPart: (name) => ipcRenderer.invoke('parts:rebuild', name),
-  revealPart: (name) => ipcRenderer.invoke('parts:reveal', name),
-  exportPart: (name, format) => ipcRenderer.invoke('parts:export', { name, format }),
+  listModels: () => ipcRenderer.invoke('models:list'),
+  selectModel: (name) => ipcRenderer.invoke('models:select', name),
+  rebuildModel: (name) => ipcRenderer.invoke('models:rebuild', name),
+  rebuildAllModels: () => ipcRenderer.invoke('models:rebuildAll'),
+  revealModel: (name) => ipcRenderer.invoke('models:reveal', name),
+  exportModel: (name, format) => ipcRenderer.invoke('models:export', { name, format }),
+  ensureModelPartStl: (model, part) => ipcRenderer.invoke('models:partStl', { model, part }),
   getParams: (name) => ipcRenderer.invoke('params:get', name),
   saveParams: (name, text) => ipcRenderer.invoke('params:save', { name, text }),
 
@@ -39,6 +41,9 @@ contextBridge.exposeInMainWorld('aicad', {
   clipboardReadText: () => ipcRenderer.invoke('clipboard:readText'),
   clipboardWriteText: (text) => ipcRenderer.invoke('clipboard:writeText', text),
   clipboardHasImage: () => ipcRenderer.invoke('clipboard:hasImage'),
+
+  agentOpenNext: (projectPath, baseUrl, openExternal = true) =>
+    ipcRenderer.invoke('agent:openNext', { projectPath, baseUrl, openExternal }),
 
   onEvent: (handler) => {
     const listener = (_evt, msg) => handler(msg);

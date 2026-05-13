@@ -3,6 +3,31 @@ export {};
 const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, Menu, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const dotenv = require('dotenv');
+
+/** Load repo-root or install-dir `.env` into `process.env` before other startup (IPC reads AICAD_FORGENT3D_URL / legacy AICAD_NEXT_AGENT_URL). */
+function loadAppDotenv() {
+  const candidates = [];
+  try {
+    if (app.isPackaged) {
+      candidates.push(path.join(path.dirname(app.getPath('exe')), '.env'));
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  candidates.push(path.join(__dirname, '..', '..', '.env'));
+  for (const envPath of candidates) {
+    try {
+      if (fs.existsSync(envPath)) {
+        dotenv.config({ path: envPath });
+        return;
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }
+}
+loadAppDotenv();
 const os = require('os');
 const { pathToFileURL } = require('url');
 const { spawn } = require('child_process');
@@ -14,7 +39,6 @@ const { registerIpcHandlers } = require('./main.ipc');
 const { initMainExportTools } = require('./main.export');
 const { initMainUiTools } = require('./main.ui');
 const { initMainLogicTools } = require('./main.logic');
-const { migrateLegacyModelsLayout } = require('./project-migration');
 const {
   KERNELS,
   assertKernel,
@@ -65,10 +89,8 @@ let appLanguage = 'en';
 const buildingParts = new Set();   // Models currently being built.
 const pendingParts = new Set();    // Models queued for another build pass.
 
-const MODEL_KINDS = ['part', 'asm'];
-const PARTS_DIR = 'parts';
-const ASSEMBLIES_DIR = 'assemblies';
-const MODEL_KIND_DIRS = { part: PARTS_DIR, asm: ASSEMBLIES_DIR };
+const MODEL_KINDS = ['asm'];
+const MODELS_DIR = 'models';
 const MODEL_PARAMS_FILE = 'params.json';
 const CACHE_DIR = '.cache';
 const PROJECT_META_DIR = '.aicad';
@@ -88,13 +110,8 @@ function appIconPath() {
   return path.join(__dirname, '..', '..', 'assets', 'images', 'logo.png');
 }
 
-function modelKindDir(kind) {
-  return MODEL_KIND_DIRS[kind] || MODEL_KIND_DIRS.part;
-}
 function modelDir(projectPath, name, kind = null) {
-  if (kind) return path.join(projectPath, modelKindDir(kind), name);
-  const source = resolveModelSource(projectPath, name, currentKernel, { allowMissingKernel: true });
-  return source ? path.dirname(source.sourcePath) : path.join(projectPath, PARTS_DIR, name);
+  return path.join(projectPath, MODELS_DIR, name);
 }
 function modelParamsPath(projectPath, name, kind = null) { return path.join(modelDir(projectPath, name, kind), MODEL_PARAMS_FILE); }
 function sourceExt(kernel = currentKernel) { return path.extname(kernelMeta(kernel).sourceFile); }
@@ -110,30 +127,38 @@ function resolveModelSource(projectPath, name, kernel = currentKernel, opts = {}
   }
   if (!k) return null;
   k = assertKernel(k);
-  for (const kind of MODEL_KINDS) {
-    const fileName = modelSourceFilename(k, kind);
-    const sourcePath = path.join(projectPath, modelKindDir(kind), name, fileName);
-    if (fs.existsSync(sourcePath)) return { kind, fileName, sourcePath };
-  }
+  const fileName = modelSourceFilename(k, 'asm');
+  const sourcePath = path.join(modelDir(projectPath, name), fileName);
+  if (fs.existsSync(sourcePath)) return { kind: 'asm', fileName, sourcePath };
   return null;
 }
 function partSource(projectPath, name, kernel = currentKernel, kind = null) {
-  if (kind) return path.join(modelDir(projectPath, name, kind), modelSourceFilename(kernel, kind));
-  return resolveModelSource(projectPath, name, kernel)?.sourcePath
-    || path.join(modelDir(projectPath, name, 'part'), modelSourceFilename(kernel, 'part'));
+  if (kind === 'asm') return path.join(modelDir(projectPath, name), modelSourceFilename(kernel, 'asm'));
+  return modelPartSource(projectPath, name, name, kernel);
 }
 function partReadme(projectPath, name) { return path.join(modelDir(projectPath, name), 'README.md'); }
-function partCache(projectPath, name, kernel = currentKernel) {
-  return path.join(modelDir(projectPath, name, 'part'), `${name}${kernelMeta(kernel).cacheExt}`);
+function modelPartDir(projectPath, modelName, partName) {
+  return path.join(modelDir(projectPath, modelName), 'parts', partName);
+}
+function modelPartSource(projectPath, modelName, partName, kernel = currentKernel) {
+  return path.join(modelPartDir(projectPath, modelName, partName), modelSourceFilename(kernel, 'part'));
+}
+function modelPartParamsPath(projectPath, modelName, partName) {
+  return path.join(modelPartDir(projectPath, modelName, partName), MODEL_PARAMS_FILE);
+}
+function modelPartStlPath(projectPath, modelName, partName) {
+  return path.join(modelPartDir(projectPath, modelName, partName), `${partName}.stl`);
+}
+function partCache(projectPath, modelName, partName = modelName, kernel = currentKernel) {
+  return path.join(projectPath, CACHE_DIR, `${modelName}__${partName}${kernelMeta(kernel).cacheExt}`);
 }
 function modelCacheFile(projectPath, name, source = null, kernel = currentKernel) {
   const s = source || resolveModelSource(projectPath, name, kernel);
   if (!s) return null;
-  return s.kind === 'asm' ? s.sourcePath : partCache(projectPath, name, kernel);
+  return s.sourcePath;
 }
 function modelPreviewFormat(source = null, kernel = currentKernel) {
-  if (source?.kind === 'asm') return 'MJCF';
-  return kernelMeta(kernel).previewFormat;
+  return 'MJCF';
 }
 function toProjectRelativeAsset(relPath) {
   if (!currentProjectPath) return null;
@@ -368,13 +393,15 @@ function registerIpc() {
       modelDir,
       modelParamsPath,
       resolveModelSource,
+      ensurePartStlArtifact,
       exportPartByRequest,
       partPng,
       resolvePartLoadedWaiters,
       getBuildRuntimeStatus,
       getLanguage,
       setLanguage,
-      sendLog
+      sendLog,
+      bootstrapAgentWorkspace
     }
   });
 }
@@ -406,8 +433,7 @@ function initModuleTools() {
     env: { isDev },
     constants: {
       MCP_PORT,
-      PARTS_DIR,
-      ASSEMBLIES_DIR,
+      MODELS_DIR,
       MODEL_KINDS,
       MODEL_PARAMS_FILE,
       CACHE_DIR,
@@ -458,6 +484,10 @@ function initModuleTools() {
       resolveModelSource,
       partSource,
       partReadme,
+      modelPartDir,
+      modelPartSource,
+      modelPartParamsPath,
+      modelPartStlPath,
       partCache,
       modelCacheFile,
       modelPreviewFormat,
@@ -470,7 +500,6 @@ function initModuleTools() {
       setLanguage,
       saveLastProjectPath,
       clearLastProjectPath,
-      migrateLegacyModelsLayout,
       openProject: (...args) => openProject(...args),
       openProjectByDialog: (...args) => openProjectByDialog(...args),
       restoreLastProjectIfAvailable: (...args) => restoreLastProjectIfAvailable(...args),
@@ -575,9 +604,9 @@ function bootstrapAgentWorkspace(projectPath, agent) {
 /**
  * Initialize a new project layout:
  *   - .aicad/project.json
- *   - parts/cuboid/part.py as a sample part
- *   - params.json beside each model source
- *   - assemblies/assembly_demo/asm.xml as a sample assembly that references cuboid
+ *   - models/cuboid/asm.xml as the sample model entry
+ *   - models/cuboid/params.json for model-level parameters
+ *   - models/cuboid/parts/cuboid/part.py + params.json as the sample local part
  *   - .cache/ for preview artifacts
  *   - .gitignore
  *   - agent-specific rules, skills, and MCP configs
@@ -613,8 +642,8 @@ function scheduleBuild(partName, options) {
   return logicTools.scheduleBuild(partName, options);
 }
 
-async function ensurePartStlArtifact(partName) {
-  return exportTools.ensurePartStlArtifact(partName);
+async function ensurePartStlArtifact(modelName, partName) {
+  return exportTools.ensurePartStlArtifact(modelName, partName);
 }
 
 function resolvePartLoadedWaiters(name, payload) {

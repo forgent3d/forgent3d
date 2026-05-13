@@ -2,8 +2,16 @@ export {};
 
 type PreviewFormat = 'BREP' | 'STL' | 'MJCF' | string;
 
-type AicadPart = {
+type AicadModel = {
   name: string;
+  parts?: Array<{
+    name: string;
+    sourceFile?: string;
+    stlFile?: string;
+    hasStl?: boolean;
+    stlUrl?: string;
+    [key: string]: unknown;
+  }>;
   type?: string;
   sourceFile?: string;
   previewUrl?: string;
@@ -23,8 +31,8 @@ type AicadProjectMeta = {
   kernels: Array<{ id: string; [key: string]: unknown }>;
 };
 
-type AicadPartsPayload = {
-  parts: AicadPart[];
+type AicadModelsPayload = {
+  models: AicadModel[];
   active: string | null;
 };
 
@@ -55,11 +63,13 @@ type AicadApi = {
   rebuild(): Promise<boolean>;
   revealInFolder(): Promise<void>;
 
-  listParts(): Promise<AicadPartsPayload>;
-  selectPart(name: string): Promise<string | undefined>;
-  rebuildPart(name: string): Promise<boolean>;
-  revealPart(name: string): Promise<void>;
-  exportPart(name: string, format: string): Promise<unknown>;
+  listModels(): Promise<AicadModelsPayload>;
+  selectModel(name: string): Promise<string | undefined>;
+  rebuildModel(name: string): Promise<boolean>;
+  rebuildAllModels(): Promise<{ ok: boolean; results: Array<{ name: string; ok: boolean; error?: string }> }>;
+  revealModel(name: string): Promise<void>;
+  exportModel(name: string, format: string): Promise<unknown>;
+  ensureModelPartStl(model: string, part: string): Promise<{ model: string; part: string; path: string; url: string }>;
   getParams(name: string): Promise<AicadParamsPayload>;
   saveParams(name: string, text: string): Promise<AicadParamsPayload>;
 
@@ -78,6 +88,9 @@ type AicadApi = {
   clipboardReadText(): Promise<string>;
   clipboardWriteText(text: string): Promise<boolean>;
   clipboardHasImage(): Promise<boolean>;
+
+  /** Forgent3D agent UI (cad-agent); `baseUrl` defaults from `AICAD_FORGENT3D_URL` or legacy `AICAD_NEXT_AGENT_URL`. */
+  agentOpenNext(projectPath: string, baseUrl?: string, openExternal?: boolean): Promise<{ url: string }>;
 
   onEvent(handler: AicadEventHandler): () => void;
 };
