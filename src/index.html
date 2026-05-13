@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self' 'unsafe-inline' data: blob: aicad:; img-src 'self' data: blob: aicad:; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: aicad: blob: data:; worker-src 'self' blob:;" />
+          content="default-src 'self' 'unsafe-inline' data: blob: aicad:; img-src 'self' data: blob: aicad:; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: aicad: blob: data:; frame-src 'self' http://127.0.0.1:* http://localhost:*; worker-src 'self' blob:;" />
     <title>Forgent3D Companion Previewer</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
@@ -21,10 +21,7 @@
           <div class="panel-title">
             <span data-i18n="models">Models</span>
             <div class="parts-toolbar">
-              <div class="model-kind-switch" role="tablist" aria-label="Model directory">
-                <button id="btn-list-asm" class="model-kind-btn active" type="button" data-kind-filter="asm" aria-pressed="true">Asm</button>
-                <button id="btn-list-part" class="model-kind-btn" type="button" data-kind-filter="part" aria-pressed="false">Part</button>
-              </div>
+              <button id="btn-rebuild-all" class="icon-btn" type="button" title="Force rebuild all models (no cache)" data-i18n-title="rebuildAllTitle">↺</button>
               <select id="select-export-format" class="parts-format-select" title="Select export format" data-i18n-title="selectExportFormat">
                 <option value="step">STEP</option>
                 <option value="stl">STL</option>
@@ -106,6 +103,24 @@
         </div>
         <!-- xterm.js mount container -->
         <div id="term-container" class="term-container"></div>
+        <div id="agent-next-root" class="agent-next-root hidden" aria-label="Forgent3D">
+          <div
+            id="agent-next-loading"
+            class="agent-next-loading hidden"
+            aria-live="polite"
+            aria-busy="false"
+          >
+            <span class="agent-next-loading-spinner spinner" aria-hidden="true"></span>
+            <span class="agent-next-loading-text" data-i18n="nextAgentLoading">Loading Forgent3D…</span>
+          </div>
+          <webview
+            id="agent-next-frame"
+            class="agent-next-frame"
+            title="Forgent3D"
+            partition="persist:aicad-forgent3d"
+            allowpopups
+          ></webview>
+        </div>
       </div>
 
       <!-- Bottom Agent launcher bar -->
@@ -137,6 +152,16 @@
               <span class="agent-btn-name">Cursor CLI</span>
             </span>
           </button>
+          <button class="agent-btn agent-btn-next" data-agent="next" disabled>
+            <span class="agent-btn-icon" aria-hidden="true">
+              <svg class="agent-brand-svg" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M5.5 3A2.5 2.5 0 0 0 3 5.5v13A2.5 2.5 0 0 0 5.5 21h13a2.5 2.5 0 0 0 2.5-2.5v-13A2.5 2.5 0 0 0 18.5 3h-13Zm0 2h13a.5.5 0 0 1 .5.5V8H5V5.5a.5.5 0 0 1 .5-.5ZM5 10h14v8.5a.5.5 0 0 1-.5.5h-13a.5.5 0 0 1-.5-.5V10Zm3 2.25a.75.75 0 0 0 0 1.5h4.25a.75.75 0 0 0 0-1.5H8Zm0 3a.75.75 0 0 0 0 1.5h8a.75.75 0 0 0 0-1.5H8Z"/>
+              </svg>
+            </span>
+            <span class="agent-btn-body">
+              <span class="agent-btn-name" data-i18n="nextAgent">Forgent3D</span>
+            </span>
+          </button>
         </div>
       </div>
     </div>
@@ -146,14 +171,9 @@
       <div class="modal-body">
         <h3 data-i18n="newModel">New Model</h3>
         <p class="muted" style="font-size:12px;margin:-6px 0 8px 0" data-i18n-html="newModelHelp">
-          This creates <code>parts/&lt;name&gt;/part.py</code> or <code>assemblies/&lt;name&gt;/asm.xml</code> and
-          <code>README.md</code>. Name can only contain letters, numbers, underscores, and hyphens.
+          This creates <code>models/&lt;name&gt;/asm.xml</code>, <code>params.json</code>, and a local
+          <code>parts/&lt;name&gt;/part.py</code>. Name can only contain letters, numbers, underscores, and hyphens.
         </p>
-        <label data-i18n="modelType">Model type</label>
-        <select id="select-model-kind">
-          <option value="part" data-i18n="partKind">Part (part.py)</option>
-          <option value="asm" data-i18n="assemblyKind">Assembly (asm.xml)</option>
-        </select>
         <label data-i18n="modelName">Model name</label>
         <input id="input-part-name" type="text" placeholder="bracket" data-i18n-placeholder="modelNamePlaceholder" />
         <label data-i18n="modelDescription">One-line description (optional, written to README.md)</label>

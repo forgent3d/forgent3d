@@ -1,0 +1,3 @@
+[submodule "cad-agent"]
+	path = cad-agent
+	url = git@github.com:forgent3d/cad-agent.git

@@ -38,6 +38,7 @@ export function initUI(viewer) {
 
     partsPanel: document.getElementById('parts-panel'),
     partsList: document.getElementById('parts-list'),
+    btnRebuildAll: document.getElementById('btn-rebuild-all'),
     modelKindBtns: document.querySelectorAll('[data-kind-filter]'),
     selectExportFormat: document.getElementById('select-export-format'),
     btnExportActive: document.getElementById('btn-export-active'),
@@ -61,7 +62,10 @@ export function initUI(viewer) {
     termContainer:   document.getElementById('term-container'),
     termTitle:       document.getElementById('term-title'),
     termResizeHandle:document.getElementById('term-resize-handle'),
-    btnTermClose:    document.getElementById('btn-term-close')
+    btnTermClose:    document.getElementById('btn-term-close'),
+    agentNextRoot:    document.getElementById('agent-next-root'),
+    agentNextFrame:   document.getElementById('agent-next-frame'),
+    agentNextLoading: document.getElementById('agent-next-loading')
   };
 
   /* ---------------- Status & Log ---------------- */
@@ -103,7 +107,10 @@ export function initUI(viewer) {
   let activePart = null;
   let loadedPart = null;
   let partsCache = [];
-  let modelListKind = 'asm';
+  let selectedModelPart = null;
+  let displayedModelPart = null;
+  const assemblyPayloads = new Map();
+  const expandedModels = new Set();
   const LEFT_SIDEBAR_PREF_KEY = 'forgent3d.leftSidebarVisible';
   let leftSidebarVisible = false;
 
@@ -138,12 +145,10 @@ export function initUI(viewer) {
     const hasActivePart = !!activePart;
     if (!el.selectExportFormat || !el.btnExportActive) return;
 
-    const activeInfo = partsCache.find((part) => part.name === activePart);
-    const isAssembly = activeInfo?.kind === 'asm';
     for (const option of Array.from(el.selectExportFormat.options || [])) {
-      option.disabled = isAssembly && option.value === 'step';
+      option.disabled = option.value === 'step';
     }
-    if (isAssembly && el.selectExportFormat.value === 'step') {
+    if (el.selectExportFormat.value === 'step') {
       el.selectExportFormat.value = 'stl';
     }
     el.selectExportFormat.disabled = !hasProject || !hasActivePart;
@@ -179,31 +184,20 @@ export function initUI(viewer) {
     el.modelNameBadge.classList.remove('hidden');
   }
 
-  function getModelInfo(name) {
-    return partsCache.find((part) => part.name === name) || null;
-  }
-
-  function getModelListKindForName(name) {
-    return getModelInfo(name)?.kind === 'asm' ? 'asm' : 'part';
-  }
-
   function syncModelKindButtons() {
     el.modelKindBtns?.forEach((btn) => {
-      const active = btn.dataset.kindFilter === modelListKind;
-      btn.classList.toggle('active', active);
-      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      btn.classList.add('hidden');
+      btn.setAttribute('aria-pressed', 'false');
     });
   }
 
-  function setModelListKind(kind, { render = true } = {}) {
-    modelListKind = kind === 'part' ? 'part' : 'asm';
+  function setModelListKind(_kind, { render = true } = {}) {
     syncModelKindButtons();
     if (render) renderPartsList();
   }
 
   function syncModelListKindToModel(name, opts = {}) {
-    if (!name) setModelListKind('asm', opts);
-    else setModelListKind(getModelListKindForName(name), opts);
+    setModelListKind('model', opts);
   }
 
   function refreshLocalizedUi() {
@@ -227,9 +221,13 @@ export function initUI(viewer) {
     if (!p) {
       activePart = null;
       loadedPart = null;
-      modelListKind = 'asm';
+      selectedModelPart = null;
+      displayedModelPart = null;
+      assemblyPayloads.clear();
+      expandedModels.clear();
       viewerUi.stopAutoShow();
       viewerUi.stopExplodedView();
+      if (typeof viewer.setSelectedPart === 'function') viewer.setSelectedPart(null);
     }
     el.emptyHint.classList.toggle('hidden', !!p);
     el.partsPanel.style.display = p ? '' : 'none';
@@ -243,19 +241,111 @@ export function initUI(viewer) {
     if (!p) paramsEditor.setIdle(t('selectModelParams'));
   }
 
+  function modelPartsFor(modelName) {
+    const model = partsCache.find((item) => item.name === modelName);
+    return Array.isArray(model?.parts) ? model.parts : [];
+  }
+
+  async function showAssembly(modelName = activePart, { preserveView = true } = {}) {
+    const payload = assemblyPayloads.get(modelName);
+    if (!payload?.url) {
+      if (modelName) {
+        setStatus(t('buildingPart', { part: modelName }), true);
+        api.rebuildModel(modelName).catch((e) => appendLog(t('buildFailed') + `: ${e.message || e}`, 'error'));
+      }
+      return;
+    }
+    selectedModelPart = null;
+    displayedModelPart = null;
+    if (typeof viewer.setSelectedPart === 'function') viewer.setSelectedPart(null);
+    viewerUi.stopExplodedView();
+    const partLabel = payload.part ? `[${payload.part}] ` : '';
+    setStatus(`${partLabel}${t('loadingMjcf')} ...`, true);
+    try {
+      const partInfo = await viewer.loadModel(payload.url, (msg) => appendLog(msg), {
+        format: 'MJCF',
+        paramsUrl: payload.paramsUrl,
+        preserveView
+      });
+      if (payload?.part) loadedPart = payload.part;
+      const modelParts = modelPartsFor(payload.part);
+      if (payload?.part && modelParts.length >= 2) expandedModels.add(payload.part);
+      renderPartsList();
+      const sizeKB = payload.size ? (payload.size / 1024).toFixed(1) + ' KB' : '';
+      setStatus(t('modelReady', { partLabel, sizeLabel: sizeKB ?  sizeKB : '', tail: t('mjcfAssembly') }));
+      viewerUi.renderAll();
+      return partInfo;
+    } catch (e) {
+      setStatus(t('modelLoadFailed'));
+      appendLog(t('failedLoadModel', { partLabel, format: 'MJCF', message: e.message || e }), 'error');
+      showToast(t('failedLoadModel', { partLabel, format: 'MJCF', message: escapeHtml(e.message || String(e)) }), 3800);
+      throw e;
+    }
+  }
+
+  async function showModelPart(modelName, part) {
+    const partId = String(part?.name || part?.id || '');
+    if (!modelName || !partId) return;
+    viewerUi.stopAutoShow();
+    viewerUi.stopExplodedView();
+    selectedModelPart = partId;
+    displayedModelPart = partId;
+    if (typeof viewer.setSelectedPart === 'function') viewer.setSelectedPart(null);
+    renderPartsList();
+    setStatus(`[${part.name || partId}] ${part.hasStl ? t('parsingStl') : t('buildingPart', { part: partId })} ...`, true);
+    try {
+      const stl = await api.ensureModelPartStl(modelName, partId);
+      part.hasStl = true;
+      part.stlUrl = stl.url;
+      const partInfo = await viewer.loadModel(stl.url, (msg) => appendLog(msg), { format: 'STL', preserveView: false });
+      setStatus(t('modelReady', {
+        partLabel: `[${part.name || partId}] `,
+        sizeLabel: '',
+        tail: t('stlMesh')
+      }));
+      viewerUi.renderAll();
+      return partInfo;
+    } catch (e) {
+      setStatus(t('modelLoadFailed'));
+      appendLog(t('failedLoadModel', { partLabel: `[${part.name || partId}] `, format: 'STL', message: e.message || e }), 'error');
+      showToast(t('failedLoadModel', { partLabel: `[${part.name || partId}] `, format: 'STL', message: escapeHtml(e.message || String(e)) }), 3800);
+      throw e;
+    }
+  }
+
+  function renderModelPartList(modelName, items) {
+    if (items.length < 2 || !expandedModels.has(modelName)) return null;
+    const ul = document.createElement('ul');
+    ul.className = 'model-part-list';
+    for (const part of items) {
+      const li = document.createElement('li');
+      const partId = String(part.name || part.id);
+      li.className = 'model-part-item' + (String(displayedModelPart || '') === partId ? ' selected' : '');
+      li.dataset.partId = partId;
+      li.title = part.hasStl ? partId : `${partId} (STL not built yet)`;
+      li.textContent = partId;
+      li.classList.toggle('missing', !part.hasStl);
+      li.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        await showModelPart(modelName, part);
+      });
+      ul.appendChild(li);
+    }
+    return ul;
+  }
+
   /* ---------------- Models List ---------------- */
   function renderPartsList() {
     el.partsList.innerHTML = '';
     syncModelKindButtons();
-    const visibleParts = partsCache.filter((p) => modelListKind === 'asm' ? p.kind === 'asm' : p.kind !== 'asm');
-    if (!visibleParts.length) {
+    if (!partsCache.length) {
       const empty = document.createElement('li');
       empty.className = 'part-empty muted';
-      empty.textContent = modelListKind === 'asm' ? 'No assemblies yet' : 'No parts yet';
+      empty.textContent = t('noModels');
       el.partsList.appendChild(empty);
       return;
     }
-    for (const p of visibleParts) {
+    for (const p of partsCache) {
       const li = document.createElement('li');
       li.className = 'part-item' + (p.name === activePart ? ' active' : '');
       li.dataset.name = p.name;
@@ -264,7 +354,31 @@ export function initUI(viewer) {
       main.className = 'part-main';
       const title = document.createElement('div');
       title.className = 'part-title';
-      title.textContent = p.kind === 'asm' ? t('assemblySuffix', { name: p.name }) : p.name;
+      const modelParts = Array.isArray(p.parts) ? p.parts : [];
+      if (modelParts.length >= 2) {
+        const expand = document.createElement('button');
+        expand.className = 'model-part-toggle';
+        expand.type = 'button';
+        expand.textContent = expandedModels.has(p.name) ? '-' : '+';
+        expand.title = expandedModels.has(p.name) ? t('collapseModelParts') : t('expandModelParts');
+        expand.addEventListener('click', (event) => {
+          event.stopPropagation();
+          if (expandedModels.has(p.name)) expandedModels.delete(p.name);
+          else expandedModels.add(p.name);
+          renderPartsList();
+        });
+        title.appendChild(expand);
+      }
+      const titleText = document.createElement('span');
+      titleText.className = 'part-title-text';
+      titleText.textContent = p.name;
+      title.appendChild(titleText);
+      if (modelParts.length >= 2) {
+        const count = document.createElement('span');
+        count.className = 'model-part-count';
+        count.textContent = String(modelParts.length);
+        title.appendChild(count);
+      }
       if (p.building) {
         const dot = document.createElement('span');
         dot.className = 'part-busy';
@@ -284,7 +398,7 @@ export function initUI(viewer) {
       bReveal.textContent = '📁';
       bReveal.addEventListener('click', (e) => {
         e.stopPropagation();
-        api.revealPart(p.name);
+        api.revealModel(p.name);
       });
       const bBuild = document.createElement('button');
       bBuild.className = 'icon-btn';
@@ -292,17 +406,19 @@ export function initUI(viewer) {
       bBuild.textContent = '↻';
       bBuild.addEventListener('click', (e) => {
         e.stopPropagation();
-        api.rebuildPart(p.name);
+        api.rebuildModel(p.name);
       });
       actions.appendChild(bReveal);
       actions.appendChild(bBuild);
 
       li.appendChild(main);
       li.appendChild(actions);
+      const partList = renderModelPartList(p.name, modelParts);
+      if (partList) li.appendChild(partList);
       li.addEventListener('click', () => {
-        if (p.name === activePart) return;
         if (paramsEditor.isDirty()) paramsEditor.flushPendingSave();
-        api.selectPart(p.name);
+        if (p.name !== activePart) api.selectModel(p.name);
+        else showAssembly(p.name);
       });
       el.partsList.appendChild(li);
     }
@@ -311,8 +427,8 @@ export function initUI(viewer) {
   async function refreshParts() {
     if (!currentProject) return;
     try {
-      const { parts, active } = await api.listParts();
-      partsCache = parts || [];
+      const { models, active } = await api.listModels();
+      partsCache = models || [];
       activePart = active;
       syncModelListKindToModel(activePart, { render: false });
       renderPartsList();
@@ -324,6 +440,31 @@ export function initUI(viewer) {
     }
   }
 
+  if (el.btnRebuildAll) {
+    el.btnRebuildAll.addEventListener('click', async () => {
+      el.btnRebuildAll.disabled = true;
+      setStatus(t('rebuildAllStarted'), true);
+      try {
+        const res = await api.rebuildAllModels();
+        if (res?.ok) {
+          setStatus(t('rebuildAllDone'));
+          await refreshParts();
+        } else {
+          const failed = (res?.results || []).filter((r) => !r.ok).map((r) => r.name).join(', ');
+          const msg = failed || 'unknown error';
+          setStatus(t('rebuildAllFailed', { message: msg }));
+          appendLog(t('rebuildAllFailed', { message: msg }), 'error');
+        }
+      } catch (e) {
+        const msg = e.message || String(e);
+        setStatus(t('rebuildAllFailed', { message: msg }));
+        appendLog(t('rebuildAllFailed', { message: msg }), 'error');
+      } finally {
+        el.btnRebuildAll.disabled = false;
+      }
+    });
+  }
+
   if (el.btnExportActive) {
     el.btnExportActive.addEventListener('click', async () => {
       if (!activePart) {
@@ -332,7 +473,7 @@ export function initUI(viewer) {
       }
       const fmt = (el.selectExportFormat?.value || 'stl').toLowerCase();
       try {
-        const res = await api.exportPart(activePart, fmt);
+        const res = await api.exportModel(activePart, fmt);
         if (!res?.canceled) {
           const label = String(fmt).toUpperCase();
           showToast(t('exported', { name: escapeHtml(activePart), format: label }));
@@ -431,11 +572,15 @@ export function initUI(viewer) {
   const AGENT_LABELS = {
     codex:    '⚡ Codex',
     claude:   '◆ Claude Code',
-    cli:      '▷ Cursor CLI'
+    cli:      '▷ Cursor CLI',
+    next:     'Forgent3D'
   };
 
   let termPanel = null;      // instance returned by createTerminalPanel
   let termPanelOpen = false;
+  let rightDockMode = null; // 'terminal' | 'next'
+  /** When true, hide Forgent3D loading overlay on the next webview load completion or failure. */
+  let pendingNextAgentWebviewLoad = false;
   let termOpenFitTimer = null;
   let termDataChunkCount = 0;
   let termDebugEnabled = false;
@@ -496,13 +641,40 @@ export function initUI(viewer) {
     el.termPanel.style.setProperty('--term-w', `${w}px`);
   }
 
-  function openTermPanel() {
-    if (termPanelOpen) return;
-    termPanelOpen = true;
-    el.app.classList.add('term-open');
-    el.termPanel.classList.add('open');
-    termDebug('openTermPanel');
-    // Initialize if xterm has not been mounted yet
+  function setNextAgentLoadingVisible(visible) {
+    if (!el.agentNextLoading) return;
+    el.agentNextLoading.classList.toggle('hidden', !visible);
+    el.agentNextLoading.setAttribute('aria-busy', visible ? 'true' : 'false');
+  }
+
+  function clearNextAgentWebviewLoadIntent() {
+    pendingNextAgentWebviewLoad = false;
+    setNextAgentLoadingVisible(false);
+  }
+
+  function openTermPanel(mode = 'terminal') {
+    const dockMode = mode === 'next' ? 'next' : 'terminal';
+    if (termOpenFitTimer) {
+      clearTimeout(termOpenFitTimer);
+      termOpenFitTimer = null;
+    }
+    const firstOpen = !termPanelOpen;
+    if (!termPanelOpen) {
+      termPanelOpen = true;
+      el.app.classList.add('term-open');
+      el.termPanel.classList.add('open');
+      termDebug('openTermPanel', dockMode);
+    }
+    rightDockMode = dockMode;
+
+    if (dockMode === 'next') {
+      el.termContainer?.classList.add('hidden');
+      el.agentNextRoot?.classList.remove('hidden');
+      return;
+    }
+
+    el.agentNextRoot?.classList.add('hidden');
+    el.termContainer?.classList.remove('hidden');
     if (!termPanel) {
       termPanel = createTerminalPanel(el.termContainer, api);
       termDebug('createTerminalPanel done', {
@@ -510,52 +682,61 @@ export function initUI(viewer) {
         containerH: el.termContainer?.offsetHeight || 0
       });
     }
-    // Retry fit/focus a few times after open to stabilize cursor/cell metrics.
-    requestAnimationFrame(() => {
-      termPanel?.fit();
-      termPanel?.focus();
-      termDebug('fit#1', {
-        panelH: el.termPanel?.offsetHeight || 0,
-        containerW: el.termContainer?.offsetWidth || 0,
-        containerH: el.termContainer?.offsetHeight || 0
+
+    if (firstOpen) {
+      requestAnimationFrame(() => {
+        termPanel?.fit();
+        termPanel?.focus();
+        termDebug('fit#1', {
+          panelH: el.termPanel?.offsetHeight || 0,
+          containerW: el.termContainer?.offsetWidth || 0,
+          containerH: el.termContainer?.offsetHeight || 0
+        });
       });
-    });
-    requestAnimationFrame(() => {
-      termPanel?.fit();
-      termPanel?.focus();
-      termDebug('fit#2', {
-        panelH: el.termPanel?.offsetHeight || 0,
-        containerW: el.termContainer?.offsetWidth || 0,
-        containerH: el.termContainer?.offsetHeight || 0
+      requestAnimationFrame(() => {
+        termPanel?.fit();
+        termPanel?.focus();
+        termDebug('fit#2', {
+          panelH: el.termPanel?.offsetHeight || 0,
+          containerW: el.termContainer?.offsetWidth || 0,
+          containerH: el.termContainer?.offsetHeight || 0
+        });
       });
-    });
-    if (termOpenFitTimer) clearTimeout(termOpenFitTimer);
-    termOpenFitTimer = setTimeout(() => {
-      termOpenFitTimer = null;
-      termPanel?.fit();
-      // Retry focus after panel open; xterm hidden textarea can lose focus on repeated open/close.
-      termPanel?.focus();
-      const tid = termPanel?.getTermId();
-      if (tid) syncTermResize(tid, 'openPanel:stabilize');
-      termDebug('fit#3(timeout)', {
-        panelH: el.termPanel?.offsetHeight || 0,
-        containerW: el.termContainer?.offsetWidth || 0,
-        containerH: el.termContainer?.offsetHeight || 0
+      if (termOpenFitTimer) clearTimeout(termOpenFitTimer);
+      termOpenFitTimer = setTimeout(() => {
+        termOpenFitTimer = null;
+        termPanel?.fit();
+        termPanel?.focus();
+        const tid = termPanel?.getTermId();
+        if (tid) syncTermResize(tid, 'openPanel:stabilize');
+        termDebug('fit#3(timeout)', {
+          panelH: el.termPanel?.offsetHeight || 0,
+          containerW: el.termContainer?.offsetWidth || 0,
+          containerH: el.termContainer?.offsetHeight || 0
+        });
+      }, 220);
+    } else {
+      requestAnimationFrame(() => {
+        termPanel?.fit();
+        termPanel?.focus();
       });
-    }, 220);
+    }
   }
 
   function closeTermPanel() {
     if (!termPanelOpen) return;
     termPanelOpen = false;
+    rightDockMode = null;
     el.app.classList.remove('term-open');
     el.termPanel.classList.remove('open');
     termDebug('closeTermPanel');
+    clearNextAgentWebviewLoadIntent();
+    el.agentNextRoot?.classList.add('hidden');
+    el.termContainer?.classList.remove('hidden');
     if (termOpenFitTimer) {
       clearTimeout(termOpenFitTimer);
       termOpenFitTimer = null;
     }
-    // Kill current PTY
     const tid = termPanel?.getTermId();
     if (tid) api.terminalKill(tid).catch(() => {});
     termPanel?.dispose();
@@ -568,6 +749,18 @@ export function initUI(viewer) {
   /* Close button */
   el.btnTermClose.addEventListener('click', closeTermPanel);
 
+  if (el.agentNextFrame) {
+    el.agentNextFrame.addEventListener('did-finish-load', () => {
+      if (!pendingNextAgentWebviewLoad) return;
+      pendingNextAgentWebviewLoad = false;
+      setNextAgentLoadingVisible(false);
+    });
+    el.agentNextFrame.addEventListener('did-fail-load', () => {
+      if (!pendingNextAgentWebviewLoad) return;
+      clearNextAgentWebviewLoadIntent();
+    });
+  }
+
   /* Drag handle to resize width */
   el.termResizeHandle.addEventListener('mousedown', (e) => {
     e.preventDefault();
@@ -577,14 +770,18 @@ export function initUI(viewer) {
       const delta = startX - mv.clientX;
       const w = Math.min(TERM_MAX_W, Math.max(TERM_MIN_W, startW + delta));
       setPanelWidth(w);
-      termPanel?.fit();
+      if (rightDockMode === 'terminal') {
+        termPanel?.fit();
+      }
     };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
-      termPanel?.fit();
-      const tid = termPanel?.getTermId();
-      if (tid) syncTermResize(tid, 'dragEnd');
+      if (rightDockMode === 'terminal') {
+        termPanel?.fit();
+        const tid = termPanel?.getTermId();
+        if (tid) syncTermResize(tid, 'dragEnd');
+      }
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -595,6 +792,27 @@ export function initUI(viewer) {
     btn.addEventListener('click', async () => {
       const agent = btn.dataset.agent;
       if (!agent || !currentProject) return;
+
+      if (agent === 'next') {
+        try {
+          pendingNextAgentWebviewLoad = true;
+          openTermPanel('next');
+          setNextAgentLoadingVisible(true);
+          el.termTitle.textContent = t('nextAgentPanelTitle');
+          const res = await api.agentOpenNext(currentProject, undefined, false);
+          if (el.agentNextFrame && el.agentNextFrame.src !== res?.url) {
+            el.agentNextFrame.src = res?.url || 'about:blank';
+          } else {
+            clearNextAgentWebviewLoadIntent();
+          }
+          appendLog(t('nextAgentOpened', { url: res?.url || '' }));
+        } catch (e) {
+          clearNextAgentWebviewLoadIntent();
+          appendLog(t('nextAgentOpenFailed', { message: e?.message || String(e) }), 'error');
+          showToast(t('nextAgentOpenFailed', { message: escapeHtml(e?.message || String(e)) }), 4200);
+        }
+        return;
+      }
 
       /* ---- CLI agents: embedded terminal panel ---- */
       // If a session already exists, terminate it and launch the new one in place.
@@ -680,8 +898,8 @@ export function initUI(viewer) {
         }
         refreshParts();
         break;
-      case 'PARTS_LIST':
-        partsCache = payload.parts || [];
+      case 'MODELS_LIST':
+        partsCache = payload.models || [];
         activePart = payload.active;
         syncModelListKindToModel(activePart, { render: false });
         renderPartsList();
@@ -690,8 +908,10 @@ export function initUI(viewer) {
         viewerUi.renderAll();
         paramsEditor.refresh();
         break;
-      case 'ACTIVE_PART_CHANGED':
+      case 'ACTIVE_MODEL_CHANGED':
         activePart = payload?.name || null;
+        displayedModelPart = null;
+        selectedModelPart = null;
         syncModelListKindToModel(activePart, { render: false });
         renderPartsList();
         renderModelNameBadge();
@@ -718,8 +938,12 @@ export function initUI(viewer) {
         }
         break;
       case 'PART_BUILT':
-        // Refresh cache size/time in models list only
         refreshParts();
+        // MODEL_UPDATED (which clears the spinner) is only sent for the active part.
+        // For non-active part builds, clear the busy spinner here so UI doesn't hang.
+        if (!payload?.part || payload.part !== activePart) {
+          setStatus(payload?.part ? t('partBuilt', { part: payload.part }) : '');
+        }
         break;
       case 'MODEL_UPDATED': {
         if (payload?.part) {
@@ -729,22 +953,51 @@ export function initUI(viewer) {
           renderPartsList();
           renderModelNameBadge();
         }
-        const partLabel = payload.part ? `[${payload.part}] ` : '';
         const fmt = (payload.format || 'BREP').toUpperCase();
-        setStatus(
-          `${partLabel}${fmt === 'MJCF' ? t('loadingMjcf') : (fmt === 'STL' ? t('parsingStl') : t('parsingBrep'))} ...`,
-          true
-        );
-        const sizeKB = payload.size ? (payload.size / 1024).toFixed(1) + ' KB' : '';
         const url = payload.url;
         if (!url) {
           appendLog(t('missingModelUrl'), 'warn');
           break;
         }
+        if (fmt === 'MJCF' && payload.part) assemblyPayloads.set(payload.part, { ...payload });
         const preserveView = !!payload.part && payload.part === loadedPart && typeof viewer.hasModel === 'function' && viewer.hasModel();
+        const partLabel = payload.part ? `[${payload.part}] ` : '';
+        if (fmt === 'MJCF') {
+          showAssembly(payload.part, { preserveView }).then(async (partInfo) => {
+            const explodeState = typeof viewer.getExplodeState === 'function' ? viewer.getExplodeState() : { enabled: false, available: false };
+            if (explodeState.enabled && !explodeState.available) viewerUi.stopExplodedView();
+            try {
+              await new Promise((r) => requestAnimationFrame(() => r()));
+              const snapshotViews = ['iso', 'front', 'side', 'top'];
+              const buildSnapshotSet = (mode) => Object.fromEntries(
+                snapshotViews.map((view) => [
+                  view,
+                  viewer.snapshot('image/png', { maxEdge: 1280, view, mode })
+                ])
+              );
+              const snapshotDataURLs = {
+                solid: buildSnapshotSet('solid'),
+                xray: buildSnapshotSet('xray')
+              };
+              await api.notifyPartLoaded({
+                part: payload.part,
+                faceCount: partInfo.faceCount,
+                bbox: partInfo.bbox,
+                faces: partInfo.faces,
+                snapshotDataURLs
+              });
+            } catch (e) {
+              appendLog(t('failedReportPartInfo', { message: e.message || e }), 'warn');
+            }
+          }).catch(() => {});
+          break;
+        }
+        setStatus(`${partLabel}${fmt === 'STL' ? t('parsingStl') : t('parsingBrep')} ...`, true);
+        const sizeKB = payload.size ? (payload.size / 1024).toFixed(1) + ' KB' : '';
         viewer.loadModel(url, (msg) => appendLog(msg), { format: fmt, paramsUrl: payload.paramsUrl, preserveView })
           .then(async (partInfo) => {
             if (payload?.part) loadedPart = payload.part;
+            renderPartsList();
             const explodeState = typeof viewer.getExplodeState === 'function' ? viewer.getExplodeState() : { enabled: false, available: false };
             if (explodeState.enabled && !explodeState.available) viewerUi.stopExplodedView();
             const { faceCount } = partInfo;

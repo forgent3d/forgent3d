@@ -13,6 +13,7 @@ import { createPreviewModeController } from './viewer-preview-mode.js';
 import { createReferenceAxesController } from './viewer-reference-axes.js';
 import { createExplodeController } from './viewer-explode.js';
 import { createAdaptiveBackgroundController } from './viewer-background.js';
+import { createCursorWheelZoomController } from './viewer-cursor-zoom.js';
 import { disposeThreeObject } from './viewer-utils.js';
 import type { LoadModelOptions, LogHandler, MaterialParams, MaterialSpec, PartInfo, PreviewMode, Viewer, ViewSpec } from './types.js';
 // Vite treats wasm as an asset and returns the final bundled URL
@@ -100,92 +101,18 @@ export function createViewer(host: HTMLElement): Viewer {
   // TrackballControls allows continuous orbiting past the top/bottom poles.
   const controls = new TrackballControls(camera, renderer.domElement);
   controls.rotateSpeed = 6;
+  controls.zoomSpeed = 2.8;
   controls.staticMoving = true;
   controls.dynamicDampingFactor = 0;
   controls.target.set(0, 0, 0);
   controls.handleResize();
 
-  const cursorZoomRaycaster = new THREE.Raycaster();
-  const cursorZoomPointer = new THREE.Vector2();
-  const cursorZoomPlane = new THREE.Plane();
-  const cursorZoomAnchor = new THREE.Vector3();
-  const cursorZoomProjected = new THREE.Vector3();
-  const cursorZoomDelta = new THREE.Vector3();
-  const cursorZoomDirection = new THREE.Vector3();
-
-  function wheelZoomUnit(event: WheelEvent) {
-    if (event.deltaMode === 2) return 0.025;
-    if (event.deltaMode === 1) return 0.01;
-    return 0.00025;
-  }
-
-  function updateCursorZoomPointer(event: WheelEvent) {
-    const rect = renderer.domElement.getBoundingClientRect();
-    if (!rect.width || !rect.height) return false;
-    cursorZoomPointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    cursorZoomPointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-    return true;
-  }
-
-  function pickCursorZoomAnchor(event: WheelEvent) {
-    if (!updateCursorZoomPointer(event)) return null;
-    camera.updateMatrixWorld();
-    cursorZoomRaycaster.setFromCamera(cursorZoomPointer, camera);
-
-    if (currentRoot) {
-      const hits = cursorZoomRaycaster
-        .intersectObject(currentRoot, true)
-        .filter((hit) => hit.object.visible);
-      if (hits.length) return cursorZoomAnchor.copy(hits[0]!.point);
-    }
-
-    camera.getWorldDirection(cursorZoomDirection).normalize();
-    cursorZoomPlane.setFromNormalAndCoplanarPoint(cursorZoomDirection, controls.target);
-    const projected = cursorZoomRaycaster.ray.intersectPlane(cursorZoomPlane, cursorZoomAnchor);
-    return projected ? cursorZoomAnchor : controls.target;
-  }
-
-  function onCursorWheelZoom(event: WheelEvent) {
-    if (!controls.enabled || controls.noZoom) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-
-    const anchor = pickCursorZoomAnchor(event);
-    if (!anchor) return;
-
-    const distance = camera.position.distanceTo(controls.target);
-    if (!Number.isFinite(distance) || distance <= 1e-6) return;
-
-    const rawFactor = 1 + event.deltaY * wheelZoomUnit(event) * controls.zoomSpeed;
-    const factor = Math.max(0.05, rawFactor);
-    const nextDistance = THREE.MathUtils.clamp(
-      distance * factor,
-      controls.minDistance,
-      controls.maxDistance
-    );
-    const effectiveFactor = nextDistance / distance;
-    if (!Number.isFinite(effectiveFactor) || effectiveFactor <= 0 || effectiveFactor === 1) return;
-
-    camera.position.sub(controls.target).multiplyScalar(effectiveFactor).add(controls.target);
-    camera.lookAt(controls.target);
-    camera.updateMatrixWorld();
-
-    cursorZoomRaycaster.setFromCamera(cursorZoomPointer, camera);
-    camera.getWorldDirection(cursorZoomDirection).normalize();
-    cursorZoomPlane.setFromNormalAndCoplanarPoint(cursorZoomDirection, anchor);
-    const projected = cursorZoomRaycaster.ray.intersectPlane(cursorZoomPlane, cursorZoomProjected);
-    if (projected) {
-      cursorZoomDelta.copy(anchor).sub(projected);
-      camera.position.add(cursorZoomDelta);
-      controls.target.add(cursorZoomDelta);
-    }
-
-    camera.lookAt(controls.target);
-    camera.updateMatrixWorld();
-    controls.update();
-  }
-
-  renderer.domElement.addEventListener('wheel', onCursorWheelZoom, { passive: false, capture: true });
+  const cursorWheelZoom = createCursorWheelZoomController({
+    camera,
+    controls,
+    domElement: renderer.domElement,
+    getCurrentRoot: () => currentRoot
+  });
 
   const lighting = createViewerLighting(scene, renderer, () => currentRoot);
   const contactShadow = createContactShadow(scene);
@@ -300,6 +227,7 @@ export function createViewer(host: HTMLElement): Viewer {
     backgroundController.reset();
     contactShadow.hide();
     referenceAxes.hide();
+    cursorWheelZoom.cancelGesture();
     controls.target.set(0, 0, 0);
     controls.update();
     viewController.reset();
@@ -551,6 +479,13 @@ export function createViewer(host: HTMLElement): Viewer {
     backgroundController.update(currentRoot);
   }
 
+  function setSelectedPart(partKey: string | number | null) {
+    const selected = appearanceController.setSelectedPart(partKey);
+    previewController.refresh();
+    backgroundController.update(currentRoot);
+    return selected;
+  }
+
   function setExplodeEnabled(enabled: boolean) {
     return explodeController.setEnabled(enabled);
   }
@@ -590,7 +525,9 @@ export function createViewer(host: HTMLElement): Viewer {
     setPartMaterial,
     setPartMaterialColor,
     setPartMaterialColors,
+    setSelectedPart,
     getMaterialParts: appearanceController.getMaterialParts,
+    getSelectedPart: appearanceController.getSelectedPart,
     getPartMaterialState: appearanceController.getPartMaterialState,
     getCurrentView: viewController.getCurrentView,
     hasModel: () => !!currentRoot,
@@ -603,7 +540,7 @@ export function createViewer(host: HTMLElement): Viewer {
         viewCube = null;
       }
       clearModel();
-      renderer.domElement.removeEventListener('wheel', onCursorWheelZoom, { capture: true });
+      cursorWheelZoom.dispose();
       contactShadow.dispose();
       lighting.dispose();
       referenceAxes.dispose();

@@ -39,6 +39,50 @@ function normalizeMaterialConfig(config: MaterialSpec | THREE.ColorRepresentatio
 export function createAppearanceController({ getCurrentRoot }: { getCurrentRoot: () => THREE.Object3D | null }) {
   let defaultMaterial: MaterialSpec = {};
   const partMaterials = new Map<string, MaterialSpec>();
+  let selectedPartKey: string | number | null = null;
+
+  function backupSelectionMaterial(material: THREE.Material | null) {
+    if (!material || material.userData.__selectionBackup) return;
+    const materialWithColor = material as THREE.Material & { color?: THREE.Color; emissive?: THREE.Color };
+    material.userData.__selectionBackup = {
+      color: materialWithColor.color?.getHex?.(),
+      emissive: materialWithColor.emissive?.getHex?.(),
+      opacity: Number.isFinite(material.opacity) ? material.opacity : 1,
+      transparent: !!material.transparent,
+      depthWrite: !!material.depthWrite
+    };
+  }
+
+  function restoreSelectionMaterial(material: THREE.Material | null) {
+    if (!material?.userData.__selectionBackup) return;
+    const backup = material.userData.__selectionBackup;
+    const materialWithColor = material as THREE.Material & { color?: THREE.Color; emissive?: THREE.Color };
+    if (materialWithColor.color && Number.isFinite(backup.color)) materialWithColor.color.setHex(backup.color);
+    if (materialWithColor.emissive && Number.isFinite(backup.emissive)) materialWithColor.emissive.setHex(backup.emissive);
+    material.opacity = backup.opacity;
+    material.transparent = backup.transparent;
+    material.depthWrite = backup.depthWrite;
+    delete material.userData.__selectionBackup;
+    material.needsUpdate = true;
+  }
+
+  function applySelectionMaterial(material: THREE.Material | null, selected: boolean) {
+    if (!material) return;
+    backupSelectionMaterial(material);
+    const materialWithColor = material as THREE.Material & { color?: THREE.Color; emissive?: THREE.Color };
+    if (selected) {
+      if (materialWithColor.color) materialWithColor.color.set('#ffd45a');
+      if (materialWithColor.emissive) materialWithColor.emissive.set('#332000');
+      material.opacity = 1;
+      material.transparent = false;
+      material.depthWrite = true;
+    } else {
+      material.opacity = 0.22;
+      material.transparent = true;
+      material.depthWrite = false;
+    }
+    material.needsUpdate = true;
+  }
 
   function apply() {
     const root = getCurrentRoot?.();
@@ -56,6 +100,11 @@ export function createAppearanceController({ getCurrentRoot }: { getCurrentRoot:
         const material = getPartMaterial(child, part);
         const partMaterial = partMaterials.get(String(part.id));
         applyMaterialSpec(material, { ...defaultMaterial, ...(partMaterial || {}) });
+        if (selectedPartKey != null) {
+          applySelectionMaterial(material, matchesPart(part, selectedPartKey));
+        } else {
+          restoreSelectionMaterial(material);
+        }
       }
     });
   }
@@ -114,6 +163,12 @@ export function createAppearanceController({ getCurrentRoot }: { getCurrentRoot:
     apply();
   }
 
+  function setSelectedPart(partKey: string | number | null) {
+    selectedPartKey = partKey == null || partKey === '' ? null : partKey;
+    apply();
+    return selectedPartKey;
+  }
+
   function getMaterialParts() {
     const root = getCurrentRoot?.();
     const parts: Array<MaterialPart & { color: string | null }> = [];
@@ -129,6 +184,7 @@ export function createAppearanceController({ getCurrentRoot }: { getCurrentRoot:
           aliases: part.aliases || [],
           index: part.index,
           materialIndex: part.materialIndex,
+          sourceUrl: part.sourceUrl,
           color: materialWithColor?.color ? `#${materialWithColor.color.getHexString()}` : null
         });
       }
@@ -144,6 +200,8 @@ export function createAppearanceController({ getCurrentRoot }: { getCurrentRoot:
     setPartMaterialColor,
     setPartMaterialColors,
     clearPartMaterialColor,
+    setSelectedPart,
+    getSelectedPart: () => selectedPartKey,
     getMaterialParts,
     getPartMaterialState: () => Object.fromEntries(
       Array.from(partMaterials.entries()).map(([key, spec]) => [key, { ...spec }])

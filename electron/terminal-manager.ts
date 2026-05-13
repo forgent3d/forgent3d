@@ -43,6 +43,14 @@ const AGENT_CLI_DOCS = {
   codex:  { label: 'OpenAI Codex CLI', url: 'https://developers.openai.com/codex/cli' }
 };
 
+function quoteShellArg(value) {
+  const text = String(value);
+  if (process.platform === 'win32') {
+    return `'${text.replace(/'/g, "''")}'`;
+  }
+  return `'${text.replace(/'/g, "'\\''")}'`;
+}
+
 function buildProcessEnvWithWindowsPathFixes(baseEnv = process.env) {
   if (process.platform !== 'win32') return { ...baseEnv };
 
@@ -234,10 +242,10 @@ function hasCommand(command) {
   return hasCommandOnUnix(command);
 }
 
-function resolveAgentCommand(agent) {
+function resolveAgentLaunch(agent) {
   const primary = AGENT_CMDS[agent];
   if (!primary) throw new Error(`Unknown agent: ${agent}`);
-  if (hasCommand(primary)) return primary;
+  if (hasCommand(primary)) return { cmd: primary, env: {} };
 
   const fallbackShellCmd = AGENT_FALLBACK_SHELL_CMDS[agent];
   if (!fallbackShellCmd) {
@@ -247,7 +255,7 @@ function resolveAgentCommand(agent) {
   // Fallback shell commands may be compound commands (e.g. npx ...),
   // so we only check whether the executable exists on PATH.
   const fallbackExecutable = fallbackShellCmd.trim().split(/\s+/)[0];
-  if (hasCommand(fallbackExecutable)) return fallbackShellCmd;
+  if (hasCommand(fallbackExecutable)) return { cmd: fallbackShellCmd, env: {} };
 
   throw new Error(missingCliErrorMessage(agent, primary));
 }
@@ -354,7 +362,8 @@ function init(ipcMain, sendToRenderer, hooks = {}) {
 
   ipcMain.handle('terminal:create', async (_evt, { agent, projectPath, cols = 120, rows = 30 }) => {
     const pty = tryLoadPty();
-    const cmd = resolveAgentCommand(agent);
+    const launch = resolveAgentLaunch(agent);
+    const cmd = launch.cmd;
     if (onBeforeTerminalCreate) {
       await onBeforeTerminalCreate({ agent, projectPath });
     }
@@ -402,6 +411,7 @@ function init(ipcMain, sendToRenderer, hooks = {}) {
     try {
       const mergedEnv = buildProcessEnvWithWindowsPathFixes({
         ...process.env,
+        ...(launch.env || {}),
         // On macOS/Linux the packaged app may inherit a minimal PATH when launched from
         // the Finder/Dock rather than a terminal.  Expand it using the login shell so
         // tools like `claude` and `codex` (installed via npm/brew) are discoverable.

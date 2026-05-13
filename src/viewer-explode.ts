@@ -25,6 +25,39 @@ function hasDirectSolidMesh(object: THREE.Object3D): boolean {
   return object.children.some(isSolidMesh);
 }
 
+function hasMeshBearingBodyDescendant(object: THREE.Object3D): boolean {
+  let found = false;
+  for (const child of object.children) {
+    if (found) break;
+    if (child.userData?.isMjcfBody && hasSolidMesh(child)) {
+      found = true;
+      break;
+    }
+    child.traverse((nested) => {
+      if (found || nested === child) return;
+      if (nested.userData?.isMjcfBody && hasSolidMesh(nested)) found = true;
+    });
+  }
+  return found;
+}
+
+function mjcfExplodeTargets(root: THREE.Object3D): THREE.Object3D[] {
+  const bodies: THREE.Object3D[] = Array.isArray(root.userData?.mjcfBodies)
+    ? (root.userData.mjcfBodies as THREE.Object3D[]).filter(hasSolidMesh)
+    : [];
+  if (!bodies.length) return [];
+
+  const targets: THREE.Object3D[] = [];
+  for (const body of bodies) {
+    if (hasDirectSolidMesh(body) && hasMeshBearingBodyDescendant(body)) {
+      targets.push(...body.children.filter(isSolidMesh));
+      continue;
+    }
+    if (hasDirectSolidMesh(body)) targets.push(body);
+  }
+  return targets;
+}
+
 function fallbackDirection(index: number): THREE.Vector3 {
   const angle = index * Math.PI * (3 - Math.sqrt(5));
   return new THREE.Vector3(Math.cos(angle), 0.18, Math.sin(angle)).normalize();
@@ -57,13 +90,11 @@ export function createExplodeController({
   let targetRoot: THREE.Object3D | null = null;
 
   function candidateTargets(root: THREE.Object3D): THREE.Object3D[] {
-    const mjcfBodies: THREE.Object3D[] = Array.isArray(root.userData?.mjcfBodies)
-      ? (root.userData.mjcfBodies as THREE.Object3D[]).filter(hasDirectSolidMesh)
-      : [];
+    const mjcfTargets = mjcfExplodeTargets(root);
 
     let pool: THREE.Object3D[];
-    if (mjcfBodies.length >= 2) {
-      pool = mjcfBodies;
+    if (mjcfTargets.length >= 2) {
+      pool = mjcfTargets;
     } else {
       const direct = root.children.filter(hasSolidMesh);
       if (direct.length >= 2) {

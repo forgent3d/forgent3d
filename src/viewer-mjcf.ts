@@ -74,6 +74,16 @@ function prepareMjcfSkeletonDocument(document) {
   return simDocument;
 }
 
+function prepareMjcfPreviewSimulationDocument(document) {
+  const simDocument = document.cloneNode(true);
+  let fixedFreejointCount = 0;
+  for (const freejointEl of Array.from(simDocument.getElementsByTagName('freejoint'))) {
+    freejointEl.parentElement?.removeChild(freejointEl);
+    fixedFreejointCount++;
+  }
+  return { document: simDocument, fixedFreejointCount };
+}
+
 export function disposeMjcfSimulation(sim) {
   if (!sim) return;
   for (const binding of sim.bodyBindings || []) binding.bodyAccessor?.delete?.();
@@ -87,7 +97,8 @@ async function createMjcfSimulation(root, document, meshAssets, getMujoco, onLog
   const mujoco = await getMujoco();
   const vfs = new mujoco.MjVFS();
   try {
-    const simDocument = document.cloneNode(true);
+    const previewDocument = prepareMjcfPreviewSimulationDocument(document);
+    const simDocument = previewDocument.document;
     let meshIndex = 0;
     for (const meshEl of Array.from(simDocument.getElementsByTagName('mesh'))) {
       const name = String(meshEl.getAttribute('name') || '').trim();
@@ -104,7 +115,7 @@ async function createMjcfSimulation(root, document, meshAssets, getMujoco, onLog
     try {
       model = mujoco.MjModel.from_xml_string(xml, vfs);
     } catch (err) {
-      const skeletonXml = new XMLSerializer().serializeToString(prepareMjcfSkeletonDocument(document));
+      const skeletonXml = new XMLSerializer().serializeToString(prepareMjcfSkeletonDocument(simDocument));
       model = mujoco.MjModel.from_xml_string(skeletonXml);
       usingSkeleton = true;
     }
@@ -116,7 +127,8 @@ async function createMjcfSimulation(root, document, meshAssets, getMujoco, onLog
       vfs,
       bodyBindings: [],
       defaultCtrl: null,
-      defaultCtrlAccessor: null
+      defaultCtrlAccessor: null,
+      shouldAutoStep: false
     };
     if (Number(model.nu || 0) > 0) {
       try {
@@ -124,6 +136,7 @@ async function createMjcfSimulation(root, document, meshAssets, getMujoco, onLog
         sim.defaultCtrlAccessor = numeric;
         sim.defaultCtrl = Array.from(numeric.data || []).slice(0, Number(model.nu || 0));
         for (let i = 0; i < sim.defaultCtrl.length; i++) data.ctrl[i] = sim.defaultCtrl[i];
+        sim.shouldAutoStep = sim.defaultCtrl.length > 0;
       } catch {
         sim.defaultCtrl = null;
       }
@@ -144,7 +157,7 @@ async function createMjcfSimulation(root, document, meshAssets, getMujoco, onLog
       }
     }
     mujoco.mj_forward(model, data);
-    onLog(`MJCF MuJoCo simulation ready (${model.nbody} bodies, ${model.njnt} joints${usingSkeleton ? ', skeleton fallback' : ''})`);
+    onLog(`MJCF MuJoCo simulation ready (${model.nbody} bodies, ${model.njnt} joints${usingSkeleton ? ', skeleton fallback' : ''}${previewDocument.fixedFreejointCount ? ', fixed freejoint preview' : ''}${sim.shouldAutoStep ? ', auto motion' : ', static preview'})`);
     return sim;
   } catch (err) {
     vfs.delete?.();
@@ -192,6 +205,7 @@ export function syncMjcfSimulationPose(root) {
 export function stepMjcfSimulation(root, dt) {
   const sim = root?.userData?.mjcfSimulation;
   if (!sim) return false;
+  if (!sim.shouldAutoStep) return syncMjcfSimulationPose(root);
   const timestep = Math.max(1e-4, Number(sim.model?.opt?.timestep) || 0.002);
   let steps = Math.min(120, Math.max(1, Math.ceil(Math.max(0, dt || 0) / timestep)));
   while (steps-- > 0) {
@@ -264,7 +278,8 @@ export async function loadMjcfScene({ url, paramsUrl, mjcfText = null, baseUrl =
     meshAssets.set(name, {
       geometry: loaded.geometry,
       bytes: loaded.bytes,
-      scale: parseVec3(meshEl.getAttribute('scale'), [1, 1, 1])
+      scale: parseVec3(meshEl.getAttribute('scale'), [1, 1, 1]),
+      sourceUrl: resolved
     });
   }
 
@@ -279,17 +294,20 @@ export async function loadMjcfScene({ url, paramsUrl, mjcfText = null, baseUrl =
       createCadClayMaterial()
     );
     mesh.name = String(geomEl.getAttribute('name') || meshName || 'geom');
+    const partName = meshName || mesh.name;
     mesh.userData.materialPart = {
-      id: mesh.name,
-      name: mesh.name,
+      id: partName,
+      name: partName,
       aliases: [
+        partName,
         mesh.name,
         meshName,
         parent?.name,
         `${parent?.name || 'body'}/${mesh.name}`
       ].filter(Boolean),
       index: root.userData.materialPartCount || 0,
-      materialIndex: 0
+      materialIndex: 0,
+      sourceUrl: asset.sourceUrl
     };
     root.userData.materialPartCount = (root.userData.materialPartCount || 0) + 1;
     applyMjcfTransform(mesh, geomEl, angleScale);

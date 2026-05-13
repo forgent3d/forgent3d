@@ -54,7 +54,7 @@ Most AI-generated CAD workflows stop at source code. Forgent3D closes the loop: 
 - **Parametric CAD by default**: models are driven by `part.py` or `asm.xml` plus `params.json`, so dimensions and visual choices stay editable.
 - **Live local preview**: rebuild models and inspect them in a Three.js viewer without leaving the desktop app.
 - **AI-agent friendly**: built-in project skills and MCP tooling help agents generate, rebuild, screenshot, and verify CAD output.
-- **Geometry-first validation**: single-body parts preview through BREP, with face and bounding-box data available for inspection.
+- **Geometry-first validation**: model packages preview through MJCF, with screenshots and bounding-box data available for inspection.
 - **Assemblies and motion**: compose multi-body systems with MJCF, reusable STL meshes, joints, constraints, and optional MuJoCo simulation.
 - **Renderer materials**: use `__viewer.materials` in `params.json` to assign preview material presets and colors without mixing styling into geometry.
 
@@ -72,17 +72,17 @@ npm run build:runner
 npm run dev
 ```
 
-The app creates top-level `parts/` and `assemblies/` directories. Each model lives in its own folder with source code and parameters:
+The app creates self-contained model packages under `models/`. Each model has a root `asm.xml` and `params.json`, with local editable parts beneath it:
 
 ```text
-parts/
-  bracket/
-    part.py
-    params.json
-assemblies/
-  linkage_demo/
+models/
+  cuboid/
     asm.xml
     params.json
+    parts/
+      cuboid/
+        part.py
+        params.json
 ```
 
 ## 🧩 How It Works
@@ -91,14 +91,14 @@ assemblies/
 AI agent or editor
         |
         v
-parts/<name>/part.py or assemblies/<name>/asm.xml
-adjacent params.json
+models/<name>/asm.xml + params.json
+models/<name>/parts/<part>/part.py + params.json
         |
         v
 Forgent3D build runner
         |
         v
-BREP part preview or MJCF assembly preview
+MJCF model package preview
         |
         v
 Interactive viewer, screenshots, geometry info, MCP feedback

@@ -757,6 +757,7 @@ html, body, #app {
 }
 .part-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
@@ -780,6 +781,39 @@ html, body, #app {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.part-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.model-part-toggle {
+  width: 18px;
+  height: 18px;
+  border: 1px solid #30384c;
+  border-radius: 4px;
+  background: #0c0f16;
+  color: #aab4c5;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 14px;
+  padding: 0;
+  flex: 0 0 auto;
+}
+.model-part-toggle:hover {
+  background: #2a3143;
+  color: #e8ecf3;
+}
+.model-part-count {
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: #263047;
+  color: #9fb0ca;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
 }
 .part-desc {
   font-size: 11px;
@@ -806,6 +840,39 @@ html, body, #app {
   opacity: 0.55;
 }
 .part-item:hover .part-actions { opacity: 1; }
+.model-part-list {
+  flex: 0 0 100%;
+  list-style: none;
+  margin: 2px 0 0 24px;
+  padding: 4px 0 0 8px;
+  border-left: 1px solid #30384c;
+}
+.model-part-item {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  margin: 2px 0;
+  border-radius: 4px;
+  color: #aab4c5;
+  font-size: 12px;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.model-part-item:hover {
+  background: #222838;
+  color: #e8ecf3;
+}
+.model-part-item.selected {
+  background: rgba(245, 192, 76, 0.16);
+  color: #ffd45a;
+}
+.model-part-item.missing {
+  color: #6f7a8d;
+  font-style: italic;
+}
 .icon-btn {
   background: transparent;
   border: 0;
@@ -1131,4 +1198,48 @@ html, body, #app {
   color: #d7dbe3;
   padding: 0 2px;
   border-radius: 2px;
+}
+
+/* ---------- Forgent3D agent dock ---------- */
+.agent-next-root {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  background: #fff;
+}
+.agent-next-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: #0a0c11;
+  color: #9aa4b8;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-align: center;
+  padding: 20px;
+}
+.agent-next-loading .agent-next-loading-spinner {
+  width: 28px;
+  height: 28px;
+  border-width: 3px;
+  border-color: #2a3143;
+  border-top-color: #6ee7ff;
+}
+.agent-next-loading-text {
+  max-width: 240px;
+  line-height: 1.45;
+}
+.agent-next-frame {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
 }

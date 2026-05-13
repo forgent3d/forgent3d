@@ -47,7 +47,7 @@ function codexConfigToml(MCP_PORT) {
   ].join('\n');
 }
 
-function build123dModelSourceTemplate(kind, _name, desc) {
+function build123dModelSourceTemplate(kind, name, desc) {
   const fileName = kind === 'asm' ? 'asm.xml' : 'part.py';
   const kindLabel = kind === 'asm' ? 'assembly' : 'part';
   if (kind === 'asm') {
@@ -56,17 +56,17 @@ function build123dModelSourceTemplate(kind, _name, desc) {
       '',
       'This file is managed by AI CAD Companion Viewer.',
       `This is the primary ${kindLabel} source: \`${fileName}\`.`,
-      'Tunable values live in params.json and are substituted into parameter expressions before preview.',
-      'Reference exported meshes and part-local anchors from params.json; compose bodies, joints, sites, and constraints here.',
+      'User-facing tunable values live in params.json; keep derived dimensions and one-off construction constants in source.',
+      'Reference exported part meshes here and compose bodies, joints, sites, and constraints as needed.',
       '-->',
-      '<mujoco model="${modelName}">',
+      `<mujoco model="${name}">`,
       '  <asset>',
-      '    <mesh name="cuboid" file="${parts.cuboid.mesh}" scale="${parts.cuboid.scale}"/>',
+      '    <mesh name="cuboid" file="parts/cuboid/cuboid.stl" scale="${length / 40} ${width / 30} ${height / 20}"/>',
       '  </asset>',
       '  <worldbody>',
-      '    <body name="base" pos="${placement.x} ${placement.y} ${placement.z}" euler="${placement.roll} ${placement.pitch} ${placement.yaw}">',
-      '      <geom type="mesh" mesh="cuboid" pos="${parts.cuboid.mesh_pos}"/>',
-      '      <site name="base_origin" pos="${parts.cuboid.anchors.origin}" size="0.01"/>',
+      '    <body name="base" pos="0 0 0">',
+      '      <geom type="mesh" mesh="cuboid"/>',
+      '      <site name="base_origin" pos="0 0 0" size="0.01"/>',
       '    </body>',
       '  </worldbody>',
       '</mujoco>',
@@ -132,28 +132,10 @@ function modelSourceTemplate(kernel, kind, name, description) {
 function modelParamsTemplate(kind, name, description) {
   if (kind === 'asm') {
     return JSON.stringify({
-      description: description || 'Assembly parameters',
-      modelName: name || 'assembly',
-      placement: {
-        x: 0,
-        y: 0,
-        z: 0,
-        roll: 0,
-        pitch: 0,
-        yaw: 0
-      },
-      parts: {
-        cuboid: {
-          mesh: '../../parts/cuboid/cuboid.stl',
-          scale: [1, 1, 1],
-          mesh_pos: [0, 0, 0],
-          anchors: {
-            origin: [0, 0, 0],
-            x_min: [-20, 0, 0],
-            x_max: [20, 0, 0]
-          }
-        }
-      }
+      description: description || `${name} model parameters`,
+      length: 40.0,
+      width: 30.0,
+      height: 20.0
     }, null, 2) + '\n';
   }
   return JSON.stringify({
@@ -176,7 +158,7 @@ function modelReadmeTemplate(kernel, kind, name, description) {
     '',
     desc,
     '',
-    `> Kernel: **${meta.label}** | Model type: **${kindLabel}** | Source: \`${activeSource}\` + \`params.json\` | Preview: \`${meta.previewFormat}\``,
+    `> Kernel: **${meta.label}** | Model type: **${kindLabel}** | Source: \`${activeSource}\` + \`params.json\` | Preview: \`${kind === 'asm' ? 'MJCF' : meta.previewFormat}\``,
     '> This file is scaffold-first: keep the summary, parameter table, and validation notes aligned with the source file before large geometry changes.',
     '',
     '## Parameters',

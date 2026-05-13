@@ -74,6 +74,7 @@ export type MaterialPart = {
   aliases?: Array<string | number>;
   index?: number;
   materialIndex?: number;
+  sourceUrl?: string;
 };
 
 export type ViewSpec = {
@@ -119,7 +120,9 @@ export type Viewer = {
   setPartMaterial(partKey: string | number, config: MaterialSpec | THREE.ColorRepresentation): boolean;
   setPartMaterialColor(partKey: string | number, color: THREE.ColorRepresentation): boolean;
   setPartMaterialColors(colorsByPart: Record<string, THREE.ColorRepresentation>): void;
+  setSelectedPart(partKey: string | number | null): string | number | null;
   getMaterialParts(): Array<MaterialPart & { color: string | null }>;
+  getSelectedPart(): string | number | null;
   getPartMaterialState(): Record<string, MaterialSpec>;
   getCurrentView(): ViewKey | string;
   hasModel(): boolean;

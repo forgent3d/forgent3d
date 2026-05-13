@@ -4,6 +4,10 @@ export {};
 
 const fs = require('fs');
 const path = require('path');
+const { app: electronApp } = require('electron');
+
+/** Default Forgent3D agent (cad-agent) base URL when the desktop build is packaged. */
+const PACKAGED_DEFAULT_FORGENT3D_AGENT_URL = 'https://agent.forgent3d.com';
 
 function registerIpcHandlers({
   ipcMain,
@@ -113,33 +117,58 @@ function registerIpcHandlers({
     shell.openPath(state.currentProjectPath());
   });
 
-  ipcMain.handle('parts:list', async () => {
-    if (!state.currentProjectPath()) return { parts: [], active: null };
-    return { parts: deps.listParts(state.currentProjectPath()), active: state.activePart() };
+  ipcMain.handle('models:list', async () => {
+    if (!state.currentProjectPath()) return { models: [], active: null };
+    return { models: deps.listParts(state.currentProjectPath()), active: state.activePart() };
   });
 
-  ipcMain.handle('parts:select', async (_evt, name) => {
+  ipcMain.handle('models:select', async (_evt, name) => {
     if (!state.currentProjectPath()) return;
     await deps.selectPart(name);
     return state.activePart();
   });
 
-  ipcMain.handle('parts:rebuild', async (_evt, name) => {
+  ipcMain.handle('models:rebuild', async (_evt, name) => {
     const target = name || state.activePart();
-    if (target) deps.scheduleBuild(target, { exportProjectStl: true });
+    if (target) deps.scheduleBuild(target, { force: true });
     return true;
   });
 
-  ipcMain.handle('parts:reveal', async (_evt, name) => {
+  ipcMain.handle('models:rebuildAll', async () => {
+    if (!state.currentProjectPath()) throw new Error('Open a project first.');
+    const models = deps.listParts(state.currentProjectPath());
+    const ctx = deps.buildMcpContext();
+    const results = [];
+    for (const model of models) {
+      const result = await ctx.rebuildPartSync(model.name);
+      results.push({ name: model.name, ok: result?.ok ?? false, error: result?.error });
+    }
+    return { ok: results.every((r) => r.ok), results };
+  });
+
+  ipcMain.handle('models:reveal', async (_evt, name) => {
     if (!state.currentProjectPath() || !name) return;
     shell.openPath(deps.modelDir(state.currentProjectPath(), name));
   });
 
-  ipcMain.handle('parts:export', async (_evt, { name, format }) => {
+  ipcMain.handle('models:export', async (_evt, { name, format }) => {
     if (!state.currentProjectPath()) throw new Error('Open a project first.');
     const partName = String(name || state.activePart() || '').trim();
     if (!partName) throw new Error('Select a model first.');
     return deps.exportPartByRequest(partName, format);
+  });
+
+  ipcMain.handle('models:partStl', async (_evt, { model, part }) => {
+    if (!state.currentProjectPath()) throw new Error('Open a project first.');
+    const modelName = String(model || '').trim();
+    const partName = String(part || '').trim();
+    if (!modelName || !partName) throw new Error('Model and part names are required.');
+    const source = deps.resolveModelSource(state.currentProjectPath(), modelName, state.currentKernel());
+    if (!source) throw new Error(`Model does not exist: ${modelName}`);
+    const stlPath = await deps.ensurePartStlArtifact(modelName, partName);
+    const rel = path.relative(state.currentProjectPath(), stlPath).replace(/\\/g, '/');
+    const url = `aicad://asset/${rel.split('/').map((segment) => encodeURIComponent(segment)).join('/')}?t=${Date.now()}`;
+    return { model: modelName, part: partName, path: stlPath, url };
   });
 
   ipcMain.handle('params:get', async (_evt, name) => {
@@ -219,6 +248,36 @@ function registerIpcHandlers({
   });
 
   ipcMain.handle('python:status', async () => deps.getBuildRuntimeStatus());
+
+  ipcMain.handle('agent:openNext', async (_evt, { projectPath, baseUrl, openExternal = true }) => {
+    if (!projectPath) throw new Error('projectPath is required.');
+    const resolved = path.resolve(String(projectPath).trim());
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+      throw new Error(`Project path does not exist: ${resolved}`);
+    }
+    const rawBase = String(
+      baseUrl ||
+        process.env.AICAD_FORGENT3D_URL ||
+        process.env.AICAD_NEXT_AGENT_URL ||
+        process.env.CAD_AGENT_URL ||
+        (electronApp?.isPackaged ? PACKAGED_DEFAULT_FORGENT3D_AGENT_URL : 'http://localhost:3000')
+    ).trim();
+    const base = new URL(rawBase.replace(/\/+$/, '') + '/');
+    // Prefer localhost for the embedded Forgent3D webview. In dev the Electron
+    // renderer is served from http://localhost:7788, and using 127.0.0.1 for
+    // the agent origin can make Auth.js CSRF cookies look cross-site during credential
+    // POSTs.
+    if (base.hostname === '127.0.0.1') base.hostname = 'localhost';
+    const url = new URL('/agent', base);
+    if (!/^https?:$/i.test(url.protocol)) {
+      throw new Error(`Unsupported Forgent3D URL protocol: ${url.protocol}`);
+    }
+    url.searchParams.set('projectPath', resolved);
+    if (openExternal !== false) {
+      await shell.openExternal(url.toString());
+    }
+    return { url: url.toString() };
+  });
 }
 
 module.exports = {
