@@ -43,6 +43,56 @@ function buildMcpServer(ctx, { McpServer, z }) {
   });
 
   server.registerTool(
+    'search_cad_api',
+    {
+      title: 'Search build123d and bd_warehouse API symbols',
+      description: [
+        'Purpose: discover available CAD Python runtime symbols by one query over symbol names and short docs.',
+        'bd_warehouse module hints: use bd_warehouse.fastener for screws/nuts/washers/holes, bd_warehouse.bearing for bearings, bd_warehouse.gear for gears, bd_warehouse.sprocket for sprockets, bd_warehouse.thread for threads, bd_warehouse.pipe for pipes, bd_warehouse.flange for flanges, bd_warehouse.material for materials, and bd_warehouse.profile for profiles.',
+        'Use this like listing files before reading details with read_cad_api.',
+        'The result comes from the bundled Forgent3D build123d + bd_warehouse runtime, not the user system Python.'
+      ].join('\n'),
+      inputSchema: {
+        query: z.string().optional().describe('Optional search query. Plain text searches symbol names first and short docs if needed; glob syntax searches symbol names; prefix with "re:" for explicit symbol-name regex.'),
+        modules: z.array(z.string()).optional().describe('Optional modules to search. Common choices: "build123d", "bd_warehouse.fastener", "bd_warehouse.bearing", "bd_warehouse.gear", "bd_warehouse.sprocket", "bd_warehouse.thread", "bd_warehouse.pipe", "bd_warehouse.flange", "bd_warehouse.material", "bd_warehouse.profile". Omit modules to search the curated default set.'),
+        maxResults: z.number().int().min(1).max(200).optional().describe('Maximum results, defaults to 50')
+      }
+    },
+    async (args) => {
+      const result = await ctx.inspectCadApi({ action: 'search', ...(args || {}) });
+      return {
+        isError: !result?.ok,
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+      };
+    }
+  );
+
+  server.registerTool(
+    'read_cad_api',
+    {
+      title: 'Read build123d or bd_warehouse API symbol details',
+      description: [
+        'Purpose: return kind, signature, docstring, and public members for a CAD API module/class/function.',
+        'Use after search_cad_api when you need exact constructor/function parameters or available members.',
+        'The result comes from the bundled Forgent3D build123d + bd_warehouse runtime.'
+      ].join('\n'),
+      inputSchema: {
+        symbol: z.string().describe('Fully-qualified symbol, e.g. "bd_warehouse.fastener.SocketHeadCapScrew" or "build123d.Box"'),
+        module: z.string().optional().describe('Optional module name; if supplied, symbol may be relative to it'),
+        maxDocChars: z.number().int().min(500).max(20000).optional().describe('Maximum docstring characters, defaults to 6000'),
+        maxMembers: z.number().int().min(0).max(200).optional().describe('Maximum public members for modules/classes, defaults to 80')
+      }
+    },
+    async (args) => {
+      const result = await ctx.inspectCadApi({ action: 'read', ...(args || {}) });
+      return {
+        isError: !result?.ok,
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+      };
+    }
+  );
+
+  server.registerTool(
     'list_models',
     {
       title: 'List all models in the current project',

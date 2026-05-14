@@ -677,6 +677,38 @@ function createMainLogicTools({ state, deps }) {
     });
   }
 
+  function runJsonChild(child, input, label) {
+    return new Promise((resolve) => {
+      let stderr = '';
+      let stdout = '';
+      const timeout = setTimeout(() => {
+        try { child.kill(); } catch {}
+        resolve({ ok: false, error: `${label} timed out`, stderr: stderr.trim(), stdout: stdout.trim() });
+      }, 90000);
+      child.stdout?.on('data', (d) => { stdout += d.toString(); });
+      child.stderr?.on('data', (d) => { stderr += d.toString(); });
+      child.on('error', (err) => {
+        clearTimeout(timeout);
+        resolve({ ok: false, error: err.message, stderr: stderr.trim(), stdout: stdout.trim() });
+      });
+      child.on('close', (code) => {
+        clearTimeout(timeout);
+        if (code !== 0) {
+          let parsed = null;
+          try { parsed = JSON.parse(stdout); } catch {}
+          resolve({ ok: false, error: parsed?.error || `${label} exited with code ${code}`, stderr: stderr.trim(), stdout: stdout.trim() });
+          return;
+        }
+        try {
+          resolve(JSON.parse(stdout || '{}'));
+        } catch (e) {
+          resolve({ ok: false, error: `${label} returned invalid JSON: ${e.message}`, stderr: stderr.trim(), stdout: stdout.trim() });
+        }
+      });
+      child.stdin?.end(JSON.stringify(input || {}));
+    });
+  }
+
   async function ensurePartBrepArtifact(modelName, partName) {
     const sourcePath = deps.modelPartSource(state.currentProjectPath(), modelName, partName, state.currentKernel());
     if (!fs.existsSync(sourcePath)) {
@@ -950,6 +982,20 @@ function createMainLogicTools({ state, deps }) {
           cacheStale,
           capturedAt: new Date(info.capturedAt).toISOString()
         };
+      },
+      async inspectCadApi(payload) {
+        const runtime = await deps.detectBuildRuntime(state.currentKernel());
+        if (!runtime) {
+          return { ok: false, error: deps.missingRuntimeMessage(state.currentKernel()) };
+        }
+        const args = ['--inspect-cad-api'];
+        if (state.currentProjectPath()) args.unshift('--project', state.currentProjectPath());
+        const cmd = deps.buildRuntimeSpawn(runtime, args);
+        return await runJsonChild(
+          spawn(cmd.cmd, cmd.args, { cwd: state.currentProjectPath() || undefined, shell: false, windowsHide: true }),
+          payload,
+          'CAD API inspector'
+        );
       },
       async getPartScreenshot(name, view = 'iso', mode = 'solid') {
         if (!state.currentProjectPath()) return null;
