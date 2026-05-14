@@ -83,7 +83,7 @@ function createMainLogicTools({ state, deps }) {
     const meta = deps.kernelMeta(k);
 
     writeIfChanged(deps.projectMetaPath(projectPath), deps.aicadProjectJson(k));
-    writeIfChanged(path.join(projectPath, '.gitignore'), '# AI CAD Companion Preview\n.cache/\n__pycache__/\n*.pyc\n');
+    writeIfChanged(path.join(projectPath, '.gitignore'), '# Forgent3D\n.cache/\n__pycache__/\n*.pyc\n');
     fs.mkdirSync(path.join(projectPath, deps.MODELS_DIR), { recursive: true });
     fs.mkdirSync(path.join(projectPath, deps.CACHE_DIR), { recursive: true });
 

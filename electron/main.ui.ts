@@ -150,7 +150,7 @@ function createMainUiTools({
       height: 900,
       minWidth: 1040,
       minHeight: 640,
-      title: 'AI CAD Companion Preview',
+      title: 'Forgent3D',
       icon: deps.appIconPath(),
       backgroundColor: '#0b0d12',
       webPreferences: {

@@ -8,7 +8,7 @@ const listeners = new Set();
 
 const messages = {
   en: {
-    appTitle: 'Forgent3D Companion Previewer',
+    appTitle: 'Forgent3D',
     collapseLeftPanel: 'Collapse left panel',
     expandLeftPanel: 'Expand left panel',
     models: 'Models',
@@ -126,7 +126,7 @@ const messages = {
     nextAgentLoading: 'Loading Forgent3D…',
   },
   'zh-CN': {
-    appTitle: 'Forgent3D 伴侣预览器',
+    appTitle: 'Forgent3D',
     collapseLeftPanel: '折叠左侧面板',
     expandLeftPanel: '展开左侧面板',
     models: '模型',

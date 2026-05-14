@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Use curl over Streamable HTTP: initialize -> notifications/initialized -> tools/call list_models
-# Usage: start Forgent3D Previewer first (default MCP port 41234), then run at repo root:
+# Usage: start Forgent3D first (default MCP port 41234), then run at repo root:
 #   bash scripts/mcp-curl-test.sh
 # Or: MCP_URL=http://127.0.0.1:41234/mcp bash scripts/mcp-curl-test.sh
 # Optional end-session call: curl -X DELETE -H "mcp-session-id: $SESSION" -H "mcp-protocol-version: $PROTO" "$URL"
