@@ -77,6 +77,12 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+  process.exit(0);
+}
 
 /* ---------------- State ---------------- */
 let mainWindow = null;
@@ -210,12 +216,41 @@ function clearLastProjectPath() {
 }
 
 function normalizeLanguage(language) {
-  const value = String(language || '').trim();
-  return value === 'zh-CN' ? 'zh-CN' : 'en';
+  const value = String(language || '').trim().replace('_', '-').toLowerCase();
+  return value === 'zh-cn' || value === 'zh' || value.startsWith('zh-') ? 'zh-CN' : 'en';
+}
+
+function readInstallerLanguagePreference() {
+  if (!app.isPackaged) return null;
+  try {
+    const markerPath = path.join(path.dirname(app.getPath('exe')), 'installer-language.json');
+    if (!fs.existsSync(markerPath)) return null;
+    const marker = JSON.parse(fs.readFileSync(markerPath, 'utf-8'));
+    return marker?.language || null;
+  } catch {
+    return null;
+  }
+}
+
+function detectDefaultLanguage() {
+  const installerLanguage = readInstallerLanguagePreference();
+  if (installerLanguage) return normalizeLanguage(installerLanguage);
+  try {
+    return normalizeLanguage(app.getLocale?.() || 'en');
+  } catch {
+    return 'en';
+  }
 }
 
 function loadLanguagePreference() {
-  appLanguage = normalizeLanguage(loadAppConfig().language || 'en');
+  const cfg = loadAppConfig();
+  if (typeof cfg.language === 'string' && cfg.language.trim()) {
+    appLanguage = normalizeLanguage(cfg.language);
+    return appLanguage;
+  }
+  appLanguage = detectDefaultLanguage();
+  cfg.language = appLanguage;
+  saveAppConfig(cfg);
   return appLanguage;
 }
 
@@ -231,6 +266,46 @@ function setLanguage(language) {
   rebuildAppMenu();
   sendToRenderer('LANGUAGE_CHANGED', { language: appLanguage });
   return appLanguage;
+}
+
+function registerDeepLinkProtocol() {
+  if (process.defaultApp) {
+    const scriptPath = path.resolve(app.getAppPath());
+    if (scriptPath) app.setAsDefaultProtocolClient('aicad', process.execPath, [scriptPath]);
+    return;
+  }
+  app.setAsDefaultProtocolClient('aicad');
+}
+
+function handleDeepLink(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(String(rawUrl || ''));
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'aicad:' || parsed.hostname !== 'auth') return false;
+
+  const token = parsed.searchParams.get('token') || '';
+  const baseUrl = parsed.searchParams.get('baseUrl') || '';
+  const projectPath = parsed.searchParams.get('projectPath') || currentProjectPath || '';
+  if (!token || !baseUrl) return false;
+
+  sendToRenderer('DESKTOP_AUTH_CALLBACK', { token, baseUrl, projectPath });
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+  return true;
+}
+
+function handlePossibleDeepLinks(argv) {
+  for (const arg of argv || []) {
+    if (typeof arg === 'string' && arg.startsWith('aicad://')) {
+      handleDeepLink(arg);
+    }
+  }
 }
 
 function runtimeKernel(kernel = currentKernel) {
@@ -265,12 +340,13 @@ async function getBuildRuntimeStatus(kernel = currentKernel) {
       ok: true,
       kind: 'bundled-runner',
       source: 'bundled',
-      runtimeName: 'Bundled build123d runtime',
+      runtimeName: 'Bundled build123d + bd_warehouse runtime',
       version: 'internal',
-      versionText: 'Bundled build123d runtime',
+      versionText: 'Bundled build123d + bd_warehouse runtime',
       cmd: bundled,
       args: [],
-      hasBuild123d: true
+      hasBuild123d: true,
+      hasBdWarehouse: true
     };
   }
 
@@ -279,8 +355,8 @@ async function getBuildRuntimeStatus(kernel = currentKernel) {
     kind: 'bundled-runner',
     source: 'bundled',
     message: app.isPackaged
-      ? 'Bundled build123d runtime is missing from the app package.'
-      : 'No bundled build123d runtime found. Run `npm run build:runner` to generate it.'
+      ? 'Bundled build123d + bd_warehouse runtime is missing from the app package.'
+      : 'No bundled build123d + bd_warehouse runtime found. Run `npm run build:runner` to generate it.'
   };
 }
 
@@ -304,8 +380,8 @@ function buildRuntimeSpawn(runtime, runnerArgs) {
 function missingRuntimeMessage(kernel = currentKernel) {
   if (prefersBundledBuildRuntime(kernel)) {
     return app.isPackaged
-      ? 'Bundled build123d runtime is missing from the app package.'
-      : 'No bundled build123d runtime found. Run `npm run build:runner` to generate it.';
+      ? 'Bundled build123d + bd_warehouse runtime is missing from the app package.'
+      : 'No bundled build123d + bd_warehouse runtime found. Run `npm run build:runner` to generate it.';
   }
   return 'No usable build runtime was detected.';
 }
@@ -536,6 +612,8 @@ function initModuleTools() {
 }
 
 app.whenReady().then(async () => {
+  registerDeepLinkProtocol();
+  handlePossibleDeepLinks(process.argv);
   loadLanguagePreference();
   initModuleTools();
   registerProtocol();
@@ -563,6 +641,20 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on('second-instance', (_event, argv) => {
+  handlePossibleDeepLinks(argv);
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  handleDeepLink(url);
 });
 
 app.on('window-all-closed', () => {
@@ -604,9 +696,10 @@ function bootstrapAgentWorkspace(projectPath, agent) {
 /**
  * Initialize a new project layout:
  *   - .aicad/project.json
- *   - models/cuboid/asm.xml as the sample model entry
- *   - models/cuboid/params.json for model-level parameters
- *   - models/cuboid/parts/cuboid/part.py + params.json as the sample local part
+ *   - models/reference_mount/asm.xml as the sample model entry
+ *   - models/reference_mount/params.json for model-level parameters
+ *   - models/reference_mount/parts/mounting_plate/part.py + params.json as the custom local part
+ *   - models/reference_mount/parts/fastener_stack/part.py + params.json as the bd_warehouse hardware part
  *   - .cache/ for preview artifacts
  *   - .gitignore
  *   - agent-specific rules, skills, and MCP configs

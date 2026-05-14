@@ -163,6 +163,13 @@ function createMainUiTools({
     });
     state.setMainWindow(win);
 
+    win.webContents.on('did-attach-webview', (_event, webContents) => {
+      webContents.setWindowOpenHandler(({ url }) => {
+        if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+        return { action: 'deny' };
+      });
+    });
+
     if (deps.isDev) {
       win.loadURL('http://localhost:7788');
       win.webContents.openDevTools({ mode: 'detach' });

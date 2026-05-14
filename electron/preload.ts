@@ -18,8 +18,8 @@ contextBridge.exposeInMainWorld('aicad', {
   revealModel: (name) => ipcRenderer.invoke('models:reveal', name),
   exportModel: (name, format) => ipcRenderer.invoke('models:export', { name, format }),
   ensureModelPartStl: (model, part) => ipcRenderer.invoke('models:partStl', { model, part }),
-  getParams: (name) => ipcRenderer.invoke('params:get', name),
-  saveParams: (name, text) => ipcRenderer.invoke('params:save', { name, text }),
+  getParams: (target) => ipcRenderer.invoke('params:get', target),
+  saveParams: (target, text) => ipcRenderer.invoke('params:save', { target, text }),
 
   notifyPartLoaded: (payload) => ipcRenderer.invoke('viewer:partLoaded', payload),
 

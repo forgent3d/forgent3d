@@ -44,9 +44,12 @@ function runOrThrow(cmd, args, options = {}) {
   const printable = [cmd, ...args].join(' ');
   log(`> ${printable}`);
   const result = spawnSync(cmd, args, {
-    stdio: 'inherit',
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
     ...options
   });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
   if (result.error) {
     throw result.error;
   }
@@ -90,9 +93,9 @@ function findHostPython() {
 
   const candidates = process.platform === 'win32'
     ? [
-        { cmd: 'py', args: ['-3.13'] },
         { cmd: 'python', args: [] },
         { cmd: 'python3', args: [] },
+        { cmd: 'py', args: ['-3.13'] },
         { cmd: 'py', args: ['-3'] }
       ]
     : [
@@ -132,10 +135,10 @@ function prepareVirtualenv(hostPython) {
     cwd: REPO_ROOT
   });
   const py = venvPythonPath();
-  runOrThrow(py, ['-m', 'pip', 'install', '--upgrade', 'pip', 'setuptools', 'wheel'], {
+  runOrThrow(py, ['-m', 'pip', 'install', '--disable-pip-version-check', '--progress-bar', 'off', '--upgrade', 'pip', 'setuptools', 'wheel'], {
     cwd: REPO_ROOT
   });
-  runOrThrow(py, ['-m', 'pip', 'install', '-r', REQUIREMENTS_PATH], {
+  runOrThrow(py, ['-m', 'pip', 'install', '--disable-pip-version-check', '--progress-bar', 'off', '-r', REQUIREMENTS_PATH], {
     cwd: REPO_ROOT
   });
   return py;
@@ -162,6 +165,8 @@ function buildRunner(venvPython) {
     SPEC_DIR,
     '--collect-all',
     'build123d',
+    '--collect-all',
+    'bd_warehouse',
     '--collect-all',
     'OCP',
     '--collect-all',

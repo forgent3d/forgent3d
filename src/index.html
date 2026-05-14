@@ -104,6 +104,16 @@
         <!-- xterm.js mount container -->
         <div id="term-container" class="term-container"></div>
         <div id="agent-next-root" class="agent-next-root hidden" aria-label="Forgent3D">
+          <div id="agent-next-guide" class="agent-next-guide">
+            <div class="agent-next-guide-card">
+              <h2>Forgent3D</h2>
+              <p>如果尚未登录，请在外部浏览器完成登录并继续使用。Electron 内不会展示账号输入或注册表单。</p>
+              <div class="agent-next-guide-actions">
+                <button id="agent-next-external-login" class="agent-next-primary-btn" type="button">外部浏览器打开</button>
+                <button id="agent-next-embedded-open" class="agent-next-secondary-btn" type="button">尝试内嵌打开</button>
+              </div>
+            </div>
+          </div>
           <div
             id="agent-next-loading"
             class="agent-next-loading hidden"

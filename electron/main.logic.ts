@@ -87,29 +87,31 @@ function createMainLogicTools({ state, deps }) {
     fs.mkdirSync(path.join(projectPath, deps.MODELS_DIR), { recursive: true });
     fs.mkdirSync(path.join(projectPath, deps.CACHE_DIR), { recursive: true });
 
-    const sampleModelName = 'cuboid';
-    const samplePartName = 'cuboid';
+    const sampleModelName = 'reference_mount';
+    const samplePartNames = ['mounting_plate', 'fastener_stack'];
     const modelDir = deps.modelDir(projectPath, sampleModelName);
-    const cuboidSrcPath = deps.modelPartSource(projectPath, sampleModelName, samplePartName, k);
     const asmSrcPath = deps.partSource(projectPath, sampleModelName, k, 'asm');
     fs.mkdirSync(modelDir, { recursive: true });
-    fs.mkdirSync(path.dirname(cuboidSrcPath), { recursive: true });
     writeIfMissing(
       deps.modelParamsPath(projectPath, sampleModelName),
-      deps.modelParamsTemplate('asm', sampleModelName, 'Default cuboid model parameters.')
+      deps.modelParamsTemplate('asm', sampleModelName, 'Reference assembly parameters for a standard fastener mount.', { template: 'reference_mount' })
     );
-    writeIfMissing(
-      deps.modelPartParamsPath(projectPath, sampleModelName, samplePartName),
-      deps.modelParamsTemplate('part', samplePartName, 'Default cuboid part parameters.')
-    );
-    writeIfMissing(
-      cuboidSrcPath,
-      deps.modelSourceTemplate(k, 'part', samplePartName, `Default cuboid model. Edit ${meta.sourceFile} to preview changes.`)
-    );
-    const asmTemplate = deps.modelSourceTemplate(k, 'asm', sampleModelName, 'Sample model package that references its local cuboid part mesh.');
+    for (const partName of samplePartNames) {
+      const partSrcPath = deps.modelPartSource(projectPath, sampleModelName, partName, k);
+      fs.mkdirSync(path.dirname(partSrcPath), { recursive: true });
+      writeIfMissing(
+        deps.modelPartParamsPath(projectPath, sampleModelName, partName),
+        deps.modelParamsTemplate('part', partName, `Reference ${partName} parameters.`, { template: partName })
+      );
+      writeIfMissing(
+        partSrcPath,
+        deps.modelSourceTemplate(k, 'part', partName, `Reference ${partName}. Edit ${meta.sourceFile} to preview changes.`, { template: partName })
+      );
+    }
+    const asmTemplate = deps.modelSourceTemplate(k, 'asm', sampleModelName, 'Reference model package that composes a custom mounting plate with bd_warehouse fasteners.', { template: 'reference_mount', partNames: samplePartNames });
     writeIfMissing(asmSrcPath, asmTemplate);
-    writeIfMissing(deps.partReadme(projectPath, sampleModelName), deps.modelReadmeTemplate(k, 'asm', sampleModelName, 'Default cuboid model package.'));
-    deps.sendLog(`Sample model created: models/${sampleModelName}/asm.xml + models/${sampleModelName}/params.json + models/${sampleModelName}/parts/${samplePartName}/${deps.modelSourceFilename(k, 'part')} + models/${sampleModelName}/parts/${samplePartName}/params.json`);
+    writeIfMissing(deps.partReadme(projectPath, sampleModelName), deps.modelReadmeTemplate(k, 'asm', sampleModelName, 'Reference mount model package for AI-assisted CAD generation.'));
+    deps.sendLog(`Sample model created: models/${sampleModelName}/asm.xml + models/${sampleModelName}/params.json + ${samplePartNames.map((partName) => `models/${sampleModelName}/parts/${partName}/${deps.modelSourceFilename(k, 'part')} + models/${sampleModelName}/parts/${partName}/params.json`).join(' + ')}`);
   }
 
   function ensureRuntimeDirs(projectPath) {
@@ -506,7 +508,7 @@ function createMainLogicTools({ state, deps }) {
     ]);
     deps.sendLog(
       runtime.kind === 'bundled-runner'
-        ? `[${modelName}/${partName}] Build using bundled build123d runtime`
+        ? `[${modelName}/${partName}] Build using bundled build123d + bd_warehouse runtime`
         : `[${modelName}/${partName}] Build using Python ${runtime.cmd} (v${runtime.version}) with ${deps.kernelMeta(state.currentKernel()).label}`
     );
     const buildStartedAt = Date.now();
@@ -515,7 +517,7 @@ function createMainLogicTools({ state, deps }) {
       modelName,
       partName,
       outFile,
-      runtime.kind === 'bundled-runner' ? 'bundled build123d runtime' : 'electron/export_runner.py',
+      runtime.kind === 'bundled-runner' ? 'bundled build123d + bd_warehouse runtime' : 'electron/export_runner.py',
       buildStartedAt
     );
   }

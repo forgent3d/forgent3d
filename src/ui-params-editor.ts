@@ -4,10 +4,12 @@ export function createParamsEditorController({
   api,
   elements,
   getCurrentProject,
-  getActivePart,
+  getParamsTarget,
   t = (key) => key
 }) {
   let paramsModel = null;
+  let paramsTarget = null;
+  let paramsLabel = null;
   let paramsOriginal = null;
   let paramsSaved = null;
   let paramsWorking = null;
@@ -26,7 +28,7 @@ export function createParamsEditorController({
   function setDirty(next) {
     paramsDirty = !!next;
     if (elements.btnParamsRevert) {
-      elements.btnParamsRevert.disabled = !getCurrentProject() || !getActivePart() || !paramsDirty;
+      elements.btnParamsRevert.disabled = !getCurrentProject() || !getParamsTarget() || !paramsDirty;
     }
   }
 
@@ -59,6 +61,20 @@ export function createParamsEditorController({
     let current = root;
     for (let i = 0; i < path.length - 1; i++) current = current[path[i]];
     current[path[path.length - 1]] = value;
+  }
+
+  function targetKey(target) {
+    if (!target) return '';
+    if (typeof target === 'string') return target;
+    return `${target.model || target.name || ''}::${target.part || ''}`;
+  }
+
+  function targetLabel(target, fallback = '') {
+    if (!target) return fallback;
+    if (typeof target === 'string') return target;
+    if (target.label) return target.label;
+    if (target.part) return `${target.model}/parts/${target.part}`;
+    return target.model || target.name || fallback;
   }
 
   function sliderSpec(baseValue, currentValue = baseValue) {
@@ -132,11 +148,11 @@ export function createParamsEditorController({
         const dirty = JSON.stringify(paramsWorking) !== JSON.stringify(paramsOriginal);
         setDirty(dirty);
         if (dirty) {
-          setStatus(t('updatingParams', { model: paramsModel }));
+          setStatus(t('updatingParams', { model: paramsLabel || paramsModel }));
           scheduleAutoSave();
         } else {
           clearPendingSave();
-          setStatus(t('editingParams', { model: paramsModel }));
+          setStatus(t('editingParams', { model: paramsLabel || paramsModel }));
         }
       };
 
@@ -153,7 +169,7 @@ export function createParamsEditorController({
 
   function scheduleAutoSave() {
     clearPendingSave();
-    if (!getCurrentProject() || !getActivePart() || !paramsWorking) return;
+    if (!getCurrentProject() || !getParamsTarget() || !paramsWorking) return;
     paramsSaveTimer = setTimeout(() => {
       paramsSaveTimer = null;
       save();
@@ -163,6 +179,8 @@ export function createParamsEditorController({
   function setIdle(message) {
     clearPendingSave();
     paramsModel = null;
+    paramsTarget = null;
+    paramsLabel = null;
     paramsOriginal = null;
     paramsSaved = null;
     paramsWorking = null;
@@ -172,31 +190,37 @@ export function createParamsEditorController({
   }
 
   async function refresh({ force = false } = {}) {
-    const activePart = getActivePart();
-    if (!getCurrentProject() || !activePart || !elements.paramsEditor) {
+    const currentTarget = getParamsTarget();
+    if (!getCurrentProject() || !currentTarget || !elements.paramsEditor) {
       setIdle(t('selectModelParams'));
       return;
     }
-    if (paramsModel === activePart && !force) return;
+    const currentKey = targetKey(currentTarget);
+    if (targetKey(paramsTarget) === currentKey && !force) return;
     const seq = ++paramsLoadSeq;
-    const target = activePart;
+    const target = currentTarget;
+    const label = targetLabel(target);
     paramsWorking = null;
     render();
     setDirty(false);
-    setStatus(t('loadingParams', { model: target }));
+    setStatus(t('loadingParams', { model: label }));
     try {
       const res = await api.getParams(target);
-      if (seq !== paramsLoadSeq || target !== getActivePart()) return;
-      paramsModel = target;
+      if (seq !== paramsLoadSeq || currentKey !== targetKey(getParamsTarget())) return;
+      paramsModel = res?.model || (typeof target === 'string' ? target : target.model);
+      paramsTarget = target;
+      paramsLabel = res?.label || label;
       paramsOriginal = JSON.parse(res?.text || '{}');
       paramsSaved = cloneParams(paramsOriginal);
       paramsWorking = cloneParams(paramsOriginal);
       render();
       setDirty(false);
-      setStatus(res?.exists ? t('editingParams', { model: target }) : t('paramsWillBeCreated', { model: target }));
+      setStatus(res?.exists ? t('editingParams', { model: paramsLabel }) : t('paramsWillBeCreated', { model: paramsLabel }));
     } catch (e) {
       if (seq !== paramsLoadSeq) return;
       paramsModel = target;
+      paramsTarget = target;
+      paramsLabel = label;
       paramsOriginal = null;
       paramsSaved = null;
       paramsWorking = null;
@@ -212,39 +236,43 @@ export function createParamsEditorController({
     paramsWorking = cloneParams(paramsOriginal);
     render();
     setDirty(JSON.stringify(paramsWorking) !== JSON.stringify(paramsSaved));
-    setStatus(t('revertingParams', { model: paramsModel }));
+    setStatus(t('revertingParams', { model: paramsLabel || paramsModel }));
     save({ keepOriginal: true });
   }
 
   async function save({ keepOriginal = false } = {}) {
-    const activePart = getActivePart();
-    if (!getCurrentProject() || !activePart || !paramsWorking) return;
+    const currentTarget = getParamsTarget();
+    if (!getCurrentProject() || !currentTarget || !paramsWorking) return;
     if (paramsSaving) return;
-    const target = activePart;
+    const target = currentTarget;
+    const key = targetKey(target);
+    const label = targetLabel(target, paramsLabel || paramsModel);
     paramsSaving = true;
-    setStatus(t('savingParams', { model: target }));
+    setStatus(t('savingParams', { model: label }));
     try {
       const snapshot = cloneParams(paramsWorking);
       const text = JSON.stringify(snapshot, null, 2) + '\n';
       const res = await api.saveParams(target, text);
-      if (target !== getActivePart()) {
+      if (key !== targetKey(getParamsTarget())) {
         paramsSaving = false;
         return;
       }
-      paramsModel = target;
+      paramsModel = res?.model || (typeof target === 'string' ? target : target.model);
+      paramsTarget = target;
+      paramsLabel = res?.label || label;
       paramsSaved = JSON.parse(res?.text || text);
       if (!paramsOriginal) paramsOriginal = cloneParams(paramsSaved);
       if (JSON.stringify(paramsWorking) !== JSON.stringify(snapshot)) {
         paramsSaving = false;
         setDirty(JSON.stringify(paramsWorking) !== JSON.stringify(paramsOriginal));
-        setStatus(t('updatingParams', { model: target }));
+        setStatus(t('updatingParams', { model: paramsLabel }));
         scheduleAutoSave();
         return;
       }
       paramsWorking = cloneParams(paramsSaved);
       setDirty(JSON.stringify(paramsWorking) !== JSON.stringify(paramsOriginal));
       paramsSaving = false;
-      setStatus(t('savedParamsRebuilding', { model: target }), 'ok');
+      setStatus(t('savedParamsRebuilding', { model: paramsLabel }), 'ok');
     } catch (e) {
       paramsSaving = false;
       render();

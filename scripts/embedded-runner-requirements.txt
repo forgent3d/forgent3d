@@ -1,2 +1,3 @@
 pyinstaller
 build123d
+bd-warehouse==0.2.0

@@ -38,6 +38,35 @@ function registerIpcHandlers({
     }
   }
 
+  function resolveParamsTarget(rawTarget) {
+    const target = rawTarget && typeof rawTarget === 'object'
+      ? rawTarget
+      : { model: rawTarget };
+    const modelName = String(target.model || target.name || state.activePart() || '').trim();
+    const partName = target.part == null ? '' : String(target.part || '').trim();
+    if (!modelName) throw new Error('Select a model first.');
+    const source = deps.resolveModelSource(state.currentProjectPath(), modelName, state.currentKernel());
+    if (!source) throw new Error(`Model does not exist: ${modelName}`);
+    if (partName) {
+      const partSource = deps.modelPartSource(state.currentProjectPath(), modelName, partName, state.currentKernel());
+      if (!fs.existsSync(partSource)) {
+        throw new Error(`Model part does not exist: models/${modelName}/parts/${partName}`);
+      }
+      return {
+        model: modelName,
+        part: partName,
+        label: `${modelName}/parts/${partName}`,
+        paramsPath: deps.modelPartParamsPath(state.currentProjectPath(), modelName, partName)
+      };
+    }
+    return {
+      model: modelName,
+      part: null,
+      label: modelName,
+      paramsPath: deps.modelParamsPath(state.currentProjectPath(), modelName)
+    };
+  }
+
   ipcMain.handle('clipboard:readText', () => clipboard.readText());
   ipcMain.handle('clipboard:writeText', (_evt, text) => {
     clipboard.writeText(String(text ?? ''));
@@ -171,26 +200,20 @@ function registerIpcHandlers({
     return { model: modelName, part: partName, path: stlPath, url };
   });
 
-  ipcMain.handle('params:get', async (_evt, name) => {
+  ipcMain.handle('params:get', async (_evt, target) => {
     if (!state.currentProjectPath()) throw new Error('Open a project first.');
-    const modelName = String(name || state.activePart() || '').trim();
-    if (!modelName) throw new Error('Select a model first.');
-    const source = deps.resolveModelSource(state.currentProjectPath(), modelName, state.currentKernel());
-    if (!source) throw new Error(`Model does not exist: ${modelName}`);
-    const paramsPath = deps.modelParamsPath(state.currentProjectPath(), modelName);
+    const resolved = resolveParamsTarget(target);
+    const paramsPath = resolved.paramsPath;
     if (!fs.existsSync(paramsPath)) {
-      return { model: modelName, exists: false, text: '{}\n' };
+      return { model: resolved.model, part: resolved.part, label: resolved.label, exists: false, text: '{}\n' };
     }
     const text = fs.readFileSync(paramsPath, 'utf-8');
-    return { model: modelName, exists: true, text };
+    return { model: resolved.model, part: resolved.part, label: resolved.label, exists: true, text };
   });
 
-  ipcMain.handle('params:save', async (_evt, { name, text }) => {
+  ipcMain.handle('params:save', async (_evt, { name, target, text }) => {
     if (!state.currentProjectPath()) throw new Error('Open a project first.');
-    const modelName = String(name || state.activePart() || '').trim();
-    if (!modelName) throw new Error('Select a model first.');
-    const source = deps.resolveModelSource(state.currentProjectPath(), modelName, state.currentKernel());
-    if (!source) throw new Error(`Model does not exist: ${modelName}`);
+    const resolved = resolveParamsTarget(target ?? name);
     let parsed;
     try {
       parsed = JSON.parse(String(text ?? ''));
@@ -198,10 +221,9 @@ function registerIpcHandlers({
       throw new Error(`params.json is invalid JSON: ${e.message}`);
     }
     const formatted = JSON.stringify(parsed, null, 2) + '\n';
-    const paramsPath = deps.modelParamsPath(state.currentProjectPath(), modelName);
-    writeTextViaTempFile(paramsPath, formatted);
-    deps.scheduleBuild(modelName);
-    return { model: modelName, text: formatted };
+    writeTextViaTempFile(resolved.paramsPath, formatted);
+    deps.scheduleBuild(resolved.model, { force: true });
+    return { model: resolved.model, part: resolved.part, label: resolved.label, text: formatted };
   });
 
   ipcMain.handle('viewer:partLoaded', async (_evt, payload) => {
@@ -268,11 +290,14 @@ function registerIpcHandlers({
     // the agent origin can make Auth.js CSRF cookies look cross-site during credential
     // POSTs.
     if (base.hostname === '127.0.0.1') base.hostname = 'localhost';
-    const url = new URL('/agent', base);
+    const url = new URL(openExternal === false ? '/agent' : '/desktop-auth/start', base);
     if (!/^https?:$/i.test(url.protocol)) {
       throw new Error(`Unsupported Forgent3D URL protocol: ${url.protocol}`);
     }
     url.searchParams.set('projectPath', resolved);
+    if (openExternal === false) {
+      url.searchParams.set('embedded', '1');
+    }
     if (openExternal !== false) {
       await shell.openExternal(url.toString());
     }

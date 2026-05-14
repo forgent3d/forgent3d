@@ -76,11 +76,14 @@ The app creates self-contained model packages under `models/`. Each model has a 
 
 ```text
 models/
-  cuboid/
+  reference_mount/
     asm.xml
     params.json
     parts/
-      cuboid/
+      mounting_plate/
+        part.py
+        params.json
+      fastener_stack/
         part.py
         params.json
 ```

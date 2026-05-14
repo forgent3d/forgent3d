@@ -64,6 +64,9 @@ export function initUI(viewer) {
     termResizeHandle:document.getElementById('term-resize-handle'),
     btnTermClose:    document.getElementById('btn-term-close'),
     agentNextRoot:    document.getElementById('agent-next-root'),
+    agentNextGuide:   document.getElementById('agent-next-guide'),
+    agentNextExternalLogin: document.getElementById('agent-next-external-login'),
+    agentNextEmbeddedOpen:  document.getElementById('agent-next-embedded-open'),
     agentNextFrame:   document.getElementById('agent-next-frame'),
     agentNextLoading: document.getElementById('agent-next-loading')
   };
@@ -108,6 +111,7 @@ export function initUI(viewer) {
   let loadedPart = null;
   let partsCache = [];
   let selectedModelPart = null;
+  let selectedModelPartModel = null;
   let displayedModelPart = null;
   const assemblyPayloads = new Map();
   const expandedModels = new Set();
@@ -169,7 +173,16 @@ export function initUI(viewer) {
     api,
     elements: el,
     getCurrentProject: () => currentProject,
-    getActivePart: () => activePart,
+    getParamsTarget: () => {
+      if (selectedModelPartModel && selectedModelPart) {
+        return {
+          model: selectedModelPartModel,
+          part: selectedModelPart,
+          label: `${selectedModelPartModel}/parts/${selectedModelPart}`
+        };
+      }
+      return activePart ? { model: activePart, label: activePart } : null;
+    },
     t
   });
 
@@ -222,6 +235,7 @@ export function initUI(viewer) {
       activePart = null;
       loadedPart = null;
       selectedModelPart = null;
+      selectedModelPartModel = null;
       displayedModelPart = null;
       assemblyPayloads.clear();
       expandedModels.clear();
@@ -247,6 +261,10 @@ export function initUI(viewer) {
   }
 
   async function showAssembly(modelName = activePart, { preserveView = true } = {}) {
+    selectedModelPart = null;
+    selectedModelPartModel = null;
+    displayedModelPart = null;
+    paramsEditor.refresh({ force: true });
     const payload = assemblyPayloads.get(modelName);
     if (!payload?.url) {
       if (modelName) {
@@ -255,8 +273,6 @@ export function initUI(viewer) {
       }
       return;
     }
-    selectedModelPart = null;
-    displayedModelPart = null;
     if (typeof viewer.setSelectedPart === 'function') viewer.setSelectedPart(null);
     viewerUi.stopExplodedView();
     const partLabel = payload.part ? `[${payload.part}] ` : '';
@@ -289,7 +305,9 @@ export function initUI(viewer) {
     viewerUi.stopAutoShow();
     viewerUi.stopExplodedView();
     selectedModelPart = partId;
+    selectedModelPartModel = modelName;
     displayedModelPart = partId;
+    paramsEditor.refresh({ force: true });
     if (typeof viewer.setSelectedPart === 'function') viewer.setSelectedPart(null);
     renderPartsList();
     setStatus(`[${part.name || partId}] ${part.hasStl ? t('parsingStl') : t('buildingPart', { part: partId })} ...`, true);
@@ -314,13 +332,13 @@ export function initUI(viewer) {
   }
 
   function renderModelPartList(modelName, items) {
-    if (items.length < 2 || !expandedModels.has(modelName)) return null;
+    if (items.length < 1 || !expandedModels.has(modelName)) return null;
     const ul = document.createElement('ul');
     ul.className = 'model-part-list';
     for (const part of items) {
       const li = document.createElement('li');
       const partId = String(part.name || part.id);
-      li.className = 'model-part-item' + (String(displayedModelPart || '') === partId ? ' selected' : '');
+      li.className = 'model-part-item' + (selectedModelPartModel === modelName && String(displayedModelPart || '') === partId ? ' selected' : '');
       li.dataset.partId = partId;
       li.title = part.hasStl ? partId : `${partId} (STL not built yet)`;
       li.textContent = partId;
@@ -355,7 +373,7 @@ export function initUI(viewer) {
       const title = document.createElement('div');
       title.className = 'part-title';
       const modelParts = Array.isArray(p.parts) ? p.parts : [];
-      if (modelParts.length >= 2) {
+      if (modelParts.length >= 1) {
         const expand = document.createElement('button');
         expand.className = 'model-part-toggle';
         expand.type = 'button';
@@ -373,7 +391,7 @@ export function initUI(viewer) {
       titleText.className = 'part-title-text';
       titleText.textContent = p.name;
       title.appendChild(titleText);
-      if (modelParts.length >= 2) {
+      if (modelParts.length >= 1) {
         const count = document.createElement('span');
         count.className = 'model-part-count';
         count.textContent = String(modelParts.length);
@@ -417,6 +435,8 @@ export function initUI(viewer) {
       if (partList) li.appendChild(partList);
       li.addEventListener('click', () => {
         if (paramsEditor.isDirty()) paramsEditor.flushPendingSave();
+        selectedModelPart = null;
+        selectedModelPartModel = null;
         if (p.name !== activePart) api.selectModel(p.name);
         else showAssembly(p.name);
       });
@@ -652,6 +672,65 @@ export function initUI(viewer) {
     setNextAgentLoadingVisible(false);
   }
 
+  function setNextAgentGuideVisible(visible) {
+    el.agentNextGuide?.classList.toggle('hidden', !visible);
+  }
+
+  async function openNextAgentExternalLogin() {
+    if (!currentProject) return;
+    try {
+      const res = await api.agentOpenNext(currentProject, undefined, true);
+      appendLog(t('nextAgentOpenedExternal', { url: res?.url || '' }));
+      showToast(t('nextAgentOpenedExternalToast'), 2600);
+    } catch (e) {
+      appendLog(t('nextAgentOpenFailed', { message: e?.message || String(e) }), 'error');
+      showToast(t('nextAgentOpenFailed', { message: escapeHtml(e?.message || String(e)) }), 4200);
+    }
+  }
+
+  async function openNextAgentEmbedded() {
+    if (!currentProject) return;
+    try {
+      pendingNextAgentWebviewLoad = true;
+      setNextAgentGuideVisible(false);
+      setNextAgentLoadingVisible(true);
+      const res = await api.agentOpenNext(currentProject, undefined, false);
+      if (el.agentNextFrame && el.agentNextFrame.src !== res?.url) {
+        el.agentNextFrame.src = res?.url || 'about:blank';
+      } else {
+        clearNextAgentWebviewLoadIntent();
+      }
+      appendLog(t('nextAgentOpened', { url: res?.url || '' }));
+    } catch (e) {
+      clearNextAgentWebviewLoadIntent();
+      setNextAgentGuideVisible(true);
+      appendLog(t('nextAgentOpenFailed', { message: e?.message || String(e) }), 'error');
+      showToast(t('nextAgentOpenFailed', { message: escapeHtml(e?.message || String(e)) }), 4200);
+    }
+  }
+
+  function consumeNextAgentDesktopAuth(payload) {
+    const token = String(payload?.token || '');
+    const rawBaseUrl = String(payload?.baseUrl || '');
+    if (!token || !rawBaseUrl) return;
+    try {
+      const url = new URL('/desktop-auth/consume', rawBaseUrl.replace(/\/+$/, '') + '/');
+      url.searchParams.set('token', token);
+      const projectPath = String(payload?.projectPath || currentProject || '');
+      if (projectPath) url.searchParams.set('projectPath', projectPath);
+      pendingNextAgentWebviewLoad = true;
+      openTermPanel('next');
+      setNextAgentGuideVisible(false);
+      setNextAgentLoadingVisible(true);
+      el.termTitle.textContent = t('nextAgentPanelTitle');
+      if (el.agentNextFrame) el.agentNextFrame.src = url.toString();
+      appendLog(t('nextAgentDesktopAuthReceived'));
+    } catch (e) {
+      appendLog(t('nextAgentOpenFailed', { message: e?.message || String(e) }), 'error');
+      showToast(t('nextAgentOpenFailed', { message: escapeHtml(e?.message || String(e)) }), 4200);
+    }
+  }
+
   function openTermPanel(mode = 'terminal') {
     const dockMode = mode === 'next' ? 'next' : 'terminal';
     if (termOpenFitTimer) {
@@ -748,6 +827,8 @@ export function initUI(viewer) {
 
   /* Close button */
   el.btnTermClose.addEventListener('click', closeTermPanel);
+  el.agentNextExternalLogin?.addEventListener('click', openNextAgentExternalLogin);
+  el.agentNextEmbeddedOpen?.addEventListener('click', openNextAgentEmbedded);
 
   if (el.agentNextFrame) {
     el.agentNextFrame.addEventListener('did-finish-load', () => {
@@ -794,23 +875,10 @@ export function initUI(viewer) {
       if (!agent || !currentProject) return;
 
       if (agent === 'next') {
-        try {
-          pendingNextAgentWebviewLoad = true;
-          openTermPanel('next');
-          setNextAgentLoadingVisible(true);
-          el.termTitle.textContent = t('nextAgentPanelTitle');
-          const res = await api.agentOpenNext(currentProject, undefined, false);
-          if (el.agentNextFrame && el.agentNextFrame.src !== res?.url) {
-            el.agentNextFrame.src = res?.url || 'about:blank';
-          } else {
-            clearNextAgentWebviewLoadIntent();
-          }
-          appendLog(t('nextAgentOpened', { url: res?.url || '' }));
-        } catch (e) {
-          clearNextAgentWebviewLoadIntent();
-          appendLog(t('nextAgentOpenFailed', { message: e?.message || String(e) }), 'error');
-          showToast(t('nextAgentOpenFailed', { message: escapeHtml(e?.message || String(e)) }), 4200);
-        }
+        clearNextAgentWebviewLoadIntent();
+        openTermPanel('next');
+        setNextAgentGuideVisible(true);
+        el.termTitle.textContent = t('nextAgentPanelTitle');
         return;
       }
 
@@ -912,6 +980,7 @@ export function initUI(viewer) {
         activePart = payload?.name || null;
         displayedModelPart = null;
         selectedModelPart = null;
+        selectedModelPartModel = null;
         syncModelListKindToModel(activePart, { render: false });
         renderPartsList();
         renderModelNameBadge();
@@ -1054,6 +1123,9 @@ export function initUI(viewer) {
         break;
       case 'LANGUAGE_CHANGED':
         setLanguage(payload?.language || 'en');
+        break;
+      case 'DESKTOP_AUTH_CALLBACK':
+        consumeNextAgentDesktopAuth(payload);
         break;
       case 'TERM_DATA':
         if (termPanel && termPanel.getTermId() === payload.termId) {

@@ -2,13 +2,13 @@
 
 - Use root `models/<model_name>/asm.xml` for every model package, including simple single-body models.
 - Keep each rigid body as its own local `models/<model_name>/parts/<part_name>/part.py`; do not fuse a separable model into one monolithic `part.py`.
-- Model-level tunables live in `models/<model_name>/params.json`.
+- Assembly-level tunables live in `models/<model_name>/params.json`. Do not create or duplicate local part geometry parameters in the root assembly params; put those in the matching `parts/<part_name>/params.json` read by `part.py`.
 
 ## Assembly Rules
 
 - Visual geometry must reference existing part meshes through `<asset><mesh ... file="..."/></asset>` and `<geom type="mesh" mesh="..."/>`.
 - Mesh files must point at local package assets like `parts/<part>/<part>.stl`; the viewer can generate missing/stale STL assets from fresh BREP caches during rebuild.
-- Use `${...}` substitutions for mesh filenames and user-facing tunable positions, scales, axes, ranges, and limits. Keep derived placements, repeated mechanical offsets, and one-off constants in `asm.xml` unless the user needs to tune them.
+- Use `${...}` substitutions for mesh filenames and user-facing tunable positions, axes, ranges, and limits. Do not scale part meshes from `asm.xml` as a substitute for part parameters; rebuild the part geometry from `parts/<part_name>/params.json` instead. Keep derived placements, repeated mechanical offsets, and one-off constants in `asm.xml` unless the user needs to tune them.
 - Body origins should be meaningful anchors. If the body origin is an anchor, move the visual mesh with `geom pos`, not the joint/site.
 - Copy derived anchors from part `metadata.json` into assembly `params.json`; do not hand-maintain duplicate anchor math in `params.json`.
 - Keep `__viewer.materials` renderer-only. Material keys for assemblies should match MJCF body, geom, or mesh names. Presets must be objects like `{ "preset": "rubber" }`, not bare strings.

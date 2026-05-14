@@ -38,6 +38,8 @@ type AicadModelsPayload = {
 
 type AicadParamsPayload = {
   model: string;
+  part?: string | null;
+  label?: string;
   exists?: boolean;
   text: string;
 };
@@ -70,8 +72,8 @@ type AicadApi = {
   revealModel(name: string): Promise<void>;
   exportModel(name: string, format: string): Promise<unknown>;
   ensureModelPartStl(model: string, part: string): Promise<{ model: string; part: string; path: string; url: string }>;
-  getParams(name: string): Promise<AicadParamsPayload>;
-  saveParams(name: string, text: string): Promise<AicadParamsPayload>;
+  getParams(target: string | { model: string; part?: string | null; label?: string }): Promise<AicadParamsPayload>;
+  saveParams(target: string | { model: string; part?: string | null; label?: string }, text: string): Promise<AicadParamsPayload>;
 
   notifyPartLoaded(payload: unknown): Promise<void>;
 
