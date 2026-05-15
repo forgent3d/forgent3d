@@ -4,10 +4,26 @@ export {};
 
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const { app: electronApp } = require('electron');
+const bridgeTools = require('./agent-bridge-tools');
 
 /** Default Forgent3D agent (cad-agent) base URL when the desktop build is packaged. */
 const PACKAGED_DEFAULT_FORGENT3D_AGENT_URL = 'https://agent.forgent3d.com';
+const AGENT_DESKTOP_BRIDGE_VERSION = '0.1.0';
+
+function formatBridgeDetail(detail) {
+  if (!detail || typeof detail !== 'object') return '';
+  try {
+    return ` ${JSON.stringify(detail)}`;
+  } catch {
+    return '';
+  }
+}
+
+function agentWebviewPreloadUrl() {
+  return pathToFileURL(path.join(__dirname, 'agent-webview-preload.js')).toString();
+}
 
 function registerIpcHandlers({
   ipcMain,
@@ -21,6 +37,14 @@ function registerIpcHandlers({
     SCREENSHOT_VIEWS,
     CACHE_DIR
   } = deps.constants;
+
+  function bridgeLog(message, detail, level = 'info') {
+    const line = `[agent-bridge:main] ${message}${formatBridgeDetail(detail)}`;
+    try { deps.sendLog?.(line, level); } catch {}
+    if (level === 'error') console.error(line);
+    else if (level === 'warn') console.warn(line);
+    else console.log(line);
+  }
 
   function writeTextViaTempFile(targetPath, content) {
     const dir = path.dirname(targetPath);
@@ -271,6 +295,63 @@ function registerIpcHandlers({
 
   ipcMain.handle('python:status', async () => deps.getBuildRuntimeStatus());
 
+  ipcMain.handle('agent:bridgeInfo', () => {
+    const projectPath = state.currentProjectPath?.() || '';
+    const language = deps.getLanguage?.() || 'en';
+    bridgeLog('bridgeInfo requested', { projectPath, language });
+    return {
+      version: AGENT_DESKTOP_BRIDGE_VERSION,
+      preloadUrl: agentWebviewPreloadUrl(),
+      projectPath,
+      language,
+      capabilities: {
+        desktop: true,
+        tools: true
+      }
+    };
+  });
+
+  ipcMain.handle('agent:callTool', async (_evt, payload) => {
+    const name = String(payload?.name || '').trim();
+    const callId = String(payload?.callId || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+    const startedAt = Date.now();
+    if (!name) {
+      bridgeLog('callTool missing tool name', { callId }, 'warn');
+      return { isError: true, content: [{ type: 'text', text: 'Tool name is required.' }] };
+    }
+    const args = payload?.args && typeof payload.args === 'object' ? payload.args : {};
+    const projectPath = state.currentProjectPath?.() || '';
+    bridgeLog('callTool received', { callId, name, projectPath, argKeys: Object.keys(args || {}) });
+    let mcpContext = null;
+    try {
+      bridgeLog('buildMcpContext start', { callId, name });
+      mcpContext = deps.buildMcpContext ? deps.buildMcpContext() : null;
+      bridgeLog('buildMcpContext done', { callId, name, elapsedMs: Date.now() - startedAt, hasMcpContext: !!mcpContext });
+    } catch (e) {
+      deps.sendLog?.(`buildMcpContext failed: ${e?.message || e}`, 'warn');
+      bridgeLog('buildMcpContext failed', { callId, name, error: e?.message || String(e) }, 'warn');
+    }
+    try {
+      bridgeLog('dispatch start', { callId, name });
+      const result = await bridgeTools.dispatch(name, args, {
+        projectPath,
+        mcpContext,
+        log: (message, detail, level) => bridgeLog(message, { callId, name, ...(detail || {}) }, level)
+      });
+      bridgeLog('dispatch done', {
+        callId,
+        name,
+        elapsedMs: Date.now() - startedAt,
+        isError: !!result?.isError,
+        contentTypes: Array.isArray(result?.content) ? result.content.map((item) => item?.type) : []
+      }, result?.isError ? 'warn' : 'info');
+      return result;
+    } catch (e) {
+      bridgeLog('dispatch threw', { callId, name, elapsedMs: Date.now() - startedAt, error: e?.message || String(e) }, 'error');
+      return { isError: true, content: [{ type: 'text', text: String(e?.message || e) }] };
+    }
+  });
+
   ipcMain.handle('agent:openNext', async (_evt, { projectPath, baseUrl, openExternal = true }) => {
     if (!projectPath) throw new Error('projectPath is required.');
     const resolved = path.resolve(String(projectPath).trim());
@@ -302,7 +383,10 @@ function registerIpcHandlers({
     if (openExternal !== false) {
       await shell.openExternal(url.toString());
     }
-    return { url: url.toString() };
+    return {
+      url: url.toString(),
+      preloadUrl: agentWebviewPreloadUrl()
+    };
   });
 }
 

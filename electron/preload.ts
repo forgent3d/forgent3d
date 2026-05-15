@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('aicad', {
 
   agentOpenNext: (projectPath, baseUrl, openExternal = true) =>
     ipcRenderer.invoke('agent:openNext', { projectPath, baseUrl, openExternal }),
+  agentBridgeInfo: () => ipcRenderer.invoke('agent:bridgeInfo'),
 
   onEvent: (handler) => {
     const listener = (_evt, msg) => handler(msg);

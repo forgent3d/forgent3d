@@ -681,6 +681,13 @@ export function initUI(viewer) {
     el.agentNextGuide?.classList.toggle('hidden', !visible);
   }
 
+  function setNextAgentBridgePreload(preloadUrl) {
+    if (!el.agentNextFrame || !preloadUrl) return;
+    if (el.agentNextFrame.getAttribute('preload') !== preloadUrl) {
+      el.agentNextFrame.setAttribute('preload', preloadUrl);
+    }
+  }
+
   function syncNextAgentLanguage(language = getLanguage()) {
     if (!el.agentNextFrame || !language) return;
     const payload = JSON.stringify({ type: 'FORGENT3D_LANGUAGE_CHANGED', language });
@@ -717,6 +724,7 @@ export function initUI(viewer) {
       setNextAgentGuideVisible(false);
       setNextAgentLoadingVisible(true);
       const res = await api.agentOpenNext(currentProject, undefined, false);
+      setNextAgentBridgePreload(res?.preloadUrl);
       if (el.agentNextFrame && el.agentNextFrame.src !== res?.url) {
         el.agentNextFrame.src = res?.url || 'about:blank';
       } else {
@@ -732,7 +740,7 @@ export function initUI(viewer) {
     }
   }
 
-  function consumeNextAgentDesktopAuth(payload) {
+  async function consumeNextAgentDesktopAuth(payload) {
     const token = String(payload?.token || '');
     const rawBaseUrl = String(payload?.baseUrl || '');
     if (!token || !rawBaseUrl) return;
@@ -742,6 +750,8 @@ export function initUI(viewer) {
       const projectPath = String(payload?.projectPath || currentProject || '');
       if (projectPath) url.searchParams.set('projectPath', projectPath);
       url.searchParams.set('lang', payload?.language || getLanguage());
+      const bridgeInfo = await api.agentBridgeInfo?.().catch(() => null);
+      setNextAgentBridgePreload(bridgeInfo?.preloadUrl);
       pendingNextAgentWebviewLoad = true;
       openTermPanel('next');
       setNextAgentGuideVisible(false);
