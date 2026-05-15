@@ -42,11 +42,22 @@ export function createParamsEditorController({
     return JSON.parse(JSON.stringify(value ?? {}));
   }
 
+  function paramsEqual(left, right) {
+    return JSON.stringify(left ?? {}) === JSON.stringify(right ?? {});
+  }
+
+  function hasRevertableChanges() {
+    return !paramsEqual(paramsWorking, paramsOriginal) || !paramsEqual(paramsSaved, paramsOriginal);
+  }
+
+  function hasUnsavedChanges() {
+    return !paramsEqual(paramsWorking, paramsSaved);
+  }
+
   function collectNumericParams(value, prefix = []) {
     if (!value || typeof value !== 'object') return [];
     const rows = [];
     for (const [key, child] of Object.entries(value)) {
-      if (prefix.length === 0 && key === 'parts') continue;
       const path = [...prefix, key];
       if (typeof child === 'number' && Number.isFinite(child)) {
         rows.push({ path, value: child });
@@ -145,9 +156,9 @@ export function createParamsEditorController({
           }
           range.value = String(next);
         }
-        const dirty = JSON.stringify(paramsWorking) !== JSON.stringify(paramsOriginal);
-        setDirty(dirty);
-        if (dirty) {
+        const needsSave = hasUnsavedChanges();
+        setDirty(hasRevertableChanges() || needsSave);
+        if (needsSave) {
           setStatus(t('updatingParams', { model: paramsLabel || paramsModel }));
           scheduleAutoSave();
         } else {
@@ -235,7 +246,7 @@ export function createParamsEditorController({
     clearPendingSave();
     paramsWorking = cloneParams(paramsOriginal);
     render();
-    setDirty(JSON.stringify(paramsWorking) !== JSON.stringify(paramsSaved));
+    setDirty(hasRevertableChanges() || hasUnsavedChanges());
     setStatus(t('revertingParams', { model: paramsLabel || paramsModel }));
     save({ keepOriginal: true });
   }
@@ -262,15 +273,15 @@ export function createParamsEditorController({
       paramsLabel = res?.label || label;
       paramsSaved = JSON.parse(res?.text || text);
       if (!paramsOriginal) paramsOriginal = cloneParams(paramsSaved);
-      if (JSON.stringify(paramsWorking) !== JSON.stringify(snapshot)) {
+      if (!paramsEqual(paramsWorking, snapshot)) {
         paramsSaving = false;
-        setDirty(JSON.stringify(paramsWorking) !== JSON.stringify(paramsOriginal));
+        setDirty(hasRevertableChanges() || hasUnsavedChanges());
         setStatus(t('updatingParams', { model: paramsLabel }));
         scheduleAutoSave();
         return;
       }
       paramsWorking = cloneParams(paramsSaved);
-      setDirty(JSON.stringify(paramsWorking) !== JSON.stringify(paramsOriginal));
+      setDirty(hasRevertableChanges() || hasUnsavedChanges());
       paramsSaving = false;
       setStatus(t('savedParamsRebuilding', { model: paramsLabel }), 'ok');
     } catch (e) {

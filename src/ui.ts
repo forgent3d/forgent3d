@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { createTerminalPanel } from './terminal-panel.js';
-import { applyDocumentI18n, initRendererI18n, onLanguageChange, setLanguage, t } from './i18n.js';
+import { applyDocumentI18n, getLanguage, initRendererI18n, onLanguageChange, setLanguage, t } from './i18n.js';
 import { createParamsEditorController } from './ui-params-editor.js';
 import { createViewerUiController } from './ui-viewer-controls.js';
 
@@ -258,6 +258,11 @@ export function initUI(viewer) {
   function modelPartsFor(modelName) {
     const model = partsCache.find((item) => item.name === modelName);
     return Array.isArray(model?.parts) ? model.parts : [];
+  }
+
+  function findModelPart(modelName, partName) {
+    const target = String(partName || '');
+    return modelPartsFor(modelName).find((part) => String(part.name || part.id || '') === target) || null;
   }
 
   async function showAssembly(modelName = activePart, { preserveView = true } = {}) {
@@ -676,6 +681,23 @@ export function initUI(viewer) {
     el.agentNextGuide?.classList.toggle('hidden', !visible);
   }
 
+  function syncNextAgentLanguage(language = getLanguage()) {
+    if (!el.agentNextFrame || !language) return;
+    const payload = JSON.stringify({ type: 'FORGENT3D_LANGUAGE_CHANGED', language });
+    try {
+      if (typeof el.agentNextFrame.executeJavaScript === 'function') {
+        el.agentNextFrame.executeJavaScript(`
+          window.postMessage(${payload}, '*');
+          try {
+            const url = new URL(window.location.href);
+            url.searchParams.set('lang', ${JSON.stringify(language)});
+            window.history.replaceState(window.history.state, '', url.toString());
+          } catch {}
+        `, false).catch(() => {});
+      }
+    } catch {}
+  }
+
   async function openNextAgentExternalLogin() {
     if (!currentProject) return;
     try {
@@ -699,6 +721,7 @@ export function initUI(viewer) {
         el.agentNextFrame.src = res?.url || 'about:blank';
       } else {
         clearNextAgentWebviewLoadIntent();
+        syncNextAgentLanguage();
       }
       appendLog(t('nextAgentOpened', { url: res?.url || '' }));
     } catch (e) {
@@ -718,6 +741,7 @@ export function initUI(viewer) {
       url.searchParams.set('token', token);
       const projectPath = String(payload?.projectPath || currentProject || '');
       if (projectPath) url.searchParams.set('projectPath', projectPath);
+      url.searchParams.set('lang', payload?.language || getLanguage());
       pendingNextAgentWebviewLoad = true;
       openTermPanel('next');
       setNextAgentGuideVisible(false);
@@ -835,6 +859,7 @@ export function initUI(viewer) {
       if (!pendingNextAgentWebviewLoad) return;
       pendingNextAgentWebviewLoad = false;
       setNextAgentLoadingVisible(false);
+      syncNextAgentLanguage();
     });
     el.agentNextFrame.addEventListener('did-fail-load', () => {
       if (!pendingNextAgentWebviewLoad) return;
@@ -877,8 +902,8 @@ export function initUI(viewer) {
       if (agent === 'next') {
         clearNextAgentWebviewLoadIntent();
         openTermPanel('next');
-        setNextAgentGuideVisible(true);
         el.termTitle.textContent = t('nextAgentPanelTitle');
+        await openNextAgentEmbedded();
         return;
       }
 
@@ -1031,6 +1056,11 @@ export function initUI(viewer) {
         if (fmt === 'MJCF' && payload.part) assemblyPayloads.set(payload.part, { ...payload });
         const preserveView = !!payload.part && payload.part === loadedPart && typeof viewer.hasModel === 'function' && viewer.hasModel();
         const partLabel = payload.part ? `[${payload.part}] ` : '';
+        if (fmt === 'MJCF' && payload.part && selectedModelPartModel === payload.part && selectedModelPart) {
+          const selectedPart = findModelPart(payload.part, selectedModelPart) || { name: selectedModelPart };
+          showModelPart(payload.part, selectedPart).catch(() => {});
+          break;
+        }
         if (fmt === 'MJCF') {
           showAssembly(payload.part, { preserveView }).then(async (partInfo) => {
             const explodeState = typeof viewer.getExplodeState === 'function' ? viewer.getExplodeState() : { enabled: false, available: false };
@@ -1123,6 +1153,7 @@ export function initUI(viewer) {
         break;
       case 'LANGUAGE_CHANGED':
         setLanguage(payload?.language || 'en');
+        syncNextAgentLanguage(payload?.language || 'en');
         break;
       case 'DESKTOP_AUTH_CALLBACK':
         consumeNextAgentDesktopAuth(payload);

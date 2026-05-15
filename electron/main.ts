@@ -289,9 +289,10 @@ function handleDeepLink(rawUrl) {
   const token = parsed.searchParams.get('token') || '';
   const baseUrl = parsed.searchParams.get('baseUrl') || '';
   const projectPath = parsed.searchParams.get('projectPath') || currentProjectPath || '';
+  const language = normalizeLanguage(parsed.searchParams.get('lang') || parsed.searchParams.get('language') || getLanguage());
   if (!token || !baseUrl) return false;
 
-  sendToRenderer('DESKTOP_AUTH_CALLBACK', { token, baseUrl, projectPath });
+  sendToRenderer('DESKTOP_AUTH_CALLBACK', { token, baseUrl, projectPath, language });
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();

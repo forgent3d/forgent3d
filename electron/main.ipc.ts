@@ -295,6 +295,7 @@ function registerIpcHandlers({
       throw new Error(`Unsupported Forgent3D URL protocol: ${url.protocol}`);
     }
     url.searchParams.set('projectPath', resolved);
+    url.searchParams.set('lang', deps.getLanguage?.() || 'en');
     if (openExternal === false) {
       url.searchParams.set('embedded', '1');
     }

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta http-equiv="Content-Security-Policy"
-          content="default-src 'self' 'unsafe-inline' data: blob: aicad:; img-src 'self' data: blob: aicad:; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: aicad: blob: data:; frame-src 'self' http://127.0.0.1:* http://localhost:*; worker-src 'self' blob:;" />
+          content="default-src 'self' 'unsafe-inline' data: blob: aicad:; img-src 'self' data: blob: aicad:; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: aicad: blob: data:; frame-src 'self' https://agent.forgent3d.com http://127.0.0.1:* http://localhost:*; worker-src 'self' blob:;" />
     <title>Forgent3D</title>
     <link rel="stylesheet" href="./style.css" />
   </head>
@@ -107,10 +107,10 @@
           <div id="agent-next-guide" class="agent-next-guide">
             <div class="agent-next-guide-card">
               <h2>Forgent3D</h2>
-              <p>如果尚未登录，请在外部浏览器完成登录并继续使用。Electron 内不会展示账号输入或注册表单。</p>
+              <p data-i18n="nextAgentGuideDescription">Sign in in your browser, then return here to continue using Forgent3D.</p>
               <div class="agent-next-guide-actions">
-                <button id="agent-next-external-login" class="agent-next-primary-btn" type="button">外部浏览器打开</button>
-                <button id="agent-next-embedded-open" class="agent-next-secondary-btn" type="button">尝试内嵌打开</button>
+                <button id="agent-next-external-login" class="agent-next-primary-btn" type="button" data-i18n="nextAgentExternalLoginButton">Open external browser</button>
+                <button id="agent-next-embedded-open" class="agent-next-secondary-btn" type="button" data-i18n="nextAgentEmbeddedOpenButton">Open here</button>
               </div>
             </div>
           </div>
