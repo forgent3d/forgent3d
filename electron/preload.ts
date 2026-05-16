@@ -3,6 +3,7 @@ export {};
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('aicad', {
+  dialogConfirm: (opts) => ipcRenderer.invoke('dialog:confirm', opts),
   chooseDirectory: () => ipcRenderer.invoke('dialog:chooseDirectory'),
   createProject: (parentDir, projectName, kernel) =>
     ipcRenderer.invoke('project:create', { parentDir, projectName, kernel }),
@@ -16,6 +17,7 @@ contextBridge.exposeInMainWorld('aicad', {
   rebuildModel: (name) => ipcRenderer.invoke('models:rebuild', name),
   rebuildAllModels: () => ipcRenderer.invoke('models:rebuildAll'),
   revealModel: (name) => ipcRenderer.invoke('models:reveal', name),
+  deleteModel: (name) => ipcRenderer.invoke('models:delete', name),
   exportModel: (name, format) => ipcRenderer.invoke('models:export', { name, format }),
   ensureModelPartStl: (model, part) => ipcRenderer.invoke('models:partStl', { model, part }),
   getParams: (target) => ipcRenderer.invoke('params:get', target),

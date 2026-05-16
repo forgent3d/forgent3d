@@ -58,6 +58,7 @@ type AicadEventHandler = (message: {
 }) => void;
 
 type AicadApi = {
+  dialogConfirm(opts: { title: string; message: string; confirmLabel?: string; cancelLabel?: string }): Promise<boolean>;
   chooseDirectory(): Promise<string | null>;
   createProject(parentDir: string, projectName: string, kernel: string): Promise<string>;
   openProject(projectPath?: string | null): Promise<string | null>;
@@ -70,6 +71,7 @@ type AicadApi = {
   rebuildModel(name: string): Promise<boolean>;
   rebuildAllModels(): Promise<{ ok: boolean; results: Array<{ name: string; ok: boolean; error?: string }> }>;
   revealModel(name: string): Promise<void>;
+  deleteModel(name: string): Promise<void>;
   exportModel(name: string, format: string): Promise<unknown>;
   ensureModelPartStl(model: string, part: string): Promise<{ model: string; part: string; path: string; url: string }>;
   getParams(target: string | { model: string; part?: string | null; label?: string }): Promise<AicadParamsPayload>;

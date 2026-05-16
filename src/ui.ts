@@ -431,8 +431,24 @@ export function initUI(viewer) {
         e.stopPropagation();
         api.rebuildModel(p.name);
       });
+      const bDelete = document.createElement('button');
+      bDelete.className = 'icon-btn icon-btn--danger';
+      bDelete.title = t('deleteModelTitle');
+      bDelete.textContent = '🗑';
+      bDelete.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const confirmed = await api.dialogConfirm({
+          title: t('deleteModelTitle'),
+          message: t('deleteModelConfirm', { name: p.name }),
+          confirmLabel: t('moveToTrash'),
+          cancelLabel: t('cancel'),
+        });
+        if (!confirmed) return;
+        api.deleteModel(p.name).then(() => refreshParts()).catch((err) => showToast(String(err?.message || err)));
+      });
       actions.appendChild(bReveal);
       actions.appendChild(bBuild);
+      actions.appendChild(bDelete);
 
       li.appendChild(main);
       li.appendChild(actions);

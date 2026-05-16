@@ -115,6 +115,18 @@ function registerIpcHandlers({
   /** Same data source as the MCP list_models tool, useful for UI validation. */
   ipcMain.handle('mcp:testListParts', () => deps.buildMcpContext().listParts());
 
+  ipcMain.handle('dialog:confirm', async (_evt, { title, message, confirmLabel = 'OK', cancelLabel = 'Cancel' }) => {
+    const { response } = await dialog.showMessageBox(state.mainWindow(), {
+      type: 'warning',
+      buttons: [cancelLabel, confirmLabel],
+      defaultId: 1,
+      cancelId: 0,
+      title: String(title || ''),
+      message: String(message || ''),
+    });
+    return response === 1;
+  });
+
   ipcMain.handle('dialog:chooseDirectory', async () => {
     const res = await dialog.showOpenDialog(state.mainWindow(), {
       title: 'Choose a parent directory for the new project',
@@ -202,6 +214,12 @@ function registerIpcHandlers({
   ipcMain.handle('models:reveal', async (_evt, name) => {
     if (!state.currentProjectPath() || !name) return;
     shell.openPath(deps.modelDir(state.currentProjectPath(), name));
+  });
+
+  ipcMain.handle('models:delete', async (_evt, name) => {
+    if (!state.currentProjectPath() || !name) throw new Error('No project or model name.');
+    const dir = deps.modelDir(state.currentProjectPath(), name);
+    await shell.trashItem(dir);
   });
 
   ipcMain.handle('models:export', async (_evt, { name, format }) => {

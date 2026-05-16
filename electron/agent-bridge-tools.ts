@@ -20,12 +20,45 @@ const LIST_MAX_ENTRIES_HARDCAP = 2000;
 const GREP_MAX_FILE_BYTES = 2_000_000;
 const GREP_LINE_PREVIEW_CHARS = 240;
 
+function formatCadApiSearch(r) {
+  if (!r?.ok) return r?.error || 'search_cad_api failed';
+  const results = Array.isArray(r.results) ? r.results : [];
+  if (!results.length) return '(no matches)';
+  const lines = results.map(s => `${s.symbol} (${s.kind})`);
+  if (r.truncated) lines.push(`[truncated — showing ${results.length} results, use a more specific query or increase maxResults]`);
+  else lines.push(`[${results.length} result${results.length === 1 ? '' : 's'}]`);
+  return lines.join('\n');
+}
+
 function textResult(text, isError) {
   const body = typeof text === 'string' ? text : JSON.stringify(text, null, 2);
   return {
     isError: !!isError,
     content: [{ type: 'text', text: body }],
   };
+}
+
+function safeFileSegment(value, fallback = 'screenshot') {
+  const cleaned = String(value || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return cleaned || fallback;
+}
+
+async function saveAgentScreenshot(projectRoot, model, view, mode, png) {
+  if (!projectRoot) return '';
+  const screenshotDir = path.join(projectRoot, '.aicad-agent', 'screenshots');
+  await fsp.mkdir(screenshotDir, { recursive: true });
+  const filename = [
+    safeFileSegment(model, 'model'),
+    safeFileSegment(mode, 'solid'),
+    safeFileSegment(view, 'iso'),
+    Date.now().toString(36),
+  ].join('.') + '.png';
+  const filePath = path.join(screenshotDir, filename);
+  await fsp.writeFile(filePath, png);
+  return path.relative(projectRoot, filePath).replace(/\\/g, '/');
 }
 
 function isInside(parent, child) {
@@ -36,6 +69,7 @@ function isInside(parent, child) {
 function resolveProjectPath(projectRoot, userPath) {
   if (!projectRoot) throw new Error('No project is open in the previewer.');
   if (!userPath || typeof userPath !== 'string') throw new Error('path is required');
+  if (path.isAbsolute(userPath)) throw new Error(`Use a relative path within the project, not an absolute path: ${userPath}`);
   const resolved = path.resolve(projectRoot, userPath);
   if (!isInside(projectRoot, resolved)) throw new Error(`Refusing to access outside project: ${userPath}`);
   return resolved;
@@ -136,6 +170,7 @@ async function grepProject(projectRoot, opts) {
   const root = resolveProjectPath(projectRoot, opts?.path || '.');
   const matchGlob = buildGlobMatcher(opts?.glob || '');
   const limit = Number.isInteger(opts?.maxResults) && opts.maxResults > 0 ? opts.maxResults : 100;
+  const ctx = Number.isInteger(opts?.context) && opts.context > 0 ? opts.context : 0;
   const results = [];
   let extra = 0;
   let scanned = 0;
@@ -155,13 +190,42 @@ async function grepProject(projectRoot, opts) {
       try { text = await fsp.readFile(full, 'utf8'); } catch { continue; }
       scanned++;
       const lines = text.split(/\r?\n/);
-      for (let i = 0; i < lines.length; i++) {
-        if (!re.test(lines[i])) continue;
-        if (results.length < limit) {
-          const raw = lines[i];
-          const preview = raw.length > GREP_LINE_PREVIEW_CHARS ? `${raw.slice(0, GREP_LINE_PREVIEW_CHARS)}...` : raw;
-          results.push(`${rel}:${i + 1}: ${preview}`);
-        } else extra++;
+      if (ctx === 0) {
+        for (let i = 0; i < lines.length; i++) {
+          if (!re.test(lines[i])) continue;
+          if (results.length < limit) {
+            const raw = lines[i];
+            const preview = raw.length > GREP_LINE_PREVIEW_CHARS ? `${raw.slice(0, GREP_LINE_PREVIEW_CHARS)}...` : raw;
+            results.push(`${rel}:${i + 1}: ${preview}`);
+          } else extra++;
+        }
+      } else {
+        // collect match indices first, then emit groups with context
+        const matchIdx = [];
+        for (let i = 0; i < lines.length; i++) {
+          if (re.test(lines[i])) matchIdx.push(i);
+        }
+        let gi = 0;
+        while (gi < matchIdx.length) {
+          if (results.length >= limit) { extra += matchIdx.length - gi; break; }
+          // expand group: merge overlapping context windows
+          const groupStart = Math.max(0, matchIdx[gi] - ctx);
+          let groupEnd = Math.min(lines.length - 1, matchIdx[gi] + ctx);
+          let gj = gi + 1;
+          while (gj < matchIdx.length && matchIdx[gj] - ctx <= groupEnd + 1) {
+            groupEnd = Math.min(lines.length - 1, matchIdx[gj] + ctx);
+            gj++;
+          }
+          if (results.length > 0) results.push('--');
+          for (let i = groupStart; i <= groupEnd; i++) {
+            const isMatch = re.test(lines[i]);
+            const prefix = isMatch ? `${rel}:${i + 1}:` : `${rel}-${i + 1}-`;
+            const raw = lines[i];
+            const preview = raw.length > GREP_LINE_PREVIEW_CHARS ? `${raw.slice(0, GREP_LINE_PREVIEW_CHARS)}...` : raw;
+            results.push(`${prefix} ${preview}`);
+          }
+          gi = gj;
+        }
       }
     }
   }
@@ -223,6 +287,60 @@ async function replaceInFile(projectRoot, userPath, oldText, newText, replaceAll
   return `${header}\n${preview}`;
 }
 
+function formatListModels(data) {
+  if (!data || typeof data !== 'object') return String(data);
+  if (data.error) return data.error;
+  const models = Array.isArray(data.models) ? data.models : [];
+  const header = `kernel: ${data.kernel || '?'}  active: ${data.active || '(none)'}`;
+  if (!models.length) return `${header}\n(no models)`;
+  const lines = models.map(m => {
+    const name = String(m.name || '');
+    const marker = name === data.active ? ' *' : '';
+    const info = m.hasInfo ? 'info=yes' : 'info=no';
+    const shot = m.hasScreenshot ? 'screenshot=yes' : 'screenshot=no';
+    const faces = m.faceCount != null ? `  faces=${m.faceCount}` : '';
+    return `  ${name}${marker}  ${info}  ${shot}${faces}`;
+  });
+  return `${header}\n${lines.join('\n')}`;
+}
+
+function formatRebuildModel(r) {
+  if (!r || typeof r !== 'object') return String(r);
+  if (!r.ok) {
+    const parts = [`error: ${r.error || 'build failed'}`];
+    if (r.stderr) parts.push(`stderr: ${r.stderr}`);
+    return parts.join('\n');
+  }
+  const tags = [];
+  if (r.faceCount != null) tags.push(`faces=${r.faceCount}`);
+  if (r.cacheSize != null) tags.push(`cacheSize=${r.cacheSize}`);
+  if (r.skipped) tags.push(`skipped (${r.reason || 'fresh'})`);
+  return `ok${tags.length ? '  ' + tags.join('  ') : ''}`;
+}
+
+function formatGetModelInfo(r) {
+  if (!r || typeof r !== 'object') return String(r);
+  if (r.error) {
+    const stale = r.cacheStale ? '  stale=yes' : '';
+    return `error: ${r.error}${stale}`;
+  }
+  const tags = [
+    `kernel=${r.kernel || '?'}`,
+    r.cacheStale ? 'stale=yes' : 'stale=no',
+  ];
+  if (r.faceCount != null) tags.push(`faces=${r.faceCount}`);
+  const lines = [`${r.name || '?'}  ${tags.join('  ')}`];
+  const b = r.bbox;
+  if (b && typeof b === 'object') {
+    const fmt = (v) => (typeof v === 'number' ? v.toFixed(3) : v);
+    const axis = (lo, hi) => `[${fmt(lo)}, ${fmt(hi)}]`;
+    lines.push(`bbox: x=${axis(b.xmin ?? b.min?.x, b.xmax ?? b.max?.x)}  y=${axis(b.ymin ?? b.min?.y, b.ymax ?? b.max?.y)}  z=${axis(b.zmin ?? b.min?.z, b.zmax ?? b.max?.z)}`);
+  }
+  if (r.capturedAt) lines.push(`captured: ${r.capturedAt}`);
+  if (r.description) lines.push(`description: ${r.description}`);
+  return lines.join('\n');
+}
+
 function toolLog(ctx, message, detail, level = 'info') {
   try {
     if (typeof ctx?.log === 'function') ctx.log(message, detail, level);
@@ -259,34 +377,33 @@ async function dispatch(name, args, ctx) {
       case 'list_models': {
         if (!mcp) return textResult('CAD context unavailable.', true);
         toolLog(ctx, 'list_models mcp.listParts start');
-        const models = mcp.listParts();
+        const data = mcp.listParts();
         toolLog(ctx, 'list_models mcp.listParts done', {
           elapsedMs: Date.now() - startedAt,
-          modelCount: Array.isArray(models) ? models.length : null,
-          resultType: typeof models
+          modelCount: Array.isArray(data?.models) ? data.models.length : null,
         });
-        return textResult(models);
+        return textResult(formatListModels(data));
       }
       case 'get_model_info': {
         if (!mcp) return textResult('CAD context unavailable.', true);
         toolLog(ctx, 'get_model_info start', { model: String(a.model || '') });
         const r = await mcp.getPartInfo(String(a.model || ''));
         toolLog(ctx, 'get_model_info done', { elapsedMs: Date.now() - startedAt, hasError: !!r?.error });
-        return textResult(r, !!r?.error);
+        return textResult(formatGetModelInfo(r), !!r?.error);
       }
       case 'rebuild_model': {
         if (!mcp) return textResult('CAD context unavailable.', true);
         toolLog(ctx, 'rebuild_model start', { model: String(a.model || '') });
         const r = await mcp.rebuildPartSync(String(a.model || ''));
         toolLog(ctx, 'rebuild_model done', { elapsedMs: Date.now() - startedAt, ok: !!r?.ok, error: r?.error || '' }, r?.ok ? 'info' : 'warn');
-        return textResult(r, !r?.ok);
+        return textResult(formatRebuildModel(r), !r?.ok);
       }
       case 'search_cad_api': {
         if (!mcp) return textResult('CAD context unavailable.', true);
         toolLog(ctx, 'search_cad_api start', { query: a.query || a.name || a.symbol || '' });
         const r = await mcp.inspectCadApi({ action: 'search', ...a });
         toolLog(ctx, 'search_cad_api done', { elapsedMs: Date.now() - startedAt, ok: !!r?.ok }, r?.ok ? 'info' : 'warn');
-        return textResult(r, !r?.ok);
+        return textResult(formatCadApiSearch(r), !r?.ok);
       }
       case 'read_cad_api': {
         if (!mcp) return textResult('CAD context unavailable.', true);
@@ -318,11 +435,18 @@ async function dispatch(name, args, ctx) {
           );
         }
         toolLog(ctx, 'screenshot_model done', { elapsedMs: Date.now() - startedAt, bytes: png.length });
+        const savedPath = await saveAgentScreenshot(ctx.projectPath, model, view, mode, png);
         return {
           isError: false,
           content: [
             { type: 'image', data: png.toString('base64'), mimeType: 'image/png' },
-            { type: 'text', text: `${mode}/${view} screenshot for model "${model}" (${png.length} bytes).` },
+            {
+              type: 'text',
+              text: [
+                `${mode}/${view} screenshot for model "${model}" (${png.length} bytes).`,
+                savedPath ? `Saved screenshot: ${savedPath}` : '',
+              ].filter(Boolean).join('\n'),
+            },
           ],
         };
       }

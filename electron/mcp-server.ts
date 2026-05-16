@@ -36,6 +36,16 @@ function sessionIdFromReq(req) {
   return String(req.headers['mcp-session-id'] || '').trim();
 }
 
+function formatCadApiSearch(r) {
+  if (!r?.ok) return r?.error || 'search_cad_api failed';
+  const results = Array.isArray(r.results) ? r.results : [];
+  if (!results.length) return '(no matches)';
+  const lines = results.map(s => `${s.symbol} (${s.kind})`);
+  if (r.truncated) lines.push(`[truncated — showing ${results.length} results, use a more specific query or increase maxResults]`);
+  else lines.push(`[${results.length} result${results.length === 1 ? '' : 's'}]`);
+  return lines.join('\n');
+}
+
 function buildMcpServer(ctx, { McpServer, z }) {
   const server = new McpServer({
     name: 'aicad',
@@ -62,7 +72,7 @@ function buildMcpServer(ctx, { McpServer, z }) {
       const result = await ctx.inspectCadApi({ action: 'search', ...(args || {}) });
       return {
         isError: !result?.ok,
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }]
+        content: [{ type: 'text', text: formatCadApiSearch(result) }]
       };
     }
   );
