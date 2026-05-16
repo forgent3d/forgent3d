@@ -12,7 +12,17 @@ function loadExportRunnerPython() {
   throw new Error('Missing compiled Electron templates. Run `npm run build:electron` before `npm run build:runner`.');
 }
 
+function loadAicadSelectPython() {
+  const compiledTemplate = path.join(__dirname, '..', 'dist-electron', 'electron', 'main.templates.aicad-select.js');
+  if (fs.existsSync(compiledTemplate)) {
+    const mod = require(compiledTemplate);
+    return { source: mod.AICAD_SELECT_PYTHON, filename: mod.AICAD_SELECT_FILENAME };
+  }
+  throw new Error('Missing compiled aicad-select template. Run `npm run build:electron` before `npm run build:runner`.');
+}
+
 const EXPORT_RUNNER_PYTHON = loadExportRunnerPython();
+const AICAD_SELECT = loadAicadSelectPython();
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const PLATFORM_TAG = `${process.platform}-${process.arch}`;
@@ -127,6 +137,7 @@ function venvPythonPath() {
 function ensureRunnerSource() {
   fs.mkdirSync(SRC_DIR, { recursive: true });
   fs.writeFileSync(SCRIPT_PATH, EXPORT_RUNNER_PYTHON, 'utf8');
+  fs.writeFileSync(path.join(SRC_DIR, AICAD_SELECT.filename), AICAD_SELECT.source, 'utf8');
 }
 
 function prepareVirtualenv(hostPython) {
@@ -163,6 +174,10 @@ function buildRunner(venvPython) {
     WORK_DIR,
     '--specpath',
     SPEC_DIR,
+    '--paths',
+    SRC_DIR,
+    '--hidden-import',
+    'aicad_select',
     '--collect-all',
     'build123d',
     '--collect-all',

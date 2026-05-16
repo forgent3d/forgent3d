@@ -5,6 +5,10 @@ const path = require('path');
 const fs = require('fs');
 const dotenv = require('dotenv');
 
+const APP_NAME = 'Forgent3D';
+app.setName(APP_NAME);
+app.setAboutPanelOptions({ applicationName: APP_NAME });
+
 /** Load repo-root or install-dir `.env` into `process.env` before other startup (IPC reads AICAD_FORGENT3D_URL / legacy AICAD_NEXT_AGENT_URL). */
 function loadAppDotenv() {
   const candidates = [];
@@ -56,6 +60,7 @@ const {
   claudeMdTemplate
 } = require('./main.templates.index');
 const { EXPORT_RUNNER_PYTHON } = require('./main.templates.export-runner');
+const { AICAD_SELECT_PYTHON, AICAD_SELECT_FILENAME } = require('./main.templates.aicad-select');
 
 const MCP_PORT = 41234;
 /** MCP startup error details, usually a port conflict. Null when running. */
@@ -393,8 +398,10 @@ function ensureElectronExportRunner() {
   }
   const dir = path.join(app.getPath('userData'), 'runners');
   const runnerPath = path.join(dir, 'export_runner.py');
+  const selectPath = path.join(dir, AICAD_SELECT_FILENAME);
   fs.mkdirSync(dir, { recursive: true });
   writeIfChanged(runnerPath, EXPORT_RUNNER_PYTHON);
+  writeIfChanged(selectPath, AICAD_SELECT_PYTHON);
   cachedElectronExportRunnerPath = runnerPath;
   return runnerPath;
 }

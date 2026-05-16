@@ -57,7 +57,12 @@ function createMainUiTools({
       toggleFullScreen: 'Toggle Full Screen',
       language: 'Language',
       english: 'English',
-      chinese: '中文'
+      chinese: '中文',
+      aboutApp: 'About {appName}',
+      services: 'Services',
+      hideApp: 'Hide {appName}',
+      hideOthers: 'Hide Others',
+      showAll: 'Show All'
     },
     'zh-CN': {
       file: '文件',
@@ -87,13 +92,19 @@ function createMainUiTools({
       toggleFullScreen: '切换全屏',
       language: '语言',
       english: 'English',
-      chinese: '中文'
+      chinese: '中文',
+      aboutApp: '关于 {appName}',
+      services: '服务',
+      hideApp: '隐藏 {appName}',
+      hideOthers: '隐藏其他',
+      showAll: '全部显示'
     }
   };
 
-  function t(key) {
+  function t(key, replacements = {}) {
     const language = state.appLanguage?.() || 'en';
-    return menuMessages[language]?.[key] || menuMessages.en[key] || key;
+    const template = menuMessages[language]?.[key] || menuMessages.en[key] || key;
+    return String(template).replace(/\{(\w+)\}/g, (_match, name) => replacements[name] ?? '');
   }
 
   function setLanguage(language) {
@@ -201,6 +212,7 @@ function createMainUiTools({
 
   function rebuildAppMenu() {
     const hasProject = !!state.currentProjectPath();
+    const appName = app.getName?.() || 'Forgent3D';
     const template = [
       {
         label: t('file'),
@@ -293,6 +305,22 @@ function createMainUiTools({
         ]
       }
     ];
+    if (process.platform === 'darwin') {
+      template.unshift({
+        label: appName,
+        submenu: [
+          { role: 'about', label: t('aboutApp', { appName }) },
+          { type: 'separator' },
+          { role: 'services', label: t('services'), submenu: [] },
+          { type: 'separator' },
+          { role: 'hide', label: t('hideApp', { appName }) },
+          { role: 'hideOthers', label: t('hideOthers') },
+          { role: 'unhide', label: t('showAll') },
+          { type: 'separator' },
+          { role: 'quit', label: t('quit') }
+        ]
+      });
+    }
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
   }
 
