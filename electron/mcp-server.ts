@@ -36,6 +36,19 @@ function sessionIdFromReq(req) {
   return String(req.headers['mcp-session-id'] || '').trim();
 }
 
+function writeDesktopAuthResponse(res, ok, message) {
+  const title = ok ? 'Forgent3D login complete' : 'Forgent3D login failed';
+  res.writeHead(ok ? 200 : 400, { 'Content-Type': 'text/html; charset=utf-8' });
+  res.end(`<!doctype html>
+<meta charset="utf-8">
+<title>${title}</title>
+<body style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;margin:40px;color:#111">
+  <h1>${title}</h1>
+  <p>${message}</p>
+  <script>setTimeout(() => window.close(), 800);</script>
+</body>`);
+}
+
 function formatCadApiSearch(r) {
   if (!r?.ok) return r?.error || 'search_cad_api failed';
   const results = Array.isArray(r.results) ? r.results : [];
@@ -239,6 +252,28 @@ async function start(ctx, { port = 41234 } = {}) {
 
     try {
       const u = new URL(req.url, 'http://localhost');
+      if (u.pathname === '/desktop-auth/callback') {
+        if (req.method !== 'GET') {
+          res.writeHead(405, { 'Content-Type': 'text/plain', Allow: 'GET, OPTIONS' });
+          res.end('Method Not Allowed');
+          return;
+        }
+        const ok = ctx.handleDesktopAuthCallback?.({
+          token: u.searchParams.get('token') || '',
+          baseUrl: u.searchParams.get('baseUrl') || '',
+          projectPath: u.searchParams.get('projectPath') || '',
+          language: u.searchParams.get('lang') || u.searchParams.get('language') || ''
+        }) === true;
+        writeDesktopAuthResponse(
+          res,
+          ok,
+          ok
+            ? 'You can return to the Forgent3D desktop app.'
+            : 'The desktop app did not accept this login callback. Make sure the dev app is still running.'
+        );
+        return;
+      }
+
       if (u.pathname !== '/mcp') {
         res.writeHead(404, { 'Content-Type': 'text/plain' });
         res.end('Not Found');

@@ -181,7 +181,19 @@ export function initUI(viewer) {
           label: `${selectedModelPartModel}/parts/${selectedModelPart}`
         };
       }
-      return activePart ? { model: activePart, label: activePart } : null;
+      if (!activePart) return null;
+      const parts = modelPartsFor(activePart);
+      if (parts.length === 1) {
+        const onlyPart = String(parts[0].name || parts[0].id || '');
+        if (onlyPart) {
+          return {
+            model: activePart,
+            part: onlyPart,
+            label: `${activePart}/parts/${onlyPart}`
+          };
+        }
+      }
+      return { model: activePart, label: activePart };
     },
     t
   });
@@ -767,6 +779,10 @@ export function initUI(viewer) {
       if (projectPath) url.searchParams.set('projectPath', projectPath);
       url.searchParams.set('lang', payload?.language || getLanguage());
       const bridgeInfo = await api.agentBridgeInfo?.().catch(() => null);
+      url.searchParams.set('embedded', '1');
+      if (bridgeInfo?.desktopCallbackUrl) {
+        url.searchParams.set('desktopCallbackUrl', bridgeInfo.desktopCallbackUrl);
+      }
       setNextAgentBridgePreload(bridgeInfo?.preloadUrl);
       pendingNextAgentWebviewLoad = true;
       openTermPanel('next');

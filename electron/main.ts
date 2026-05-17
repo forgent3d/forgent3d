@@ -82,6 +82,14 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+let rendererReadyForDesktopAuth = false;
+const pendingDesktopAuthCallbacks = [];
+
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  handleDeepLink(url);
+});
+
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!gotSingleInstanceLock) {
@@ -275,11 +283,50 @@ function setLanguage(language) {
 
 function registerDeepLinkProtocol() {
   if (process.defaultApp) {
-    const scriptPath = path.resolve(app.getAppPath());
-    if (scriptPath) app.setAsDefaultProtocolClient('aicad', process.execPath, [scriptPath]);
+    const scriptPath = path.resolve(process.argv[1] || app.getAppPath());
+    app.setAsDefaultProtocolClient('aicad', process.execPath, [scriptPath]);
     return;
   }
   app.setAsDefaultProtocolClient('aicad');
+}
+
+function focusMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function ensureMainWindowForDeepLink() {
+  if (!app.isReady() || !uiTools) return;
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    rendererReadyForDesktopAuth = false;
+    createWindow();
+    return;
+  }
+  focusMainWindow();
+}
+
+function flushPendingDesktopAuthCallbacks() {
+  if (!rendererReadyForDesktopAuth || !uiTools || !mainWindow || mainWindow.isDestroyed()) return;
+  const callbacks = pendingDesktopAuthCallbacks.splice(0);
+  for (const payload of callbacks) {
+    sendToRenderer('DESKTOP_AUTH_CALLBACK', payload);
+  }
+  if (callbacks.length) focusMainWindow();
+}
+
+function handleDesktopAuthCallback(payload) {
+  const token = String(payload?.token || '');
+  const baseUrl = String(payload?.baseUrl || '');
+  const projectPath = String(payload?.projectPath || currentProjectPath || '');
+  const language = normalizeLanguage(payload?.language || getLanguage());
+  if (!token || !baseUrl) return false;
+
+  pendingDesktopAuthCallbacks.push({ token, baseUrl, projectPath, language });
+  ensureMainWindowForDeepLink();
+  flushPendingDesktopAuthCallbacks();
+  return true;
 }
 
 function handleDeepLink(rawUrl) {
@@ -297,13 +344,7 @@ function handleDeepLink(rawUrl) {
   const language = normalizeLanguage(parsed.searchParams.get('lang') || parsed.searchParams.get('language') || getLanguage());
   if (!token || !baseUrl) return false;
 
-  sendToRenderer('DESKTOP_AUTH_CALLBACK', { token, baseUrl, projectPath, language });
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-  }
-  return true;
+  return handleDesktopAuthCallback({ token, baseUrl, projectPath, language });
 }
 
 function handlePossibleDeepLinks(argv) {
@@ -459,6 +500,7 @@ function registerIpc() {
     },
     deps: {
       constants: {
+        MCP_PORT,
         SCREENSHOT_VIEWS,
         CACHE_DIR
       },
@@ -476,6 +518,8 @@ function registerIpc() {
       selectPart,
       modelDir,
       modelParamsPath,
+      modelPartSource,
+      modelPartParamsPath,
       resolveModelSource,
       ensurePartStlArtifact,
       exportPartByRequest,
@@ -610,7 +654,10 @@ function initModuleTools() {
     ui: {
       rebuildAppMenu: (...args) => rebuildAppMenu(...args),
       sendToRenderer: (...args) => sendToRenderer(...args),
-      sendLog: (...args) => sendLog(...args)
+      sendLog: (...args) => sendLog(...args),
+      flushPendingDesktopAuthCallbacks: (...args) => flushPendingDesktopAuthCallbacks(...args),
+      markRendererDesktopAuthReady: (ready) => { rendererReadyForDesktopAuth = !!ready; },
+      handleDesktopAuthCallback: (...args) => handleDesktopAuthCallback(...args)
     }
   };
 
@@ -658,11 +705,6 @@ app.on('second-instance', (_event, argv) => {
     mainWindow.show();
     mainWindow.focus();
   }
-});
-
-app.on('open-url', (event, url) => {
-  event.preventDefault();
-  handleDeepLink(url);
 });
 
 app.on('window-all-closed', () => {

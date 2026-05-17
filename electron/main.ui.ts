@@ -189,6 +189,7 @@ function createMainUiTools({
     }
 
     win.webContents.once('did-finish-load', async () => {
+      deps.markRendererDesktopAuthReady?.(true);
       try {
         sendToRenderer('PYTHON_STATUS', await deps.getBuildRuntimeStatus());
       } catch (e) {
@@ -202,9 +203,11 @@ function createMainUiTools({
       } catch (e) {
         sendLog(`Last project restore failed: ${e.message}`, 'warn');
       }
+      deps.flushPendingDesktopAuthCallbacks?.();
     });
 
     win.on('closed', () => {
+      deps.markRendererDesktopAuthReady?.(false);
       state.setMainWindow(null);
       deps.stopWatcher();
     });
@@ -394,7 +397,8 @@ function initMainUiTools(mainContext) {
     project,
     runtime,
     build,
-    exportApi
+    exportApi,
+    ui
   } = mainContext;
   return createMainUiTools({
     BrowserWindow: electron.BrowserWindow,
@@ -431,6 +435,8 @@ function initMainUiTools(mainContext) {
       clearLastProjectPath: project.clearLastProjectPath,
       exportPartByRequest: exportApi.exportPartByRequest,
       scheduleBuild: build.scheduleBuild,
+      flushPendingDesktopAuthCallbacks: ui.flushPendingDesktopAuthCallbacks,
+      markRendererDesktopAuthReady: ui.markRendererDesktopAuthReady,
       restoreLastProjectIfAvailable: () => project.restoreLastProjectIfAvailable(),
       openProjectByDialog: () => project.openProjectByDialog(),
       handleExportFromMenu: (format) => exportApi.handleExportFromMenu(format)

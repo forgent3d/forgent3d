@@ -147,6 +147,39 @@ def edges_on_face(part, face: Face) -> ShapeList[Edge]:
     )
 
 
+def outer_edges_at_z(
+    part,
+    z: float,
+    *,
+    tol: float = 1e-3,
+    length_ratio: float = 0.5,
+) -> ShapeList[Edge]:
+    """Perimeter edges at height `z`, filtered to drop small feature edges.
+
+    Use this for fillet/chamfer on the dominant rim of a part that has many
+    small repeated features (knurls, fins, ribs, teeth, grips). Keeps edges
+    whose length is at least `length_ratio` x the longest edge at this height,
+    so OCCT does not pay O(features) cost on tiny edges.
+
+    Example:
+        finished = safe_fillet(part, outer_edges_at_z(part, z=height), radius=r)
+    """
+    if not (0 < length_ratio <= 1):
+        raise SelectionError(
+            f"outer_edges_at_z(length_ratio={length_ratio}): must be in (0, 1]."
+        )
+    edges = edges_at_z(part, z, tol=tol)
+    longest = max(e.length for e in edges)
+    threshold = longest * length_ratio
+    result = ShapeList(e for e in edges if e.length >= threshold)
+    return _require_nonempty(
+        f"outer_edges_at_z(z={z})",
+        result,
+        f"no edges at z={z} meet length_ratio={length_ratio}; lower it or use edges_at_z()",
+        part=_as_part(part),
+    )
+
+
 def circular_edges(part, radius: float | None = None, tol: float = 1e-3) -> ShapeList[Edge]:
     """Edges whose geometry is a circle. Optionally filter by radius (± tol)."""
     p = _as_part(part)

@@ -997,6 +997,9 @@ function createMainLogicTools({ state, deps }) {
           'CAD API inspector'
         );
       },
+      handleDesktopAuthCallback(payload) {
+        return deps.handleDesktopAuthCallback?.(payload) === true;
+      },
       async getPartScreenshot(name, view = 'iso', mode = 'solid') {
         if (!state.currentProjectPath()) return null;
         if (!deps.resolveModelSource(state.currentProjectPath(), name)) return null;
@@ -1131,6 +1134,7 @@ function initMainLogicTools(mainContext) {
       rebuildAppMenu: ui.rebuildAppMenu,
       sendToRenderer: ui.sendToRenderer,
       sendLog: ui.sendLog,
+      handleDesktopAuthCallback: ui.handleDesktopAuthCallback,
       sendModelUpdated: (partName) => build.sendModelUpdated(partName)
     }
   });

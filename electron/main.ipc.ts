@@ -25,6 +25,11 @@ function agentWebviewPreloadUrl() {
   return pathToFileURL(path.join(__dirname, 'agent-webview-preload.js')).toString();
 }
 
+function desktopAuthCallbackUrl(mcpPort) {
+  if (electronApp?.isPackaged) return '';
+  return `http://127.0.0.1:${mcpPort || 41234}/desktop-auth/callback`;
+}
+
 function registerIpcHandlers({
   ipcMain,
   clipboard,
@@ -201,7 +206,23 @@ function registerIpcHandlers({
 
   ipcMain.handle('models:rebuildAll', async () => {
     if (!state.currentProjectPath()) throw new Error('Open a project first.');
-    const models = deps.listParts(state.currentProjectPath());
+    const projectPath = state.currentProjectPath();
+    const kernel = state.currentKernel();
+    const models = deps.listParts(projectPath);
+    const tryUnlink = (p) => {
+      if (!p) return;
+      try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch {}
+    };
+    for (const model of models) {
+      for (const view of SCREENSHOT_VIEWS) {
+        tryUnlink(deps.partPng(projectPath, model.name, view, 'solid'));
+        tryUnlink(deps.partPng(projectPath, model.name, view, 'xray'));
+      }
+      for (const part of (model.parts || [])) {
+        tryUnlink(deps.partCache(projectPath, model.name, part.name, kernel));
+        tryUnlink(deps.modelPartStlPath(projectPath, model.name, part.name));
+      }
+    }
     const ctx = deps.buildMcpContext();
     const results = [];
     for (const model of models) {
@@ -320,6 +341,7 @@ function registerIpcHandlers({
     return {
       version: AGENT_DESKTOP_BRIDGE_VERSION,
       preloadUrl: agentWebviewPreloadUrl(),
+      desktopCallbackUrl: desktopAuthCallbackUrl(deps.constants?.MCP_PORT),
       projectPath,
       language,
       capabilities: {
@@ -395,6 +417,8 @@ function registerIpcHandlers({
     }
     url.searchParams.set('projectPath', resolved);
     url.searchParams.set('lang', deps.getLanguage?.() || 'en');
+    const callbackUrl = desktopAuthCallbackUrl(deps.constants?.MCP_PORT);
+    if (callbackUrl) url.searchParams.set('desktopCallbackUrl', callbackUrl);
     if (openExternal === false) {
       url.searchParams.set('embedded', '1');
     }
@@ -403,7 +427,8 @@ function registerIpcHandlers({
     }
     return {
       url: url.toString(),
-      preloadUrl: agentWebviewPreloadUrl()
+      preloadUrl: agentWebviewPreloadUrl(),
+      desktopCallbackUrl: callbackUrl
     };
   });
 }

@@ -207,7 +207,7 @@ export function createParamsEditorController({
       return;
     }
     const currentKey = targetKey(currentTarget);
-    if (targetKey(paramsTarget) === currentKey && !force) return;
+    if (targetKey(paramsTarget) === currentKey) return;
     const seq = ++paramsLoadSeq;
     const target = currentTarget;
     const label = targetLabel(target);
