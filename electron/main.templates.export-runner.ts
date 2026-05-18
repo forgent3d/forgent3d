@@ -216,6 +216,172 @@ def build_one(model_name: str, part_name: str = None, export_format: str = "brep
     return 0
 
 
+PROBE_BEGIN = "__PROBE_JSON_BEGIN__"
+PROBE_END = "__PROBE_JSON_END__"
+
+
+def _vec_xyz(v):
+    for getter in (("X", "Y", "Z"), ("x", "y", "z")):
+        if all(hasattr(v, a) for a in getter):
+            try:
+                return [float(getattr(v, getter[0])), float(getattr(v, getter[1])), float(getattr(v, getter[2]))]
+            except Exception:
+                pass
+    return None
+
+
+def _bbox_dict(shape):
+    try:
+        bb = shape.bounding_box()
+    except Exception:
+        return None
+    return {
+        "min": _vec_xyz(bb.min),
+        "max": _vec_xyz(bb.max),
+        "size": [
+            float(bb.max.X - bb.min.X),
+            float(bb.max.Y - bb.min.Y),
+            float(bb.max.Z - bb.min.Z),
+        ],
+    }
+
+
+def _summarize_one(item, index: int) -> dict:
+    """Compact per-entity summary: type, geom_type, length/radius/area, center, bbox."""
+    entry = {"index": index, "type": type(item).__name__}
+    geom = getattr(item, "geom_type", None)
+    if geom is not None:
+        entry["geom_type"] = str(geom() if callable(geom) else geom)
+    for attr in ("length", "area", "radius"):
+        val = getattr(item, attr, None)
+        if callable(val):
+            try:
+                val = val()
+            except Exception:
+                val = None
+        if isinstance(val, (int, float)):
+            entry[attr] = float(val)
+    try:
+        c = item.center()
+        cv = _vec_xyz(c)
+        if cv is not None:
+            entry["center"] = cv
+    except Exception:
+        pass
+    bb = _bbox_dict(item)
+    if bb is not None:
+        entry["bbox"] = bb
+    return entry
+
+
+def _summarize_value(value, *, per_item_limit: int = 12) -> dict:
+    """Build a JSON-safe report describing what an expression evaluated to."""
+    report: dict = {"py_type": type(value).__name__}
+    # Sequence of shapes (ShapeList, list, tuple)
+    if hasattr(value, "__iter__") and not isinstance(value, (str, bytes, dict)):
+        try:
+            items = list(value)
+        except Exception:
+            items = None
+        if items is not None:
+            report["count"] = len(items)
+            if items:
+                report["item_type"] = type(items[0]).__name__
+            total_length = 0.0
+            total_area = 0.0
+            for it in items:
+                ln = getattr(it, "length", None)
+                if callable(ln):
+                    try:
+                        ln = ln()
+                    except Exception:
+                        ln = None
+                if isinstance(ln, (int, float)):
+                    total_length += float(ln)
+                ar = getattr(it, "area", None)
+                if callable(ar):
+                    try:
+                        ar = ar()
+                    except Exception:
+                        ar = None
+                if isinstance(ar, (int, float)):
+                    total_area += float(ar)
+            if total_length > 0:
+                report["total_length"] = total_length
+            if total_area > 0:
+                report["total_area"] = total_area
+            report["items"] = [_summarize_one(it, i) for i, it in enumerate(items[:per_item_limit])]
+            if len(items) > per_item_limit:
+                report["items_truncated"] = len(items) - per_item_limit
+            return report
+    # Single shape (Edge / Face / Part / Wire / ...)
+    report.update(_summarize_one(value, 0))
+    return report
+
+
+def _build_probe_namespace(ns: dict) -> dict:
+    """Combine the executed part.py namespace with aicad_select + common build123d names."""
+    probe_ns = dict(ns)
+    result = ns.get("result", None)
+    probe_ns["result"] = result
+    probe_ns["part"] = result
+    try:
+        import aicad_select  # type: ignore
+        probe_ns["aicad_select"] = aicad_select
+        for name in getattr(aicad_select, "__all__", []):
+            probe_ns[name] = getattr(aicad_select, name)
+    except Exception as exc:
+        print(f"[probe] aicad_select unavailable: {exc}", file=sys.stderr)
+    try:
+        import build123d as _b123  # type: ignore
+        for name in ("Axis", "Plane", "Vector", "GeomType"):
+            if hasattr(_b123, name):
+                probe_ns.setdefault(name, getattr(_b123, name))
+    except Exception:
+        pass
+    return probe_ns
+
+
+def probe_expression(model_name: str, part_name: str, expression: str) -> int:
+    expression = (expression or "").strip()
+    if not expression:
+        print("[probe] empty expression", file=sys.stderr)
+        return 10
+    ns, source_path, err = _build_namespace(model_name, part_name)
+    if err:
+        return err
+    if ns.get("result", None) is None:
+        print(
+            f"[probe] {source_path} must define a global result object before probing.",
+            file=sys.stderr
+        )
+        return 4
+    probe_ns = _build_probe_namespace(ns)
+    try:
+        value = eval(expression, probe_ns, probe_ns)
+    except Exception as exc:
+        payload = {
+            "ok": False,
+            "expression": expression,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        print(f"{PROBE_BEGIN}\\n{json.dumps(payload)}\\n{PROBE_END}")
+        return 11
+    try:
+        summary = _summarize_value(value)
+    except Exception as exc:
+        payload = {
+            "ok": False,
+            "expression": expression,
+            "error": f"summarize failed: {type(exc).__name__}: {exc}",
+        }
+        print(f"{PROBE_BEGIN}\\n{json.dumps(payload)}\\n{PROBE_END}")
+        return 12
+    payload = {"ok": True, "expression": expression, "value": summary}
+    print(f"{PROBE_BEGIN}\\n{json.dumps(payload)}\\n{PROBE_END}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", default=None, help="Project root path (contains models/ and .cache/)")
@@ -224,6 +390,7 @@ def main() -> int:
     parser.add_argument("--part-name", default=None, help="Part directory name inside models/<model>/parts/")
     parser.add_argument("--export-format", default="brep", choices=["brep", "step", "stl"])
     parser.add_argument("--output", default=None, help="Optional absolute path for exported file")
+    parser.add_argument("--probe-expression", default=None, help="If set, build the part then evaluate this Python expression and emit a JSON report instead of exporting.")
     args = parser.parse_args()
     global PROJECT_ROOT, MODELS_DIR, CACHE_DIR
     PROJECT_ROOT = os.path.abspath(args.project) if args.project else HERE
@@ -232,6 +399,8 @@ def main() -> int:
     model_name = args.model or args.part
     if not model_name:
         parser.error("one of --model / --part is required")
+    if args.probe_expression is not None:
+        return probe_expression(model_name, args.part_name or model_name, args.probe_expression)
     return build_one(model_name, args.part_name or model_name, args.export_format, args.output)
 
 

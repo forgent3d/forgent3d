@@ -3,7 +3,13 @@
     "allow": [
       "Bash(xargs grep *)",
       "Read(//Users/vv/Documents/my-cad-project/ct27/models/cup/**)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(grep -n '`\\\\|\\\\${' /Users/vv/codes/forgent3d/electron/main.templates.export-runner.ts)",
+      "Bash(npm run *)",
+      "Bash(pnpm exec *)",
+      "Read(//Users/vv/Documents/my-cad-project/ct31/models/**)",
+      "Read(//Users/vv/Documents/my-cad-project/ct31/.agents/**)",
+      "Read(//Users/vv/Documents/my-cad-project/ct31/**)"
     ]
   }
 }

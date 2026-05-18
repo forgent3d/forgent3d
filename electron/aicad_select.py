@@ -20,6 +20,7 @@ Design notes
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
@@ -72,51 +73,162 @@ def _as_part(obj) -> Part | Compound:
 
 
 # --------------------------------------------------------------------------- #
+# Axis helpers                                                                #
+# --------------------------------------------------------------------------- #
+
+
+def _axis_index(axis) -> str:
+    """Map an Axis (Axis.X / Axis.Y / Axis.Z, or any unit-direction-bearing object)
+    to the attribute name 'X' / 'Y' / 'Z' used for point access and position filters.
+    Raises SelectionError when the axis is not aligned with a principal direction.
+    """
+    if axis is Axis.X:
+        return "X"
+    if axis is Axis.Y:
+        return "Y"
+    if axis is Axis.Z:
+        return "Z"
+    direction = getattr(axis, "direction", None)
+    if direction is None and isinstance(axis, (tuple, list)) and len(axis) == 3:
+        direction = Vector(*axis)
+    if direction is None:
+        raise SelectionError(f"_axis_index(): cannot interpret axis {axis!r}")
+    d = direction.normalized() if hasattr(direction, "normalized") else Vector(direction).normalized()
+    best = max((("X", abs(d.X)), ("Y", abs(d.Y)), ("Z", abs(d.Z))), key=lambda kv: kv[1])
+    if best[1] < 0.999:
+        raise SelectionError(
+            f"_axis_index(): axis is not aligned with a principal direction "
+            f"(X/Y/Z components: {d.X:.3f}, {d.Y:.3f}, {d.Z:.3f}). "
+            "Pass Axis.X, Axis.Y, or Axis.Z."
+        )
+    return best[0]
+
+
+def _axis_label(axis) -> str:
+    """Short, human-readable label for an axis in error messages.
+    Returns 'X' / 'Y' / 'Z' for principal axes, else a compact direction triple.
+    """
+    if axis is Axis.X:
+        return "X"
+    if axis is Axis.Y:
+        return "Y"
+    if axis is Axis.Z:
+        return "Z"
+    try:
+        d = _axis_direction(axis)
+        return f"({d.X:.3f}, {d.Y:.3f}, {d.Z:.3f})"
+    except Exception:
+        return repr(axis)
+
+
+def _axis_direction(axis) -> Vector:
+    """Unit Vector along the given axis (Axis or 3-tuple)."""
+    if hasattr(axis, "direction"):
+        d = axis.direction
+        return d.normalized() if hasattr(d, "normalized") else Vector(d).normalized()
+    if isinstance(axis, (tuple, list)) and len(axis) == 3:
+        return Vector(*axis).normalized()
+    raise SelectionError(f"_axis_direction(): cannot interpret axis {axis!r}")
+
+
+def _normalize_direction(value, label: str) -> str:
+    """Coerce a direction argument to the canonical 'max' or 'min'.
+
+    Accepts: 'max' / 'min' / 'top' / 'bottom' / '+' / '-' (strings),
+             a positive or negative number (1 / -1 / 1.0 / -1.0).
+    """
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("max", "top", "+", "high", "highest", "up"):
+            return "max"
+        if v in ("min", "bottom", "-", "low", "lowest", "down"):
+            return "min"
+        raise SelectionError(
+            f"{label}: direction must be 'max'/'min' (or 'top'/'bottom', or a signed number); got {value!r}"
+        )
+    if isinstance(value, bool):
+        return "max" if value else "min"
+    if isinstance(value, (int, float)):
+        if value > 0:
+            return "max"
+        if value < 0:
+            return "min"
+        raise SelectionError(f"{label}: direction must be non-zero; got 0")
+    raise SelectionError(
+        f"{label}: direction must be 'max'/'min' or a signed number; got {value!r} ({type(value).__name__})"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Edge selection                                                              #
 # --------------------------------------------------------------------------- #
 
 
-def edges_at_z(part, z: float, tol: float = 1e-3) -> ShapeList[Edge]:
-    """Edges whose entire span lies at height `z` (± tol).
+def edges_at(part, axis: Axis, value: float, tol: float = 1e-3) -> ShapeList[Edge]:
+    """Edges whose entire span lies at `value` along `axis` (± tol).
 
-    Use for selecting rim edges on a horizontal face. This is NOT the same as
-    `edges().filter_by(Axis.Z)`, which would pick vertical edges instead.
+    Generalization of `edges_at_z` to any principal axis. `axis` is `Axis.X`,
+    `Axis.Y`, or `Axis.Z`. This is position-based: it does NOT select edges
+    whose *direction* is parallel to `axis` — use `edges_parallel_to(part, axis)`
+    for that.
     """
     p = _as_part(part)
-    result = p.edges().filter_by_position(Axis.Z, z - tol, z + tol)
+    _axis_index(axis)  # validate
+    result = p.edges().filter_by_position(axis, value - tol, value + tol)
+    al = _axis_label(axis)
     return _require_nonempty(
-        f"edges_at_z(z={z})", result, f"no edges within ±{tol} of z={z}; check the face height", part=p
+        f"edges_at({al}, {value})",
+        result,
+        f"no edges within ±{tol} of {value} along {al}; check the face position",
+        part=p,
     )
+
+
+def extreme_edges(
+    part,
+    axis: Axis,
+    direction="max",
+    tol: float = 1e-3,
+) -> ShapeList[Edge]:
+    """Edges whose centers sit at the extreme position along `axis`.
+
+    `direction` selects which extreme; pass any of `'max'` / `'min'` / `'top'` /
+    `'bottom'`, or a signed number (positive → max, negative → min). The call
+    `extreme_edges(part, Axis.Z, 1)` therefore means "the topmost edges".
+
+    Generalization of `top_edges` / `bottom_edges`. Use this for "the rim on the
+    +X side of the part" or "every edge along the bottom of a bracket".
+    """
+    d = _normalize_direction(direction, "extreme_edges")
+    p = _as_part(part)
+    idx = _axis_index(axis)
+    al = _axis_label(axis)
+    edges = p.edges()
+    if len(edges) == 0:
+        raise SelectionError(f"extreme_edges({al}, {d}): part has no edges")
+    centers = [getattr(e.center(), idx) for e in edges]
+    target = max(centers) if d == "max" else min(centers)
+    return _require_nonempty(
+        f"extreme_edges({al}, {d})",
+        edges.filter_by_position(axis, target - tol, target + tol),
+        f"no edges grouped at the {d} of {al}; widen tol",
+        part=p,
+    )
+
+
+def edges_at_z(part, z: float, tol: float = 1e-3) -> ShapeList[Edge]:
+    """Edges whose entire span lies at height `z` (± tol). Alias for `edges_at(part, Axis.Z, z)`."""
+    return edges_at(part, Axis.Z, z, tol=tol)
 
 
 def top_edges(part, tol: float = 1e-3) -> ShapeList[Edge]:
-    """All edges sitting on the topmost horizontal face of `part`."""
-    p = _as_part(part)
-    edges = p.edges()
-    if len(edges) == 0:
-        raise SelectionError("top_edges(): part has no edges")
-    z_max = max(e.center().Z for e in edges)
-    return _require_nonempty(
-        "top_edges()",
-        edges.filter_by_position(Axis.Z, z_max - tol, z_max + tol),
-        "no edges grouped at the top; check tol",
-        part=p,
-    )
+    """All edges sitting on the topmost horizontal face of `part`. Alias for `extreme_edges(..., Axis.Z, 'max')`."""
+    return extreme_edges(part, Axis.Z, direction="max", tol=tol)
 
 
 def bottom_edges(part, tol: float = 1e-3) -> ShapeList[Edge]:
-    """All edges sitting on the bottom-most horizontal face of `part`."""
-    p = _as_part(part)
-    edges = p.edges()
-    if len(edges) == 0:
-        raise SelectionError("bottom_edges(): part has no edges")
-    z_min = min(e.center().Z for e in edges)
-    return _require_nonempty(
-        "bottom_edges()",
-        edges.filter_by_position(Axis.Z, z_min - tol, z_min + tol),
-        "no edges grouped at the bottom; check tol",
-        part=p,
-    )
+    """All edges sitting on the bottom-most horizontal face of `part`. Alias for `extreme_edges(..., Axis.Z, 'min')`."""
+    return extreme_edges(part, Axis.Z, direction="min", tol=tol)
 
 
 def vertical_edges(part) -> ShapeList[Edge]:
@@ -205,40 +317,75 @@ def circular_edges(part, radius: float | None = None, tol: float = 1e-3) -> Shap
 # --------------------------------------------------------------------------- #
 
 
-def top_face(part) -> Face:
-    """The single horizontal face with the highest Z. Raises if ambiguous."""
+def face_at(part, axis: Axis, value: float, tol: float = 1e-3) -> Face:
+    """The single planar face perpendicular to `axis` whose center sits at `value` along `axis` (± tol).
+
+    Generalization of `face_at_z` to any principal axis. Raises if 0 or >1 faces match.
+    """
     p = _as_part(part)
-    faces = p.faces().filter_by(Plane.XY).sort_by(Axis.Z)
-    if not faces:
-        raise SelectionError("top_face(): no horizontal (XY-plane) faces found. Hint: Is the part rotated?")
-    return faces[-1]
-
-
-def bottom_face(part) -> Face:
-    """The single horizontal face with the lowest Z."""
-    p = _as_part(part)
-    faces = p.faces().filter_by(Plane.XY).sort_by(Axis.Z)
-    if not faces:
-        raise SelectionError("bottom_face(): no horizontal (XY-plane) faces found. Hint: Is the part rotated?")
-    return faces[0]
-
-
-def face_at_z(part, z: float, tol: float = 1e-3) -> Face:
-    """The horizontal face whose center is at height `z` (± tol)."""
-    p = _as_part(part)
-    candidates = [f for f in p.faces().filter_by(Plane.XY) if abs(f.center().Z - z) <= tol]
+    idx = _axis_index(axis)
+    al = _axis_label(axis)
+    axis_dir = _axis_direction(axis)
+    candidates = [
+        f for f in p.faces().filter_by(GeomType.PLANE)
+        if abs(getattr(f.center(), idx) - value) <= tol
+        and abs(abs(f.normal_at().normalized().dot(axis_dir)) - 1.0) < 1e-2
+    ]
     if not candidates:
         bbox = p.bounding_box()
+        lo, hi = getattr(bbox.min, idx), getattr(bbox.max, idx)
         raise SelectionError(
-            f"face_at_z(z={z}) found 0 faces. "
-            f"Part Z-bounds: [{bbox.min.Z:.2f}, {bbox.max.Z:.2f}]. "
-            "Hint: Check your math for the z height."
+            f"face_at({al}, {value}) found 0 faces. "
+            f"Part {idx}-bounds: [{lo:.2f}, {hi:.2f}]. "
+            "Hint: check your math for the position."
         )
     if len(candidates) > 1:
         raise SelectionError(
-            f"face_at_z(z={z}): {len(candidates)} faces match; widen tol or use face_facing()"
+            f"face_at({al}, {value}): {len(candidates)} faces match; widen tol or use face_facing()"
         )
     return candidates[0]
+
+
+def extreme_face(part, axis: Axis, direction="max") -> Face:
+    """The planar face perpendicular to `axis` with the extreme center along `axis`.
+
+    `direction` selects which extreme; accepts `'max'` / `'min'` / `'top'` /
+    `'bottom'`, or a signed number (positive → max, negative → min).
+
+    Generalization of `top_face` / `bottom_face`.
+    """
+    d = _normalize_direction(direction, "extreme_face")
+    p = _as_part(part)
+    idx = _axis_index(axis)
+    al = _axis_label(axis)
+    axis_dir = _axis_direction(axis)
+    faces = [
+        f for f in p.faces().filter_by(GeomType.PLANE)
+        if abs(abs(f.normal_at().normalized().dot(axis_dir)) - 1.0) < 1e-2
+    ]
+    if not faces:
+        raise SelectionError(
+            f"extreme_face({al}, {d}): no planar face is perpendicular to {al}. "
+            "Hint: is the part rotated relative to that axis?"
+        )
+    keyed = [(f, getattr(f.center(), idx)) for f in faces]
+    chosen = max(keyed, key=lambda kv: kv[1]) if d == "max" else min(keyed, key=lambda kv: kv[1])
+    return chosen[0]
+
+
+def top_face(part) -> Face:
+    """The single horizontal face with the highest Z. Alias for `extreme_face(part, Axis.Z, 'max')`."""
+    return extreme_face(part, Axis.Z, direction="max")
+
+
+def bottom_face(part) -> Face:
+    """The single horizontal face with the lowest Z. Alias for `extreme_face(part, Axis.Z, 'min')`."""
+    return extreme_face(part, Axis.Z, direction="min")
+
+
+def face_at_z(part, z: float, tol: float = 1e-3) -> Face:
+    """The horizontal face whose center is at height `z` (± tol). Alias for `face_at(part, Axis.Z, z)`."""
+    return face_at(part, Axis.Z, z, tol=tol)
 
 
 def face_facing(part, direction: Vector | tuple[float, float, float]) -> ShapeList[Face]:
@@ -254,6 +401,187 @@ def face_facing(part, direction: Vector | tuple[float, float, float]) -> ShapeLi
     return _require_nonempty(
         "face_facing()", result, "no planar face has a normal aligned with that direction", part=p
     )
+
+
+# --------------------------------------------------------------------------- #
+# Feature edges (dihedral)                                                    #
+# --------------------------------------------------------------------------- #
+
+
+def _edge_fingerprint(e: Edge, ndigits: int = 4) -> tuple:
+    """Stable identity for an Edge across faces, based on rounded geometry."""
+    mid = e.position_at(0.5)
+    start = e.position_at(0.0)
+    end = e.position_at(1.0)
+    # Sort endpoints so direction does not affect identity.
+    a = (round(start.X, ndigits), round(start.Y, ndigits), round(start.Z, ndigits))
+    b = (round(end.X, ndigits), round(end.Y, ndigits), round(end.Z, ndigits))
+    if b < a:
+        a, b = b, a
+    return (
+        a,
+        b,
+        (round(mid.X, ndigits), round(mid.Y, ndigits), round(mid.Z, ndigits)),
+        round(float(e.length), ndigits),
+    )
+
+
+def _face_normal_at_edge(face: Face, edge: Edge):
+    """Outward face normal sampled near the edge midpoint.
+    Falls back to the face's center normal if the projection fails.
+    """
+    try:
+        return face.normal_at(edge.position_at(0.5)).normalized()
+    except Exception:
+        try:
+            return face.normal_at().normalized()
+        except Exception:
+            return None
+
+
+def feature_edges(part, *, min_angle: float = 30.0) -> ShapeList[Edge]:
+    """Edges where the two adjacent face normals differ by at least `min_angle` degrees.
+
+    These are the "sharp" or "feature" edges of a body — the visible corners
+    that a human would pick to chamfer/fillet. Smooth/tangent seams (e.g. the
+    longitudinal seam on a cylinder side) have parallel adjacent normals and
+    are excluded. Open-boundary edges (only one adjacent face) are also
+    excluded.
+
+    Example:
+        chamfered = safe_chamfer(part, feature_edges(part, min_angle=45), distance=0.5)
+    """
+    if not (0 < min_angle <= 180):
+        raise SelectionError(
+            f"feature_edges(min_angle={min_angle}): must be in (0, 180]."
+        )
+    p = _as_part(part)
+    edge_index: dict = {}
+    edge_to_faces: dict = {}
+    for f in p.faces():
+        for e in f.edges():
+            key = _edge_fingerprint(e)
+            edge_index.setdefault(key, e)
+            edge_to_faces.setdefault(key, []).append(f)
+    threshold = math.cos(math.radians(min_angle))
+    result_edges = []
+    for key, faces in edge_to_faces.items():
+        if len(faces) < 2:
+            continue
+        edge = edge_index[key]
+        n1 = _face_normal_at_edge(faces[0], edge)
+        n2 = _face_normal_at_edge(faces[1], edge)
+        if n1 is None or n2 is None:
+            continue
+        cos_a = max(-1.0, min(1.0, n1.dot(n2)))
+        if cos_a <= threshold:
+            result_edges.append(edge)
+    return _require_nonempty(
+        f"feature_edges(min_angle={min_angle})",
+        ShapeList(result_edges),
+        "no sharp edges meet that angle threshold; lower min_angle or check the part is not all smooth surfaces",
+        part=p,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Holes (cylindrical features)                                                #
+# --------------------------------------------------------------------------- #
+
+
+def _circle_axis_from_edge(e: Edge):
+    """Unit Vector of a circular edge's plane normal, derived from three sampled points.
+    Returns None if the edge is non-circular or degenerate.
+    """
+    try:
+        p0 = e.position_at(0.0)
+        p1 = e.position_at(0.25)
+        p2 = e.position_at(0.5)
+    except Exception:
+        return None
+    v1 = Vector(p1.X - p0.X, p1.Y - p0.Y, p1.Z - p0.Z)
+    v2 = Vector(p2.X - p0.X, p2.Y - p0.Y, p2.Z - p0.Z)
+    try:
+        n = v1.cross(v2)
+        length = math.sqrt(n.X * n.X + n.Y * n.Y + n.Z * n.Z)
+        if length < 1e-9:
+            return None
+        return Vector(n.X / length, n.Y / length, n.Z / length)
+    except Exception:
+        return None
+
+
+def _cylinder_face_axis_and_radius(face: Face):
+    """Return (axis_unit_vector, radius) for a cylindrical face, derived from a
+    bounding circular edge. Returns (None, None) when not derivable.
+    """
+    for e in face.edges():
+        gt = getattr(e, "geom_type", None)
+        gt_val = gt() if callable(gt) else gt
+        if gt_val != GeomType.CIRCLE:
+            continue
+        axis = _circle_axis_from_edge(e)
+        try:
+            radius = float(e.radius)
+        except Exception:
+            continue
+        if axis is not None:
+            return axis, radius
+    return None, None
+
+
+def holes(
+    part,
+    radius: float | None = None,
+    axis: Axis = Axis.Z,
+    tol: float = 1e-3,
+) -> ShapeList[Face]:
+    """Cylindrical faces whose axis is parallel to `axis`, optionally filtered by `radius` (± tol).
+
+    Returns the side walls of through-holes, blind holes, bores, and counterbores.
+    Each face exposes `.center()`, `.normal_at()`, and adjacent circular edges
+    via `.edges()` for downstream picking. Use the bounding circular edges
+    (via `circular_edges` or `edges_on_face`) when you need to chamfer the rim.
+
+    Example:
+        rim_edges = []
+        for hole in holes(part, radius=2.5, axis=Axis.Z):
+            rim_edges.extend(e for e in hole.edges() if e.geom_type == GeomType.CIRCLE)
+        chamfered = safe_chamfer(part, rim_edges, distance=0.3)
+    """
+    p = _as_part(part)
+    al = _axis_label(axis)
+    axis_dir = _axis_direction(axis)
+    all_cylinders = p.faces().filter_by(GeomType.CYLINDER)
+    if not all_cylinders:
+        raise SelectionError(
+            f"holes(axis={al}): part has no cylindrical faces. "
+            "Hint: maybe the holes are conical or modeled as polygonal cuts."
+        )
+    matching = []
+    radii_seen = []
+    for f in all_cylinders:
+        face_axis, face_radius = _cylinder_face_axis_and_radius(f)
+        if face_axis is None or face_radius is None:
+            continue
+        if abs(abs(face_axis.dot(axis_dir)) - 1.0) > 1e-2:
+            continue
+        radii_seen.append(round(face_radius, 4))
+        if radius is None or abs(face_radius - radius) <= tol:
+            matching.append(f)
+    if not matching:
+        if radius is not None and radii_seen:
+            unique_radii = sorted(set(radii_seen))
+            raise SelectionError(
+                f"holes(radius={radius}, axis={al}) found 0 matches. "
+                f"Cylindrical face radii on this axis: {unique_radii}. "
+                "Hint: use one of the actual radii or omit `radius`."
+            )
+        raise SelectionError(
+            f"holes(axis={al}) found 0 cylindrical faces parallel to that axis. "
+            "Hint: check the hole axis or pass a different `axis`."
+        )
+    return ShapeList(matching)
 
 
 # --------------------------------------------------------------------------- #
@@ -450,21 +778,38 @@ def _ensure_shapelist(x) -> ShapeList:
 
 __all__ = [
     "SelectionError",
+    # Edges — general (preferred)
+    "edges_at",
+    "extreme_edges",
+    # Edges — Z-axis aliases (back-compat)
     "edges_at_z",
     "top_edges",
     "bottom_edges",
+    # Edges — other
     "vertical_edges",
     "edges_parallel_to",
     "edges_on_face",
+    "outer_edges_at_z",
     "circular_edges",
+    # Faces — general (preferred)
+    "face_at",
+    "extreme_face",
+    # Faces — Z-axis aliases (back-compat)
     "top_face",
     "bottom_face",
     "face_at_z",
+    # Faces — other
     "face_facing",
+    # Feature edges
+    "feature_edges",
+    # Holes
+    "holes",
+    # Safe ops
     "safe_fillet",
     "safe_chamfer",
     "safe_add",
     "safe_cut",
+    # Sweep / loft
     "sweep_path",
     "swept",
     "lofted",

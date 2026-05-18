@@ -341,6 +341,45 @@ function formatGetModelInfo(r) {
   return lines.join('\n');
 }
 
+function formatProbeSelection(r) {
+  if (!r || typeof r !== 'object') return String(r);
+  if (!r.ok) {
+    const parts = [`error: ${r.error || 'probe failed'}`];
+    if (r.stderr) parts.push(`stderr: ${String(r.stderr).trim()}`);
+    return parts.join('\n');
+  }
+  const v = r.value || {};
+  const lines = [];
+  const header = [`expression: ${r.expression || ''}`];
+  if (v.py_type) header.push(`py_type=${v.py_type}`);
+  if (typeof v.count === 'number') {
+    header.push(`count=${v.count}`);
+    if (v.item_type) header.push(`item_type=${v.item_type}`);
+    if (typeof v.total_length === 'number') header.push(`total_length=${v.total_length.toFixed(3)}`);
+    if (typeof v.total_area === 'number') header.push(`total_area=${v.total_area.toFixed(3)}`);
+  }
+  lines.push(header.join('  '));
+  const fmtNum = (n) => (typeof n === 'number' ? n.toFixed(3) : String(n));
+  const fmtVec = (a) => Array.isArray(a) ? `(${a.map(fmtNum).join(', ')})` : '';
+  const renderItem = (it) => {
+    const segs = [`#${it.index}`, it.type];
+    if (it.geom_type) segs.push(it.geom_type);
+    if (typeof it.length === 'number') segs.push(`len=${fmtNum(it.length)}`);
+    if (typeof it.radius === 'number') segs.push(`r=${fmtNum(it.radius)}`);
+    if (typeof it.area === 'number') segs.push(`area=${fmtNum(it.area)}`);
+    if (it.center) segs.push(`center=${fmtVec(it.center)}`);
+    if (it.bbox?.size) segs.push(`size=${fmtVec(it.bbox.size)}`);
+    return '  ' + segs.join('  ');
+  };
+  if (Array.isArray(v.items)) {
+    for (const it of v.items) lines.push(renderItem(it));
+    if (v.items_truncated) lines.push(`  … (+${v.items_truncated} more truncated)`);
+  } else if (v.type) {
+    lines.push(renderItem({ index: 0, ...v }));
+  }
+  return lines.join('\n');
+}
+
 function toolLog(ctx, message, detail, level = 'info') {
   try {
     if (typeof ctx?.log === 'function') ctx.log(message, detail, level);
@@ -397,6 +436,16 @@ async function dispatch(name, args, ctx) {
         const r = await mcp.rebuildPartSync(String(a.model || ''));
         toolLog(ctx, 'rebuild_model done', { elapsedMs: Date.now() - startedAt, ok: !!r?.ok, error: r?.error || '' }, r?.ok ? 'info' : 'warn');
         return textResult(formatRebuildModel(r), !r?.ok);
+      }
+      case 'probe_selection': {
+        if (!mcp) return textResult('CAD context unavailable.', true);
+        const model = String(a.model || '');
+        const part = String(a.part || model);
+        const expression = String(a.expression || '');
+        toolLog(ctx, 'probe_selection start', { model, part, expression });
+        const r = await mcp.probePartSelection(model, part, expression);
+        toolLog(ctx, 'probe_selection done', { elapsedMs: Date.now() - startedAt, ok: !!r?.ok, error: r?.error || '' }, r?.ok ? 'info' : 'warn');
+        return textResult(formatProbeSelection(r), !r?.ok);
       }
       case 'screenshot_model': {
         if (!mcp) return textResult('CAD context unavailable.', true);
