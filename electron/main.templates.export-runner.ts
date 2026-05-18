@@ -13,13 +13,8 @@ Responsibilities:
   * Let the frontend parse BREP via occt-import-js for geometry inspection.
 """
 import argparse
-import fnmatch
-import importlib
-import inspect
 import json
 import os
-import pkgutil
-import re
 import sys
 import runpy
 import time
@@ -29,20 +24,6 @@ PROJECT_ROOT = HERE
 MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 CACHE_DIR = os.path.join(PROJECT_ROOT, ".cache")
 MODEL_KINDS = ("part",)
-CAD_API_MODULES = (
-    "build123d",
-    "bd_warehouse",
-    "bd_warehouse.fastener",
-    "bd_warehouse.bearing",
-    "bd_warehouse.gear",
-    "bd_warehouse.sprocket",
-    "bd_warehouse.thread",
-    "bd_warehouse.pipe",
-    "bd_warehouse.flange",
-    "bd_warehouse.material",
-    "bd_warehouse.profile",
-)
-CAD_API_ALLOWED_PREFIXES = ("build123d", "bd_warehouse")
 
 
 def _looks_like_build123d(obj) -> bool:
@@ -143,256 +124,6 @@ def _json_safe(value):
     raise TypeError(f"metadata contains non-JSON value of type {type(value).__name__}")
 
 
-def _safe_text(value, limit=4000):
-    try:
-        text = str(value or "")
-    except Exception as exc:
-        text = f"<unprintable: {exc}>"
-    text = re.sub(r"\\s+", " ", text).strip()
-    return text[:limit] + ("..." if len(text) > limit else "")
-
-
-def _cad_api_allowed_module(name):
-    return any(name == prefix or name.startswith(prefix + ".") for prefix in CAD_API_ALLOWED_PREFIXES)
-
-
-def _cad_api_public_name(name):
-    return bool(name) and not name.startswith("_")
-
-
-def _cad_api_import_module(name):
-    if not _cad_api_allowed_module(name):
-        raise ValueError(f"module is not allowed: {name}")
-    return importlib.import_module(name)
-
-
-def _cad_api_signature(obj):
-    try:
-        return str(inspect.signature(obj))
-    except Exception:
-        return ""
-
-
-def _cad_api_kind(obj):
-    if inspect.ismodule(obj):
-        return "module"
-    if inspect.isclass(obj):
-        return "class"
-    if inspect.isfunction(obj):
-        return "function"
-    if inspect.ismethod(obj):
-        return "method"
-    if inspect.isbuiltin(obj):
-        return "builtin"
-    if isinstance(obj, property):
-        return "property"
-    return type(obj).__name__
-
-
-def _cad_api_doc(obj, limit=2400):
-    return _safe_text(inspect.getdoc(obj) or "", limit)
-
-
-def _cad_api_summarize(module_name, name, obj):
-    qualname = module_name if not name else module_name + "." + name
-    return {
-        "symbol": qualname,
-        "name": name or module_name,
-        "module": module_name,
-        "kind": _cad_api_kind(obj),
-    }
-
-
-def _cad_api_visible_module_names(root_name):
-    curated = [name for name in CAD_API_MODULES if name == root_name or name.startswith(root_name + ".")]
-    if curated:
-        return curated
-    names = [root_name]
-    try:
-        root = _cad_api_import_module(root_name)
-        paths = getattr(root, "__path__", None)
-        if paths:
-            for info in pkgutil.iter_modules(paths):
-                fullname = root_name + "." + info.name
-                if _cad_api_allowed_module(fullname):
-                    names.append(fullname)
-    except Exception:
-        pass
-    return names
-
-
-def _cad_api_resolve(symbol=None, module_name=None):
-    if module_name:
-        module = _cad_api_import_module(module_name)
-        obj = module
-        qualname = module_name
-        member = str(symbol or "").strip()
-        if member == module_name:
-            member = ""
-        elif member.startswith(module_name + "."):
-            member = member[len(module_name) + 1:]
-        if member:
-            for part in member.split("."):
-                obj = getattr(obj, part)
-                qualname += "." + part
-        return module_name, qualname, obj
-
-    parts = str(symbol or "").strip().split(".")
-    for i in range(len(parts), 0, -1):
-        candidate = ".".join(parts[:i])
-        if not _cad_api_allowed_module(candidate):
-            continue
-        try:
-            module = importlib.import_module(candidate)
-        except Exception:
-            continue
-        obj = module
-        qualname = candidate
-        for part in parts[i:]:
-            obj = getattr(obj, part)
-            qualname += "." + part
-        return candidate, qualname, obj
-    raise ValueError(f"could not resolve symbol: {symbol}")
-
-
-def _cad_api_query_matcher(query):
-    query = str(query or "").strip()
-    if not query:
-        return None
-    lower_query = query.lower()
-    if lower_query.startswith("re:") or lower_query.startswith("regex:"):
-        pattern = query.split(":", 1)[1].strip()
-        if not pattern:
-            return None
-        try:
-            compiled = re.compile(pattern, re.IGNORECASE)
-        except re.error as exc:
-            raise ValueError(f"invalid query regex: {exc}")
-        return {
-            "needs_doc": False,
-            "matches_name": lambda qualname, name_haystack: bool(compiled.search(qualname)),
-            "matches_doc": lambda haystack: bool(compiled.search(haystack)),
-        }
-    if any(ch in query for ch in "*?[]"):
-        compiled = re.compile(fnmatch.translate(query), re.IGNORECASE)
-        return {
-            "needs_doc": False,
-            "matches_name": lambda qualname, name_haystack: bool(compiled.search(qualname)),
-            "matches_doc": lambda haystack: bool(compiled.search(haystack)),
-        }
-    terms = [term for term in re.split(r"\\s+", lower_query) if term]
-    return {
-        "needs_doc": True,
-        "matches_name": lambda qualname, name_haystack: all(term in name_haystack for term in terms),
-        "matches_doc": lambda haystack: all(term in haystack for term in terms),
-    }
-
-
-def _cad_api_search(payload):
-    query_matcher = _cad_api_query_matcher(payload.get("query"))
-    max_results = max(1, min(int(payload.get("maxResults") or 50), 200))
-    modules = payload.get("modules") or CAD_API_MODULES
-    expand_packages = bool(payload.get("expandPackages", False))
-
-    module_names = []
-    for module_name in modules:
-        module_name = str(module_name or "").strip()
-        if not module_name or not _cad_api_allowed_module(module_name):
-            continue
-        module_names.extend(_cad_api_visible_module_names(module_name) if expand_packages else [module_name])
-    module_names = list(dict.fromkeys(module_names))
-
-    results = []
-    errors = []
-    for module_name in module_names:
-        try:
-            module = _cad_api_import_module(module_name)
-        except Exception as exc:
-            errors.append({"module": module_name, "error": _safe_text(exc, 500)})
-            continue
-        for name in dir(module):
-            if not _cad_api_public_name(name):
-                continue
-            qualname = module_name + "." + name
-            try:
-                obj = getattr(module, name)
-            except Exception:
-                continue
-            kind = _cad_api_kind(obj)
-            name_haystack = (qualname + " " + kind).lower()
-            if query_matcher and not query_matcher["matches_name"](qualname, name_haystack):
-                if not query_matcher["needs_doc"]:
-                    continue
-                doc = inspect.getdoc(obj) or ""
-                haystack = (name_haystack + " " + doc[:500]).lower()
-                if not query_matcher["matches_doc"](haystack):
-                    continue
-            results.append(_cad_api_summarize(module_name, name, obj))
-            if len(results) >= max_results:
-                return {"ok": True, "results": results, "errors": errors, "truncated": True}
-    return {"ok": True, "results": results, "errors": errors, "truncated": False}
-
-
-def _cad_api_members(obj, qualname, limit=80):
-    rows = []
-    for name in dir(obj):
-        if not _cad_api_public_name(name):
-            continue
-        try:
-            member = getattr(obj, name)
-        except Exception:
-            continue
-        if inspect.ismodule(member):
-            continue
-        rows.append({
-            "name": name,
-            "symbol": qualname + "." + name,
-            "kind": _cad_api_kind(member),
-            "signature": _cad_api_signature(member),
-        })
-        if len(rows) >= limit:
-            break
-    return rows
-
-
-def _cad_api_read(payload):
-    module_name = str(payload.get("module") or "").strip()
-    symbol = str(payload.get("symbol") or "").strip()
-    if not module_name and not symbol:
-        raise ValueError("symbol is required")
-    resolved_module, qualname, obj = _cad_api_resolve(symbol=symbol, module_name=module_name or None)
-    item = {
-        "ok": True,
-        "symbol": qualname,
-        "module": resolved_module,
-        "kind": _cad_api_kind(obj),
-        "signature": _cad_api_signature(obj),
-        "doc": _cad_api_doc(obj, max(500, min(int(payload.get("maxDocChars") or 6000), 20000))),
-    }
-    if inspect.isclass(obj):
-        item["initSignature"] = _cad_api_signature(getattr(obj, "__init__", None))
-    if inspect.ismodule(obj) or inspect.isclass(obj):
-        item["members"] = _cad_api_members(obj, qualname, max(0, min(int(payload.get("maxMembers") or 80), 200)))
-    return item
-
-
-def inspect_cad_api() -> int:
-    try:
-        payload = json.loads(sys.stdin.read() or "{}")
-        action = payload.get("action")
-        if action == "search":
-            output = _cad_api_search(payload)
-        elif action == "read":
-            output = _cad_api_read(payload)
-        else:
-            raise ValueError(f"unknown action: {action}")
-        print(json.dumps(output, ensure_ascii=False))
-        return 0
-    except Exception as exc:
-        print(json.dumps({"ok": False, "error": _safe_text(exc, 2000)}, ensure_ascii=False))
-        return 1
-
-
 def _write_metadata(model_name: str, part_name: str, ns: dict):
     metadata = ns.get("metadata", None)
     if metadata is None:
@@ -488,7 +219,6 @@ def build_one(model_name: str, part_name: str = None, export_format: str = "brep
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", default=None, help="Project root path (contains models/ and .cache/)")
-    parser.add_argument("--inspect-cad-api", action="store_true", help="Inspect bundled build123d/bd_warehouse APIs from JSON stdin")
     parser.add_argument("--model", default=None, help="Model directory name")
     parser.add_argument("--part", default=None, help="Legacy alias for --model")
     parser.add_argument("--part-name", default=None, help="Part directory name inside models/<model>/parts/")
@@ -499,8 +229,6 @@ def main() -> int:
     PROJECT_ROOT = os.path.abspath(args.project) if args.project else HERE
     MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
     CACHE_DIR = os.path.join(PROJECT_ROOT, ".cache")
-    if args.inspect_cad_api:
-        return inspect_cad_api()
     model_name = args.model or args.part
     if not model_name:
         parser.error("one of --model / --part is required")

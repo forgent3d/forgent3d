@@ -971,20 +971,6 @@ function createMainLogicTools({ state, deps }) {
           capturedAt: new Date(info.capturedAt).toISOString()
         };
       },
-      async inspectCadApi(payload) {
-        const runtime = await deps.detectBuildRuntime(state.currentKernel());
-        if (!runtime) {
-          return { ok: false, error: deps.missingRuntimeMessage(state.currentKernel()) };
-        }
-        const args = ['--inspect-cad-api'];
-        if (state.currentProjectPath()) args.unshift('--project', state.currentProjectPath());
-        const cmd = deps.buildRuntimeSpawn(runtime, args);
-        return await runJsonChild(
-          spawn(cmd.cmd, cmd.args, { cwd: state.currentProjectPath() || undefined, shell: false, windowsHide: true }),
-          payload,
-          'CAD API inspector'
-        );
-      },
       handleDesktopAuthCallback(payload) {
         return deps.handleDesktopAuthCallback?.(payload) === true;
       },

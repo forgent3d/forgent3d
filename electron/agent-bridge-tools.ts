@@ -23,16 +23,6 @@ const LIST_MAX_ENTRIES_HARDCAP = 2000;
 const GREP_MAX_FILE_BYTES = 2_000_000;
 const GREP_LINE_PREVIEW_CHARS = 240;
 
-function formatCadApiSearch(r) {
-  if (!r?.ok) return r?.error || 'search_cad_api failed';
-  const results = Array.isArray(r.results) ? r.results : [];
-  if (!results.length) return '(no matches)';
-  const lines = results.map(s => `${s.symbol} (${s.kind})`);
-  if (r.truncated) lines.push(`[truncated — showing ${results.length} results, use a more specific query or increase maxResults]`);
-  else lines.push(`[${results.length} result${results.length === 1 ? '' : 's'}]`);
-  return lines.join('\n');
-}
-
 function textResult(text, isError) {
   const body = typeof text === 'string' ? text : JSON.stringify(text, null, 2);
   return {
@@ -407,20 +397,6 @@ async function dispatch(name, args, ctx) {
         const r = await mcp.rebuildPartSync(String(a.model || ''));
         toolLog(ctx, 'rebuild_model done', { elapsedMs: Date.now() - startedAt, ok: !!r?.ok, error: r?.error || '' }, r?.ok ? 'info' : 'warn');
         return textResult(formatRebuildModel(r), !r?.ok);
-      }
-      case 'search_cad_api': {
-        if (!mcp) return textResult('CAD context unavailable.', true);
-        toolLog(ctx, 'search_cad_api start', { query: a.query || a.name || a.symbol || '' });
-        const r = await mcp.inspectCadApi({ action: 'search', ...a });
-        toolLog(ctx, 'search_cad_api done', { elapsedMs: Date.now() - startedAt, ok: !!r?.ok }, r?.ok ? 'info' : 'warn');
-        return textResult(formatCadApiSearch(r), !r?.ok);
-      }
-      case 'read_cad_api': {
-        if (!mcp) return textResult('CAD context unavailable.', true);
-        toolLog(ctx, 'read_cad_api start', { path: a.path || a.name || '' });
-        const r = await mcp.inspectCadApi({ action: 'read', ...a });
-        toolLog(ctx, 'read_cad_api done', { elapsedMs: Date.now() - startedAt, ok: !!r?.ok }, r?.ok ? 'info' : 'warn');
-        return textResult(r, !r?.ok);
       }
       case 'screenshot_model': {
         if (!mcp) return textResult('CAD context unavailable.', true);
