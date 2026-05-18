@@ -15,6 +15,9 @@ const IGNORED_DIRS = new Set([
 const BLOCKED_WRITE_DIRS = new Set([
   '.git', 'node_modules', 'dist', 'dist-electron', 'build-cache', 'vendor',
 ]);
+const GENERATED_TEXT_FILENAMES = new Set([
+  'metadata.json',
+]);
 const READ_MAX_CHARS = 30000;
 const LIST_MAX_ENTRIES_HARDCAP = 2000;
 const GREP_MAX_FILE_BYTES = 2_000_000;
@@ -79,6 +82,10 @@ function isProbablyTextFile(filePath) {
   return TEXT_FILE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
 }
 
+function isGeneratedTextArtifact(filePath) {
+  return GENERATED_TEXT_FILENAMES.has(path.basename(filePath).toLowerCase());
+}
+
 async function listFiles(projectRoot, opts) {
   const o = opts && typeof opts === 'object' ? opts : {};
   const dir = typeof o.dir === 'string' && o.dir ? o.dir : '.';
@@ -102,6 +109,7 @@ async function listFiles(projectRoot, opts) {
         continue;
       }
       if (!isProbablyTextFile(full)) continue;
+      if (isGeneratedTextArtifact(full)) continue;
       if (!matchGlob(rel)) continue;
       if (entries.length < limit) entries.push(rel);
       else extra++;
@@ -181,6 +189,7 @@ async function grepProject(projectRoot, opts) {
       const full = path.join(current, child.name);
       if (child.isDirectory()) { await walk(full); continue; }
       if (!isProbablyTextFile(full)) continue;
+      if (isGeneratedTextArtifact(full)) continue;
       const rel = path.relative(projectRoot, full).replace(/\\/g, '/');
       if (!matchGlob(rel)) continue;
       let stat;
@@ -241,6 +250,7 @@ function assertWritableTextPath(projectRoot, userPath) {
   const rel = path.relative(projectRoot, filePath).replace(/\\/g, '/');
   const first = rel.split('/')[0];
   if (BLOCKED_WRITE_DIRS.has(first)) throw new Error(`Refusing to write generated or dependency path: ${rel}`);
+  if (isGeneratedTextArtifact(filePath)) throw new Error(`Refusing to write generated artifact: ${rel}`);
   if (!isProbablyTextFile(filePath)) throw new Error(`Refusing to write non-text file: ${rel}`);
   return { filePath, rel };
 }

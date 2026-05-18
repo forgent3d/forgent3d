@@ -35,6 +35,12 @@ function createMainUiTools({
       openProject: 'Open Project...',
       rebuild: 'Rebuild',
       revealInFolder: 'Reveal in Folder',
+      refreshAgentPrompts: 'Update Prompt...',
+      refreshAgentPromptsConfirmTitle: 'Update local prompts?',
+      refreshAgentPromptsConfirmMessage: 'This will overwrite local agent prompt and skill files for Codex, Claude Code, and Cursor CLI in the current project.',
+      refreshAgentPromptsDone: 'Updated local agent prompts and skills.',
+      refreshAgentPromptsFailed: 'Failed to update prompts',
+      cancel: 'Cancel',
       exportCurrentModel: 'Export Current Model',
       exportStep: 'Export STEP...',
       exportStl: 'Export STL...',
@@ -70,6 +76,12 @@ function createMainUiTools({
       openProject: '打开项目...',
       rebuild: '重新构建',
       revealInFolder: '在文件夹中显示',
+      refreshAgentPrompts: '更新 Prompt...',
+      refreshAgentPromptsConfirmTitle: '更新本地 Prompt？',
+      refreshAgentPromptsConfirmMessage: '这会覆盖当前项目中 Codex、Claude Code 和 Cursor CLI 的本地 prompt/skills 文件。',
+      refreshAgentPromptsDone: '已更新本地 agent prompt 和 skills。',
+      refreshAgentPromptsFailed: '更新 prompt 失败',
+      cancel: '取消',
       exportCurrentModel: '导出当前模型',
       exportStep: '导出 STEP...',
       exportStl: '导出 STL...',
@@ -109,6 +121,26 @@ function createMainUiTools({
 
   function setLanguage(language) {
     if (typeof deps.setLanguage === 'function') deps.setLanguage(language);
+  }
+
+  async function refreshAgentPromptsFromMenu() {
+    if (!state.currentProjectPath()) return;
+    const { response } = await dialog.showMessageBox(state.mainWindow(), {
+      type: 'warning',
+      buttons: [t('cancel'), t('refreshAgentPrompts')],
+      defaultId: 1,
+      cancelId: 0,
+      title: t('refreshAgentPromptsConfirmTitle'),
+      message: t('refreshAgentPromptsConfirmMessage')
+    });
+    if (response !== 1) return;
+    try {
+      await deps.refreshAgentWorkspace(state.currentProjectPath());
+      sendLog(t('refreshAgentPromptsDone'));
+    } catch (e) {
+      sendLog(`${t('refreshAgentPromptsFailed')}: ${e.message || e}`, 'error');
+      dialog.showErrorBox(t('refreshAgentPromptsFailed'), e.message || String(e));
+    }
   }
 
   function getMcpStatusPayload() {
@@ -251,6 +283,11 @@ function createMainUiTools({
             click: () => {
               if (state.currentProjectPath()) shell.openPath(state.currentProjectPath());
             }
+          },
+          {
+            label: t('refreshAgentPrompts'),
+            enabled: hasProject,
+            click: () => refreshAgentPromptsFromMenu()
           },
           {
             label: t('exportCurrentModel'),
@@ -433,6 +470,7 @@ function initMainUiTools(mainContext) {
       loadAppConfig: project.loadAppConfig,
       setLanguage: project.setLanguage,
       clearLastProjectPath: project.clearLastProjectPath,
+      refreshAgentWorkspace: ui.refreshAgentWorkspace,
       exportPartByRequest: exportApi.exportPartByRequest,
       scheduleBuild: build.scheduleBuild,
       flushPendingDesktopAuthCallbacks: ui.flushPendingDesktopAuthCallbacks,

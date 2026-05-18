@@ -48,29 +48,34 @@ function createMainLogicTools({ state, deps }) {
     return true;
   }
 
-  function bootstrapAgentWorkspace(projectPath, agent) {
+  function writeAgentTextFile(filePath, content, force = false) {
+    return force ? writeIfChanged(filePath, content) : writeIfMissing(filePath, content);
+  }
+
+  function bootstrapAgentWorkspace(projectPath, agent, opts = {}) {
+    const force = !!opts.force;
     switch (agent) {
       case 'cli':
         const cursorSkills = deps.getAgentSkills('Cursor');
         for (const rule of cursorSkills) {
-          writeIfMissing(path.join(projectPath, rule.relativePath), rule.content);
+          writeAgentTextFile(path.join(projectPath, rule.relativePath), rule.content, force);
         }
         writeIfChanged(path.join(projectPath, '.cursor', 'mcp.json'), deps.cursorMcpJson(deps.MCP_PORT));
         break;
       case 'codex':
         writeIfChanged(path.join(projectPath, '.codex', 'config.toml'), deps.codexConfigToml(deps.MCP_PORT));
-        writeIfMissing(path.join(projectPath, 'AGENTS.md'), deps.agentsMdTemplate());
+        writeAgentTextFile(path.join(projectPath, 'AGENTS.md'), deps.agentsMdTemplate(), force);
         const codexSkills = deps.getAgentSkills('OpenAI Codex');
         for (const rule of codexSkills) {
-          writeIfMissing(path.join(projectPath, rule.relativePath), rule.content);
+          writeAgentTextFile(path.join(projectPath, rule.relativePath), rule.content, force);
         }
         break;
       case 'claude':
         writeIfChanged(path.join(projectPath, '.mcp.json'), deps.claudeMcpJson(deps.MCP_PORT));
-        writeIfMissing(path.join(projectPath, 'CLAUDE.md'), deps.claudeMdTemplate());
+        writeAgentTextFile(path.join(projectPath, 'CLAUDE.md'), deps.claudeMdTemplate(), force);
         const claudeSkills = deps.getAgentSkills('Claude Code');
         for (const rule of claudeSkills) {
-          writeIfMissing(path.join(projectPath, rule.relativePath), rule.content);
+          writeAgentTextFile(path.join(projectPath, rule.relativePath), rule.content, force);
         }
         break;
       default:
@@ -78,40 +83,23 @@ function createMainLogicTools({ state, deps }) {
     }
   }
 
+  function refreshAgentWorkspace(projectPath) {
+    if (!projectPath) throw new Error('Open a project first.');
+    for (const agent of ['codex', 'claude', 'cli']) {
+      bootstrapAgentWorkspace(projectPath, agent, { force: true });
+    }
+    deps.sendLog('Updated local agent prompts and skills.');
+    return { ok: true, agents: ['codex', 'claude', 'cli'] };
+  }
+
   function initProjectLayout(projectPath, kernel) {
     const k = deps.assertKernel(kernel);
-    const meta = deps.kernelMeta(k);
 
     writeIfChanged(deps.projectMetaPath(projectPath), deps.aicadProjectJson(k));
     writeIfChanged(path.join(projectPath, '.gitignore'), '# Forgent3D\n.cache/\n__pycache__/\n*.pyc\n');
     fs.mkdirSync(path.join(projectPath, deps.MODELS_DIR), { recursive: true });
     fs.mkdirSync(path.join(projectPath, deps.CACHE_DIR), { recursive: true });
-
-    const sampleModelName = 'reference_mount';
-    const samplePartNames = ['mounting_plate', 'fastener_stack'];
-    const modelDir = deps.modelDir(projectPath, sampleModelName);
-    const asmSrcPath = deps.partSource(projectPath, sampleModelName, k, 'asm');
-    fs.mkdirSync(modelDir, { recursive: true });
-    writeIfMissing(
-      deps.modelParamsPath(projectPath, sampleModelName),
-      deps.modelParamsTemplate('asm', sampleModelName, 'Reference assembly parameters for a standard fastener mount.', { template: 'reference_mount' })
-    );
-    for (const partName of samplePartNames) {
-      const partSrcPath = deps.modelPartSource(projectPath, sampleModelName, partName, k);
-      fs.mkdirSync(path.dirname(partSrcPath), { recursive: true });
-      writeIfMissing(
-        deps.modelPartParamsPath(projectPath, sampleModelName, partName),
-        deps.modelParamsTemplate('part', partName, `Reference ${partName} parameters.`, { template: partName })
-      );
-      writeIfMissing(
-        partSrcPath,
-        deps.modelSourceTemplate(k, 'part', partName, `Reference ${partName}. Edit ${meta.sourceFile} to preview changes.`, { template: partName })
-      );
-    }
-    const asmTemplate = deps.modelSourceTemplate(k, 'asm', sampleModelName, 'Reference model package that composes a custom mounting plate with bd_warehouse fasteners.', { template: 'reference_mount', partNames: samplePartNames });
-    writeIfMissing(asmSrcPath, asmTemplate);
-    writeIfMissing(deps.partReadme(projectPath, sampleModelName), deps.modelReadmeTemplate(k, 'asm', sampleModelName, 'Reference mount model package for AI-assisted CAD generation.'));
-    deps.sendLog(`Sample model created: models/${sampleModelName}/asm.xml + models/${sampleModelName}/params.json + ${samplePartNames.map((partName) => `models/${sampleModelName}/parts/${partName}/${deps.modelSourceFilename(k, 'part')} + models/${sampleModelName}/parts/${partName}/params.json`).join(' + ')}`);
+    deps.sendLog(`Project initialized with ${deps.kernelMeta(k).label}; no sample model was created.`);
   }
 
   function ensureRuntimeDirs(projectPath) {
@@ -1040,6 +1028,7 @@ function createMainLogicTools({ state, deps }) {
     writeIfChanged,
     writeIfMissing,
     bootstrapAgentWorkspace,
+    refreshAgentWorkspace,
     initProjectLayout,
     ensureRuntimeDirs,
     listPartsRaw,

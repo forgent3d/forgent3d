@@ -529,7 +529,8 @@ function registerIpc() {
       getLanguage,
       setLanguage,
       sendLog,
-      bootstrapAgentWorkspace
+      bootstrapAgentWorkspace,
+      refreshAgentWorkspace
     }
   });
 }
@@ -642,22 +643,23 @@ function initModuleTools() {
     logging: {
       sendLog: (...args) => sendLog(...args)
     },
-    build: {
-      scheduleBuild: (...args) => scheduleBuild(...args),
-      ensurePartStlArtifact: (...args) => ensurePartStlArtifact(...args),
-      sendModelUpdated: (...args) => sendModelUpdated(...args)
+      build: {
+        scheduleBuild: (...args) => scheduleBuild(...args),
+        ensurePartStlArtifact: (...args) => ensurePartStlArtifact(...args),
+        sendModelUpdated: (...args) => sendModelUpdated(...args)
     },
     exportApi: {
       exportPartByRequest: (...args) => exportPartByRequest(...args),
       handleExportFromMenu: (...args) => handleExportFromMenu(...args)
     },
-    ui: {
-      rebuildAppMenu: (...args) => rebuildAppMenu(...args),
-      sendToRenderer: (...args) => sendToRenderer(...args),
-      sendLog: (...args) => sendLog(...args),
-      flushPendingDesktopAuthCallbacks: (...args) => flushPendingDesktopAuthCallbacks(...args),
-      markRendererDesktopAuthReady: (ready) => { rendererReadyForDesktopAuth = !!ready; },
-      handleDesktopAuthCallback: (...args) => handleDesktopAuthCallback(...args)
+      ui: {
+        rebuildAppMenu: (...args) => rebuildAppMenu(...args),
+        sendToRenderer: (...args) => sendToRenderer(...args),
+        sendLog: (...args) => sendLog(...args),
+        refreshAgentWorkspace: (...args) => refreshAgentWorkspace(...args),
+        flushPendingDesktopAuthCallbacks: (...args) => flushPendingDesktopAuthCallbacks(...args),
+        markRendererDesktopAuthReady: (ready) => { rendererReadyForDesktopAuth = !!ready; },
+        handleDesktopAuthCallback: (...args) => handleDesktopAuthCallback(...args)
     }
   };
 
@@ -743,13 +745,14 @@ function bootstrapAgentWorkspace(projectPath, agent) {
   return logicTools.bootstrapAgentWorkspace(projectPath, agent);
 }
 
+function refreshAgentWorkspace(projectPath) {
+  return logicTools.refreshAgentWorkspace(projectPath);
+}
+
 /**
  * Initialize a new project layout:
  *   - .aicad/project.json
- *   - models/reference_mount/asm.xml as the sample model entry
- *   - models/reference_mount/params.json for model-level parameters
- *   - models/reference_mount/parts/mounting_plate/part.py + params.json as the custom local part
- *   - models/reference_mount/parts/fastener_stack/part.py + params.json as the bd_warehouse hardware part
+ *   - empty models/ for user-created model packages
  *   - .cache/ for preview artifacts
  *   - .gitignore
  *   - agent-specific rules, skills, and MCP configs

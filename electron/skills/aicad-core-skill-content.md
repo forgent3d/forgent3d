@@ -4,9 +4,10 @@
 - Models live in `models/<model_name>/` and use root `asm.xml` plus root `params.json`.
 - Each rigid body lives inside the model package at `models/<model_name>/parts/<part_name>/part.py` and assigns the final build123d object to global `result`.
 - The bundled build runtime includes `bd_warehouse`; use it for standard hardware and mechanical catalog parts, while keeping custom structural geometry in build123d source.
-- Store only assembly-level values in root `params.json`: placement, motion, constraints, anchors copied from part metadata, and `__viewer` appearance. Do not put local part geometry knobs in root params for `asm.xml`.
+- Store only assembly-level values in root `params.json`: placement, motion, constraints, anchors derived from part source metadata, and `__viewer` appearance. Do not put local part geometry knobs in root params for `asm.xml`.
 - Store each part's geometry knobs beside that part in `models/<model_name>/parts/<part_name>/params.json`, including single-part models. Examples: teeth, bore, thickness, radii, hole sizes, feature counts, and local dimensions.
-- For assembly-ready parts, expose derived anchors through global `metadata`; the viewer writes `metadata.json` after rebuild.
+- For assembly-ready parts, expose derived anchors through global `metadata` in `part.py`.
+- Treat `metadata.json` as a generated rebuild artifact. Do not read, edit, or create it unless the user explicitly asks or you are debugging rebuild output.
 - Do not create project overview docs unless the user asks. The file tree and UI are the overview.
 
 ## Validation
@@ -31,7 +32,6 @@
 |  |  |  |- <part_name>/
 |  |  |  |  |- part.py
 |  |  |  |  |- params.json
-|  |  |  |  |- metadata.json    (auto-generated when `metadata` exists)
 |- .cache/                    (viewer cache, screenshots, transient artifacts)
 ```
 
