@@ -640,9 +640,18 @@ function registerIpcHandlers({
       bridgeLog('callTool missing tool name', { callId }, 'warn');
       return { isError: true, content: [{ type: 'text', text: 'Tool name is required.' }] };
     }
-    const args = payload?.args && typeof payload.args === 'object' ? payload.args : {};
+    const rawArgs = payload?.args;
+    const args = name === 'script'
+      ? { command: bridgeTools.normalizeScriptCommand(rawArgs) }
+      : (rawArgs && typeof rawArgs === 'object' ? rawArgs : {});
     const projectPath = state.currentProjectPath?.() || '';
-    bridgeLog('callTool received', { callId, name, projectPath, argKeys: Object.keys(args || {}) });
+    bridgeLog('callTool received', {
+      callId,
+      name,
+      projectPath,
+      argKeys: args && typeof args === 'object' ? Object.keys(args || {}) : [],
+      argType: typeof args
+    });
     let mcpContext = null;
     try {
       bridgeLog('buildMcpContext start', { callId, name });

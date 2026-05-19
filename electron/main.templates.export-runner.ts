@@ -349,6 +349,13 @@ def _build_probe_namespace(ns: dict) -> dict:
     except Exception as exc:
         print(f"[probe] aicad_select unavailable: {exc}", file=sys.stderr)
     try:
+        import aicad_attach  # type: ignore
+        probe_ns["aicad_attach"] = aicad_attach
+        for name in getattr(aicad_attach, "__all__", []):
+            probe_ns[name] = getattr(aicad_attach, name)
+    except Exception as exc:
+        print(f"[probe] aicad_attach unavailable: {exc}", file=sys.stderr)
+    try:
         import build123d as _b123  # type: ignore
         for name in ("Axis", "Plane", "Vector", "GeomType"):
             if hasattr(_b123, name):

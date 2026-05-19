@@ -41,6 +41,32 @@ function runCapture(cmd, args, opts = {}) {
 
 /* ---------------- Python detection ---------------- */
 
+const PLATFORM_TAG = `${process.platform}-${process.arch}`;
+
+function repoRootCandidates() {
+  return [
+    path.resolve(__dirname, '..'),
+    path.resolve(__dirname, '..', '..'),
+  ];
+}
+
+/** Same venv as `pnpm run build:runner` / scripts/run-aicad-script.js */
+function embeddedRunnerVenvCandidates() {
+  const rel = process.platform === 'win32'
+    ? path.join('venv', 'Scripts', 'python.exe')
+    : path.join('venv', 'bin', 'python3');
+  const seen = new Set();
+  const out = [];
+  for (const root of repoRootCandidates()) {
+    const candidate = path.join(root, 'build-cache', 'embedded-runner', PLATFORM_TAG, rel);
+    if (!seen.has(candidate)) {
+      seen.add(candidate);
+      out.push(candidate);
+    }
+  }
+  return out;
+}
+
 /**
  * Test whether a Python invocation spec is truly usable.
  * spec: {cmd, args}, e.g. {cmd:'python', args:[]} or {cmd:'py', args:['-3']}
@@ -55,14 +81,31 @@ async function probePython(spec) {
   return { ...spec, version: m[1], versionText: text };
 }
 
+async function acceptPython(spec, source, requireBuild123d) {
+  const ok = await probePython(spec);
+  if (!ok) return null;
+  if (requireBuild123d && !(await checkModule(ok, 'build123d'))) return null;
+  return { ...ok, source };
+}
+
 async function detectPython(options = {}) {
   const requireBuild123d = !!options.requireBuild123d;
   const cfg = loadConfig();
   if (cfg.pythonPath && fs.existsSync(cfg.pythonPath)) {
-    const ok = await probePython({ cmd: cfg.pythonPath, args: [] });
-    if (ok && (!requireBuild123d || await checkModule(ok, 'build123d'))) {
-      return { ...ok, source: 'user' };
-    }
+    const picked = await acceptPython({ cmd: cfg.pythonPath, args: [] }, 'user', requireBuild123d);
+    if (picked) return picked;
+  }
+
+  for (const cmd of embeddedRunnerVenvCandidates()) {
+    if (!fs.existsSync(cmd)) continue;
+    const picked = await acceptPython({ cmd, args: [] }, 'embedded-runner-venv', requireBuild123d);
+    if (picked) return picked;
+  }
+
+  const envBin = (process.env.AICAD_PYTHON_BIN || '').trim();
+  if (envBin && fs.existsSync(envBin)) {
+    const picked = await acceptPython({ cmd: envBin, args: [] }, 'AICAD_PYTHON_BIN', requireBuild123d);
+    if (picked) return picked;
   }
 
   const candidates = process.platform === 'win32'
@@ -70,10 +113,8 @@ async function detectPython(options = {}) {
     : [{ cmd: 'python3', args: [] }, { cmd: 'python', args: [] }];
 
   for (const c of candidates) {
-    const ok = await probePython(c);
-    if (ok && (await checkModule(ok, 'build123d'))) {
-      return { ...ok, source: 'path' };
-    }
+    const picked = await acceptPython(c, 'path', true);
+    if (picked) return picked;
   }
 
   if (requireBuild123d) return null;
@@ -81,6 +122,36 @@ async function detectPython(options = {}) {
   for (const c of candidates) {
     const ok = await probePython(c);
     if (ok) return { ...ok, source: 'path' };
+  }
+  return null;
+}
+
+/** Prefer embedded-runner venv (build123d) for agent script.py helpers. */
+async function detectRunnerPython() {
+  for (const cmd of embeddedRunnerVenvCandidates()) {
+    if (!fs.existsSync(cmd)) continue;
+    const picked = await acceptPython({ cmd, args: [] }, 'embedded-runner-venv', true);
+    if (picked) return picked;
+  }
+
+  const envBin = (process.env.AICAD_PYTHON_BIN || '').trim();
+  if (envBin && fs.existsSync(envBin)) {
+    const picked = await acceptPython({ cmd: envBin, args: [] }, 'AICAD_PYTHON_BIN', true);
+    if (picked) return picked;
+  }
+
+  const cfg = loadConfig();
+  if (cfg.pythonPath && fs.existsSync(cfg.pythonPath)) {
+    const picked = await acceptPython({ cmd: cfg.pythonPath, args: [] }, 'user', true);
+    if (picked) return picked;
+  }
+
+  const candidates = process.platform === 'win32'
+    ? [{ cmd: 'python', args: [] }, { cmd: 'python3', args: [] }, { cmd: 'py', args: ['-3'] }]
+    : [{ cmd: 'python3', args: [] }, { cmd: 'python', args: [] }];
+  for (const c of candidates) {
+    const picked = await acceptPython(c, 'path', true);
+    if (picked) return picked;
   }
   return null;
 }
@@ -148,6 +219,8 @@ module.exports = {
   loadConfig,
   saveConfig,
   detectPython,
+  detectRunnerPython,
+  embeddedRunnerVenvCandidates,
   getPythonStatus,
   setPythonPath,
   runCapture,

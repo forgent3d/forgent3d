@@ -56,7 +56,6 @@ function createMainUiTools({
       selectAll: 'Select All',
       view: 'View',
       reload: 'Reload',
-      developerTools: 'Developer Tools',
       debugTools: 'Debug Tools',
       actualSize: 'Actual Size',
       zoomIn: 'Zoom In',
@@ -98,7 +97,6 @@ function createMainUiTools({
       selectAll: '全选',
       view: '视图',
       reload: '重新加载',
-      developerTools: '开发者工具',
       debugTools: '调试工具',
       actualSize: '实际大小',
       zoomIn: '放大',
@@ -324,7 +322,6 @@ function createMainUiTools({
         label: t('view'),
         submenu: [
           { role: 'reload', label: t('reload') },
-          { role: 'toggleDevTools', label: t('developerTools') },
           {
             type: 'checkbox',
             label: t('debugTools'),

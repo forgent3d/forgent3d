@@ -87,7 +87,7 @@
     "files": [
       "dist-electron/electron/**",
       "electron/skills/**",
-      "electron/aicad_select.py",
+      "electron/skill-helpers/**",
       "dist/**",
       "assets/**",
       "package.json"

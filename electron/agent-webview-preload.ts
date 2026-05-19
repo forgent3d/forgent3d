@@ -56,7 +56,12 @@ if (isAllowedOrigin()) {
     callTool: async (name, args) => {
       const callId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       const startedAt = Date.now();
-      bridgeDebug('callTool -> ipc invoke', { callId, name, argKeys: Object.keys(args || {}) });
+      bridgeDebug('callTool -> ipc invoke', {
+        callId,
+        name,
+        argKeys: args && typeof args === 'object' ? Object.keys(args || {}) : [],
+        argType: typeof args
+      });
       try {
         const result = await ipcRenderer.invoke('agent:callTool', { name, args: args || {}, callId });
         bridgeDebug('callTool <- ipc result', {

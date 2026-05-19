@@ -15,7 +15,10 @@
 - Validate only through AI CAD Companion Viewer MCP tools while the viewer is running.
 - Do not run `python part.py`, `python -m`, `pytest`, `uv run`, `poetry run`, or local Python fallbacks for generated CAD validation.
 - Standard flow: edit source -> `rebuild_model({ model })` -> inspect `ok/stderr` -> optional `screenshot_model` or `get_model_info`.
-- Available MCP tools: `list_models`, `rebuild_model`, `screenshot_model`, `get_model_info`, imports, class signatures, or small build123d smoke tests before editing source.
+- Available CAD validation tools: `list_models`, `rebuild_model`, `screenshot_model`, `get_model_info`.
+- `script` is available for auxiliary project automation and external tool extensions. Its input is a single command string: `build -component <name>`, `inspect -from <a> -to <b>`, `inspect -meta <a>`, or `probe -component <model/part> -expr "top_edges(part)"`. Do not call Python directly or use scripts as a substitute for CAD validation.
+- **API lookup (error-only)**: do **not** call `api -module build123d` while planning or before a build attempt. The desktop bridge blocks api until `rebuild_model` or `script build` has failed. After a failure, use `api -module build123d -search <keyword>` or `api -module build123d -name <Symbol>` only to resolve API/signature mistakes in stderr — never a bare `api -module build123d` list. For selectors and topology use `probe`; for project patterns use `grep` and the build123d skill.
+- **Selection debugging**: when a selector or boolean is non-obvious, call `script` with `probe -component <model/part> -expr "<expression>"` to evaluate a one-line Python expression against a fresh build and inspect what it returns (count, type, total length/area, center, bbox). Use it before committing an edit to verify intent, and after an unexpected build to localize which selector returned the wrong entities. The expression namespace has `part`, all `aicad_select` helpers, and `Axis/Plane/Vector/GeomType` pre-imported.
 - If `rebuild_model` fails, fix the first deterministic error with the smallest change and rebuild again.
 - Keep final responses brief. Do not narrate internal validation unless a blocker needs user input.
 

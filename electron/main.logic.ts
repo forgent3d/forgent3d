@@ -1227,68 +1227,6 @@ function createMainLogicTools({ state, deps }) {
         const refreshed = await refreshViewerCachesAfterBuild(name);
         return { ...result, ...refreshed };
       },
-      async probePartSelection(name, part, expression) {
-        if (!state.currentProjectPath()) return { ok: false, error: 'No project is open in the preview app.' };
-        const source = deps.resolveModelSource(state.currentProjectPath(), name);
-        if (!source) return { ok: false, error: `Model does not exist: ${name}` };
-        const expr = String(expression ?? '').trim();
-        if (!expr) return { ok: false, error: 'probe_selection requires a non-empty expression.' };
-        const partName = String(part || name);
-        const partSource = deps.modelPartSource(state.currentProjectPath(), name, partName, state.currentKernel());
-        if (!fs.existsSync(partSource)) {
-          return { ok: false, error: `Part "${partName}" does not exist in model "${name}" (looked for ${path.relative(state.currentProjectPath(), partSource)}).` };
-        }
-        const runtime = await deps.detectBuildRuntime(state.currentKernel());
-        if (!runtime) {
-          return { ok: false, error: deps.missingRuntimeMessage(state.currentKernel()), reason: 'NO_RUNTIME' };
-        }
-        const cmd = deps.buildRuntimeSpawn(runtime, [
-          '--project', state.currentProjectPath(),
-          '--model', name,
-          '--part-name', partName,
-          '--probe-expression', expr
-        ]);
-        deps.sendLog(`[${name}/${partName}] probe selection: ${expr}`);
-        return await new Promise((resolve) => {
-          let stdout = '';
-          let stderr = '';
-          let child;
-          try {
-            child = spawn(cmd.cmd, cmd.args, { cwd: state.currentProjectPath(), shell: false, windowsHide: true, env: pythonChildProcessEnv() });
-          } catch (err) {
-            resolve({ ok: false, error: err?.message || String(err) });
-            return;
-          }
-          child.stdout?.on('data', (d) => { const s = d.toString(); stdout += s; deps.sendLog(s.trimEnd()); });
-          child.stderr?.on('data', (d) => { const s = d.toString(); stderr += s; deps.sendLog(s.trimEnd(), 'warn'); });
-          child.on('error', (err) => {
-            resolve({ ok: false, error: err?.message || String(err) });
-          });
-          child.on('exit', (code) => {
-            const begin = '__PROBE_JSON_BEGIN__';
-            const end = '__PROBE_JSON_END__';
-            const i = stdout.lastIndexOf(begin);
-            const j = stdout.lastIndexOf(end);
-            if (i >= 0 && j > i) {
-              const jsonText = stdout.slice(i + begin.length, j).trim();
-              try {
-                const payload = JSON.parse(jsonText);
-                resolve({ ...payload, exitCode: code });
-                return;
-              } catch (err) {
-                resolve({ ok: false, error: `probe JSON parse failed: ${err?.message || err}`, stderr, exitCode: code });
-                return;
-              }
-            }
-            resolve({
-              ok: false,
-              error: `probe runner produced no JSON report (exit ${code}).`,
-              stderr: stderr.slice(-2000),
-              exitCode: code
-            });
-          });
-        });
-      },
     };
   }
 

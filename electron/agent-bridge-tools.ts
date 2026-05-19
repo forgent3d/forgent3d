@@ -5,6 +5,8 @@ export {};
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
+const { spawn } = require('child_process');
+const { detectRunnerPython, pythonChildProcessEnv } = require('./python-env');
 
 const TEXT_FILE_EXTENSIONS = new Set([
   '.py', '.xml', '.json', '.md', '.txt', '.toml', '.yaml', '.yml', '.js', '.ts', '.tsx',
@@ -22,6 +24,10 @@ const READ_MAX_CHARS = 30000;
 const LIST_MAX_ENTRIES_HARDCAP = 2000;
 const GREP_MAX_FILE_BYTES = 2_000_000;
 const GREP_LINE_PREVIEW_CHARS = 240;
+const PYTHON_DEFAULT_TIMEOUT_MS = 15_000;
+const PYTHON_MAX_TIMEOUT_MS = 120_000;
+const PYTHON_DEFAULT_MAX_OUTPUT_CHARS = 30_000;
+const PYTHON_MAX_OUTPUT_CHARS = 120_000;
 
 function textResult(text, isError) {
   const body = typeof text === 'string' ? text : JSON.stringify(text, null, 2);
@@ -66,6 +72,35 @@ function resolveProjectPath(projectRoot, userPath) {
   const resolved = path.resolve(projectRoot, userPath);
   if (!isInside(projectRoot, resolved)) throw new Error(`Refusing to access outside project: ${userPath}`);
   return resolved;
+}
+
+function resolveProjectDir(projectRoot, userPath) {
+  const dirPath = resolveProjectPath(projectRoot, userPath || '.');
+  const stat = fs.existsSync(dirPath) ? fs.statSync(dirPath) : null;
+  if (!stat || !stat.isDirectory()) throw new Error(`Directory does not exist: ${userPath || '.'}`);
+  return dirPath;
+}
+
+function clampInt(value, fallback, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
+function appendPythonPath(env, entries) {
+  const key = process.platform === 'win32' ? 'PYTHONPATH' : 'PYTHONPATH';
+  const existing = env[key] ? String(env[key]) : '';
+  const sep = path.delimiter;
+  return {
+    ...env,
+    [key]: [...entries.filter(Boolean), existing].filter(Boolean).join(sep),
+  };
+}
+
+function trimCapturedOutput(text, maxChars) {
+  const body = String(text || '');
+  if (body.length <= maxChars) return body;
+  return `${body.slice(0, maxChars)}\n...[truncated ${body.length - maxChars} chars]`;
 }
 
 function isProbablyTextFile(filePath) {
@@ -287,6 +322,301 @@ async function replaceInFile(projectRoot, userPath, oldText, newText, replaceAll
   return `${header}\n${preview}`;
 }
 
+function scriptRunnerPath() {
+  const candidates = [
+    path.resolve(__dirname, '..', '..', 'cad-agent', 'lib', 'aicad-agent', 'script.py'),
+    path.resolve(__dirname, '..', '..', '..', 'cad-agent', 'lib', 'aicad-agent', 'script.py'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  throw new Error('Missing cad-agent script runner: cad-agent/lib/aicad-agent/script.py');
+}
+
+async function runPythonFile(projectRoot, scriptPath, opts) {
+  const o = opts && typeof opts === 'object' ? opts : {};
+  const cwd = resolveProjectDir(projectRoot, typeof o.cwd === 'string' && o.cwd ? o.cwd : '.');
+  const args = Array.isArray(o.args) ? o.args.map((v) => String(v)).slice(0, 50) : [];
+  const timeoutMs = clampInt(o.timeoutMs, PYTHON_DEFAULT_TIMEOUT_MS, 1000, PYTHON_MAX_TIMEOUT_MS);
+  const maxOutputChars = clampInt(o.maxOutputChars, PYTHON_DEFAULT_MAX_OUTPUT_CHARS, 1000, PYTHON_MAX_OUTPUT_CHARS);
+  const stdin = typeof o.stdin === 'string' ? o.stdin : '';
+
+  const py = await detectRunnerPython();
+  if (!py) {
+    throw new Error(
+      'No Python with build123d found for script commands. Run `pnpm run build:runner` to create the embedded-runner venv, or set AICAD_PYTHON_BIN.'
+    );
+  }
+  if (!fs.existsSync(scriptPath)) throw new Error('Python script does not exist: ' + scriptPath);
+
+  const startedAt = Date.now();
+  const env = appendPythonPath(pythonChildProcessEnv(), [
+    projectRoot,
+    path.dirname(scriptPath),
+    path.resolve(__dirname, '..', '..', 'electron', 'skill-helpers'),
+  ]);
+  if (o.env && typeof o.env === 'object' && !Array.isArray(o.env)) {
+    for (const [key, value] of Object.entries(o.env)) {
+      if (/^[A-Z_][A-Z0-9_]*$/.test(key) && value != null) env[key] = String(value);
+    }
+  }
+  env.AICAD_PROJECT_ROOT = projectRoot;
+  env.FORGENT3D_PROJECT_ROOT = projectRoot;
+
+  let timedOut = false;
+  const result = await new Promise((resolve) => {
+    const child = spawn(py.cmd, [...(py.args || []), scriptPath, ...args], {
+      cwd,
+      shell: false,
+      windowsHide: true,
+      env,
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (chunk) => { stdout += chunk.toString('utf8'); });
+    child.stderr?.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { child.kill(); } catch {}
+    }, timeoutMs);
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      resolve({ code: -1, stdout, stderr, error });
+    });
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code: code ?? (timedOut ? 124 : -1), signal, stdout, stderr, error: null });
+    });
+    if (stdin) child.stdin?.end(stdin);
+    else child.stdin?.end();
+  });
+
+  const elapsedMs = Date.now() - startedAt;
+  const relCwd = path.relative(projectRoot, cwd).replace(/\\/g, '/') || '.';
+  const stdout = trimCapturedOutput(result.stdout || '', maxOutputChars);
+  const stderr = trimCapturedOutput(result.stderr || '', maxOutputChars);
+  const codeLine = timedOut
+    ? 'Python timed out after ' + timeoutMs + 'ms'
+    : 'Python exited with code ' + result.code + (result.signal ? ' (signal ' + result.signal + ')' : '');
+  const body = [
+    [codeLine + ' in ' + elapsedMs + 'ms', 'interpreter: ' + (py.versionText || py.version || py.cmd), 'cwd: ' + relCwd].join('\n'),
+    'stdout:\n' + (stdout || '(empty)'),
+    'stderr:\n' + (stderr || '(empty)'),
+  ].join('\n\n');
+  return {
+    ok: !timedOut && result.code === 0,
+    text: body,
+    stdout,
+    stderr,
+    exitCode: result.code,
+    timedOut,
+    elapsedMs,
+  };
+}
+
+function normalizeScriptCommand(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value.trim();
+  if (Array.isArray(value)) return value.map((v) => String(v)).join(' ').trim();
+  if (typeof value === 'object') {
+    if (typeof value.command === 'string') return value.command.trim();
+    if (value.command != null) return normalizeScriptCommand(value.command);
+  }
+  const text = String(value).trim();
+  if (text === '[object Object]') {
+    throw new Error('script command must be a string, e.g. "probe -component model/part -expr top_edges(part)"');
+  }
+  return text;
+}
+
+function parseScriptCommand(value) {
+  const command = normalizeScriptCommand(value);
+  if (!command) throw new Error('script command is required');
+  const tokens = [];
+  let current = '';
+  let quote = '';
+  let escaped = false;
+  for (const ch of command) {
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) quote = '';
+      else current += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (current) {
+        tokens.push(current);
+        current = '';
+      }
+      continue;
+    }
+    current += ch;
+  }
+  if (escaped) current += '\\';
+  if (quote) throw new Error('Unclosed quote in script command.');
+  if (current) tokens.push(current);
+  if (!tokens.length) throw new Error('script command is required');
+  let script = tokens[0].replace(/^script[\\/]+/i, '').replace(/^[/\\]+|[/\\]+$/g, '').replace(/\\/g, '/');
+  if (!/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(script)) {
+    throw new Error(`Invalid script name: ${tokens[0]}`);
+  }
+  return { script, args: tokens.slice(1).map((v) => String(v)).slice(0, 50) };
+}
+
+function formatScriptPayload(payload) {
+  if (!payload || typeof payload !== 'object') return String(payload);
+  if (!payload.ok) return payload.error || JSON.stringify(payload, null, 2);
+  if (payload.script === 'build') {
+    const lines = [
+      `build -component ${payload.model}/${payload.part}`,
+      `source: ${payload.source}`,
+      `result: ${payload.hasResult ? payload.resultType : '(missing result)'}`,
+    ];
+    if (payload.bbox?.size) {
+      const fmt = (n) => typeof n === 'number' ? n.toFixed(3) : String(n);
+      lines.push(`bbox size: ${payload.bbox.size.map(fmt).join(', ')}`);
+    }
+    if (Array.isArray(payload.metadataKeys)) lines.push(`metadata: ${payload.metadataKeys.join(', ') || '(none)'}`);
+    return lines.join('\n');
+  }
+  if (payload.script === 'inspect' && payload.mode === 'meta') {
+    return [
+      `inspect -component ${payload.model}/${payload.part} -meta ${payload.path}`,
+      JSON.stringify(payload.value, null, 2),
+    ].join('\n');
+  }
+  if (payload.script === 'inspect' && payload.mode === 'measure') {
+    const fmt = (n) => typeof n === 'number' ? n.toFixed(3) : String(n);
+    return [
+      `inspect -component ${payload.model}/${payload.part} -from ${payload.a?.path} -to ${payload.b?.path}`,
+      `a: ${payload.a?.path} (${(payload.a?.point || []).map(fmt).join(', ')})`,
+      `b: ${payload.b?.path} (${(payload.b?.point || []).map(fmt).join(', ')})`,
+      `delta: ${(payload.delta || []).map(fmt).join(', ')}`,
+      `distance: ${fmt(payload.distance)}`,
+    ].join('\n');
+  }
+  if (payload.script === 'probe') {
+    const v = payload.value || {};
+    const lines = [];
+    const header = [`probe -component ${payload.model}/${payload.part} -expr "${payload.expression || ''}"`];
+    if (v.py_type) header.push(`py_type=${v.py_type}`);
+    if (typeof v.count === 'number') {
+      header.push(`count=${v.count}`);
+      if (v.item_type) header.push(`item_type=${v.item_type}`);
+      if (typeof v.total_length === 'number') header.push(`total_length=${v.total_length.toFixed(3)}`);
+      if (typeof v.total_area === 'number') header.push(`total_area=${v.total_area.toFixed(3)}`);
+    }
+    lines.push(header.join('  '));
+    const fmtNum = (n) => (typeof n === 'number' ? n.toFixed(3) : String(n));
+    const fmtVec = (a) => Array.isArray(a) ? `(${a.map(fmtNum).join(', ')})` : '';
+    const renderItem = (it) => {
+      const segs = [`#${it.index}`, it.type];
+      if (it.geom_type) segs.push(it.geom_type);
+      if (typeof it.length === 'number') segs.push(`len=${fmtNum(it.length)}`);
+      if (typeof it.radius === 'number') segs.push(`r=${fmtNum(it.radius)}`);
+      if (typeof it.area === 'number') segs.push(`area=${fmtNum(it.area)}`);
+      if (it.center) segs.push(`center=${fmtVec(it.center)}`);
+      if (it.bbox?.size) segs.push(`size=${fmtVec(it.bbox.size)}`);
+      return '  ' + segs.join('  ');
+    };
+    if (Array.isArray(v.items)) {
+      for (const it of v.items) lines.push(renderItem(it));
+      if (v.items_truncated) lines.push(`  ... (+${v.items_truncated} more truncated)`);
+    } else if (v.type) {
+      lines.push(renderItem({ index: 0, ...v }));
+    }
+    return lines.join('\n');
+  }
+  if (payload.script === 'api') {
+    const lines = [];
+    if (payload.name) {
+      lines.push(`api -module ${payload.module} -name ${payload.name}`);
+      lines.push(`kind: ${payload.kind || '?'}`);
+      if (payload.signature) lines.push(`signature: ${payload.signature}`);
+      if (payload.doc) lines.push(`doc:\n${payload.doc}`);
+      if (Array.isArray(payload.members) && payload.members.length) {
+        lines.push('members:');
+        for (const member of payload.members) {
+          const sig = member.signature ? ` ${member.signature}` : '';
+          lines.push(`  ${member.name}  ${member.kind || '?'}${sig}`);
+        }
+        if (payload.membersTruncated) lines.push(`  ... (+${payload.membersTruncated} more)`);
+      }
+      return lines.join('\n');
+    }
+    lines.push(`api -module ${payload.module}${payload.search ? ` -search ${payload.search}` : ''}`);
+    if (typeof payload.totalPublicSymbols === 'number') lines.push(`public symbols: ${payload.totalPublicSymbols}`);
+    if (Array.isArray(payload.symbols)) {
+      for (const symbol of payload.symbols) {
+        const sig = symbol.signature ? ` ${symbol.signature}` : '';
+        lines.push(`  ${symbol.name}  ${symbol.kind || '?'}${sig}`);
+      }
+    }
+    if (payload.truncated) lines.push('  ... (truncated; use -search or -name for details)');
+    return lines.join('\n');
+  }
+  return JSON.stringify(payload, null, 2);
+}
+
+function markCadBuildFailed(ctx) {
+  if (ctx) ctx.cadBuildFailed = true;
+}
+
+function markCadBuildOk(ctx) {
+  if (ctx) ctx.cadBuildFailed = false;
+}
+
+function apiLookupAllowed(ctx) {
+  return !!ctx?.cadBuildFailed;
+}
+
+function blockApiLookupMessage() {
+  return [
+    'api lookup blocked: only allowed after rebuild_model or script build reports an error.',
+    'Workflow: edit -> rebuild_model -> on failure use api -module build123d -search <keyword> or -name <Symbol>.',
+    'Do not call api while planning. For selectors/topology use probe; for conventions use skills and grep.',
+  ].join('\n');
+}
+
+async function runScript(projectRoot, command, ctx) {
+  const { script, args } = parseScriptCommand(command);
+  if (script === 'api' && !apiLookupAllowed(ctx)) {
+    return { ok: false, text: blockApiLookupMessage() };
+  }
+  const active = (() => {
+    try {
+      const data = ctx?.mcpContext?.listParts?.();
+      return String(data?.active || '');
+    } catch {
+      return '';
+    }
+  })();
+  const result = await runPythonFile(projectRoot, scriptRunnerPath(), {
+    args: [script, ...args],
+    env: active ? { AICAD_ACTIVE_MODEL: active } : {},
+  });
+  let payload = null;
+  try { payload = JSON.parse(result.stdout || '{}'); } catch {}
+  if (!payload) return { ok: false, text: result.text };
+  if (script === 'build') {
+    if (payload.ok) markCadBuildOk(ctx);
+    else markCadBuildFailed(ctx);
+  }
+  return { ok: !!payload.ok && result.ok, text: formatScriptPayload(payload) };
+}
+
 function formatListModels(data) {
   if (!data || typeof data !== 'object') return String(data);
   if (data.error) return data.error;
@@ -341,45 +671,6 @@ function formatGetModelInfo(r) {
   return lines.join('\n');
 }
 
-function formatProbeSelection(r) {
-  if (!r || typeof r !== 'object') return String(r);
-  if (!r.ok) {
-    const parts = [`error: ${r.error || 'probe failed'}`];
-    if (r.stderr) parts.push(`stderr: ${String(r.stderr).trim()}`);
-    return parts.join('\n');
-  }
-  const v = r.value || {};
-  const lines = [];
-  const header = [`expression: ${r.expression || ''}`];
-  if (v.py_type) header.push(`py_type=${v.py_type}`);
-  if (typeof v.count === 'number') {
-    header.push(`count=${v.count}`);
-    if (v.item_type) header.push(`item_type=${v.item_type}`);
-    if (typeof v.total_length === 'number') header.push(`total_length=${v.total_length.toFixed(3)}`);
-    if (typeof v.total_area === 'number') header.push(`total_area=${v.total_area.toFixed(3)}`);
-  }
-  lines.push(header.join('  '));
-  const fmtNum = (n) => (typeof n === 'number' ? n.toFixed(3) : String(n));
-  const fmtVec = (a) => Array.isArray(a) ? `(${a.map(fmtNum).join(', ')})` : '';
-  const renderItem = (it) => {
-    const segs = [`#${it.index}`, it.type];
-    if (it.geom_type) segs.push(it.geom_type);
-    if (typeof it.length === 'number') segs.push(`len=${fmtNum(it.length)}`);
-    if (typeof it.radius === 'number') segs.push(`r=${fmtNum(it.radius)}`);
-    if (typeof it.area === 'number') segs.push(`area=${fmtNum(it.area)}`);
-    if (it.center) segs.push(`center=${fmtVec(it.center)}`);
-    if (it.bbox?.size) segs.push(`size=${fmtVec(it.bbox.size)}`);
-    return '  ' + segs.join('  ');
-  };
-  if (Array.isArray(v.items)) {
-    for (const it of v.items) lines.push(renderItem(it));
-    if (v.items_truncated) lines.push(`  … (+${v.items_truncated} more truncated)`);
-  } else if (v.type) {
-    lines.push(renderItem({ index: 0, ...v }));
-  }
-  return lines.join('\n');
-}
-
 function toolLog(ctx, message, detail, level = 'info') {
   try {
     if (typeof ctx?.log === 'function') ctx.log(message, detail, level);
@@ -413,6 +704,13 @@ async function dispatch(name, args, ctx) {
       case 'replace_in_file':
         toolLog(ctx, 'replace_in_file start', { path: a.path, replaceAll: !!a.replaceAll });
         return textResult(await replaceInFile(projectPath, a.path, a.oldText, a.newText, !!a.replaceAll));
+      case 'script': {
+        const command = normalizeScriptCommand(typeof args === 'string' ? args : (a.command ?? args));
+        toolLog(ctx, 'script start', { command });
+        const r = await runScript(projectPath, command, ctx);
+        toolLog(ctx, 'script done', { elapsedMs: Date.now() - startedAt, ok: !!r.ok }, r.ok ? 'info' : 'warn');
+        return textResult(r.text, !r.ok);
+      }
       case 'list_models': {
         if (!mcp) return textResult('CAD context unavailable.', true);
         toolLog(ctx, 'list_models mcp.listParts start');
@@ -434,18 +732,10 @@ async function dispatch(name, args, ctx) {
         if (!mcp) return textResult('CAD context unavailable.', true);
         toolLog(ctx, 'rebuild_model start', { model: String(a.model || '') });
         const r = await mcp.rebuildPartSync(String(a.model || ''));
+        if (r?.ok) markCadBuildOk(ctx);
+        else markCadBuildFailed(ctx);
         toolLog(ctx, 'rebuild_model done', { elapsedMs: Date.now() - startedAt, ok: !!r?.ok, error: r?.error || '' }, r?.ok ? 'info' : 'warn');
         return textResult(formatRebuildModel(r), !r?.ok);
-      }
-      case 'probe_selection': {
-        if (!mcp) return textResult('CAD context unavailable.', true);
-        const model = String(a.model || '');
-        const part = String(a.part || model);
-        const expression = String(a.expression || '');
-        toolLog(ctx, 'probe_selection start', { model, part, expression });
-        const r = await mcp.probePartSelection(model, part, expression);
-        toolLog(ctx, 'probe_selection done', { elapsedMs: Date.now() - startedAt, ok: !!r?.ok, error: r?.error || '' }, r?.ok ? 'info' : 'warn');
-        return textResult(formatProbeSelection(r), !r?.ok);
       }
       case 'screenshot_model': {
         if (!mcp) return textResult('CAD context unavailable.', true);
@@ -494,4 +784,4 @@ async function dispatch(name, args, ctx) {
   }
 }
 
-module.exports = { dispatch };
+module.exports = { dispatch, normalizeScriptCommand };
