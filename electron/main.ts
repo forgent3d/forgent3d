@@ -60,7 +60,6 @@ const {
   claudeMdTemplate
 } = require('./main.templates.index');
 const { EXPORT_RUNNER_PYTHON } = require('./main.templates.export-runner');
-const { SKILL_HELPER_MODULES } = require('./main.templates.skill-helpers');
 
 const MCP_PORT = 41234;
 /** MCP startup error details, usually a port conflict. Null when running. */
@@ -441,9 +440,6 @@ function ensureElectronExportRunner() {
   const runnerPath = path.join(dir, 'export_runner.py');
   fs.mkdirSync(dir, { recursive: true });
   writeIfChanged(runnerPath, EXPORT_RUNNER_PYTHON);
-  for (const mod of SKILL_HELPER_MODULES) {
-    writeIfChanged(path.join(dir, mod.filename), mod.source);
-  }
   cachedElectronExportRunnerPath = runnerPath;
   return runnerPath;
 }

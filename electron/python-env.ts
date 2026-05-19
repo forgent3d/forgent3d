@@ -205,14 +205,34 @@ async function setPythonPath(pythonPath) {
 }
 
 /** Env for Python child processes (export_runner / bundled runner). Avoids GBK decode errors on Windows. */
+function skillHelpersDir() {
+  if (process.resourcesPath) {
+    const packaged = path.join(process.resourcesPath, 'skill-helpers');
+    if (fs.existsSync(packaged)) return packaged;
+  }
+  const dev = path.resolve(__dirname, '..', '..', 'electron', 'skill-helpers');
+  if (fs.existsSync(dev)) return dev;
+  return null;
+}
+
 function pythonChildProcessEnv() {
-  return {
+  const env = {
     ...process.env,
     PYTHONUTF8: '1',
     PYTHONIOENCODING: 'utf-8',
     LANG: 'C.UTF-8',
     LC_ALL: 'C.UTF-8'
   };
+  const helpers = skillHelpersDir();
+  if (helpers) {
+    env.AICAD_SKILL_HELPERS_DIR = helpers;
+    const sep = process.platform === 'win32' ? ';' : ':';
+    const existing = env.PYTHONPATH ? String(env.PYTHONPATH).split(sep).filter(Boolean) : [];
+    if (!existing.includes(helpers)) {
+      env.PYTHONPATH = [helpers, ...existing].join(sep);
+    }
+  }
+  return env;
 }
 
 module.exports = {
@@ -224,5 +244,6 @@ module.exports = {
   getPythonStatus,
   setPythonPath,
   runCapture,
-  pythonChildProcessEnv
+  pythonChildProcessEnv,
+  skillHelpersDir
 };

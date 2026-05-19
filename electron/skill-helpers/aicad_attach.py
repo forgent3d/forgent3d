@@ -1,16 +1,17 @@
 """aicad_attach — verifiable part-to-body connections for build123d.
 
-Ships with the Forgent3D bundled runtime. Prefer the three typed helpers over
-ad-hoc ``Location`` math:
+Ships with the Forgent3D bundled runtime. Use :func:`attach` as the default
+substitute for ``safe_add(host, guest.moved(Location(...)))``. It dispatches on
+the geometry of ``where``:
 
-    from aicad_attach import attach_pad, attach_handle, attach_tube
-    from aicad_select import top_face, holes
+    from aicad_attach import attach
+    from aicad_select import top_face, holes, face_facing
 
-    out = attach_pad(body, bracket, top_face(body), inset=1.0)
-    out = attach_handle(body, grip, host_point=(40, 0, 20), host_normal=(1, 0, 0))
-    out = attach_tube(body, sleeve, holes(body, radius=6, axis=Axis.Z)[0])
+    out = attach(body, bracket, top_face(body), inset=1.0)               # planar face → pad
+    out = attach(body, sleeve, holes(body, radius=6)[0])                 # cylinder → coaxial
+    out = attach(body, grip, ((40, 0, 20), (1, 0, 0)))                   # (point, normal) → stem
 
-Each helper builds a :class:`Connection`, runs ``verify_attach`` (probe-friendly),
+Each call builds a :class:`Connection`, runs ``verify_attach`` (probe-friendly),
 then ``safe_add``. Use ``.report.summary()`` or ``preview_attach`` before fusing.
 """
 
@@ -286,41 +287,45 @@ def _bbox_overlap(a, b) -> tuple[float, float, float]:
 
 
 def placement(conn: Connection) -> Location:
-    """Return the ``Location`` that aligns ``guest`` to ``host`` for ``conn``."""
+    """Return the ``Location`` that aligns ``guest`` to ``host`` for ``conn``.
+
+    The inset translation is in *world* coordinates (along ``conn.host.normal``),
+    so it must be left-multiplied — ``loc * Location(t)`` would treat ``t`` as
+    a guest-local offset and produce a diagonal anchor gap.
+    """
     guest_flip = conn.mate != "coincident"
     host_plane = conn.host.plane(flip_normal=False)
     guest_plane = conn.guest.plane(flip_normal=guest_flip)
     loc = host_plane.location * guest_plane.location.inverse()
     if conn.inset > 0:
         n = _unit(conn.host.normal, label="placement.inset")
-        loc = loc * Location(n * (-conn.inset))
+        loc = Location((-n.X * conn.inset, -n.Y * conn.inset, -n.Z * conn.inset)) * loc
     return loc
 
 
 def _transform_point(loc: Location, point: Vector) -> Vector:
-    for candidate in (point, (point.X, point.Y, point.Z)):
-        try:
-            out = loc * candidate
-            if isinstance(out, Vector):
-                return out
-            if hasattr(out, "X"):
-                return Vector(out.X, out.Y, out.Z)
-        except Exception:
-            continue
-    raise AttachError("_transform_point(): Location does not transform points in this build123d build")
+    """Apply a Location to a point, returning the world-space position.
+
+    Uses ``Plane(loc).from_local_coords`` since ``Location * Vector`` is not a
+    supported operation in build123d (it tries to call ``Vector.moved``).
+    """
+    try:
+        plane = Plane(loc)
+        out = plane.from_local_coords((float(point.X), float(point.Y), float(point.Z)))
+    except Exception as exc:
+        raise AttachError(f"_transform_point(): Plane(loc).from_local_coords failed: {exc}") from exc
+    if isinstance(out, Vector):
+        return out
+    if hasattr(out, "X"):
+        return Vector(out.X, out.Y, out.Z)
+    raise AttachError("_transform_point(): unexpected return type from Plane.from_local_coords")
 
 
 def _transform_direction(loc: Location, direction: Vector) -> Vector:
-    try:
-        orient = loc.orientation
-        rotated = orient * direction
-        if isinstance(rotated, Vector):
-            return _unit(rotated, label="transformed normal")
-    except Exception:
-        pass
+    """Apply a Location's rotation to a direction (translation cancels out)."""
     base = _transform_point(loc, Vector(0, 0, 0))
     tip = _transform_point(loc, direction)
-    return _unit(tip - base, label="transformed normal")
+    return _unit(tip - base, label="transformed direction")
 
 
 def verify_attach(
@@ -416,119 +421,104 @@ def attach_part(
 
 
 # --------------------------------------------------------------------------- #
-# Typed attach helpers                                                        #
+# General dispatcher                                                          #
 # --------------------------------------------------------------------------- #
 
 
-def attach_pad(
+def _face_geom_type(face: Face):
+    gt = getattr(face, "geom_type", None)
+    return gt() if callable(gt) else gt
+
+
+def _resolve_where(where, *, socket: Literal["bore", "boss"] = "bore"):
+    """Map a ``where`` argument to (kind, host_frame, default_guest_normal, default_inset, mate)."""
+    if isinstance(where, MountFrame):
+        return "custom", where, (0, 0, -1), 1.0, "flush"
+    if isinstance(where, Face):
+        gt = _face_geom_type(where)
+        if gt == GeomType.PLANE:
+            return "pad", frame_from_face(where), (0, 0, -1), 1.0, "flush"
+        if gt == GeomType.CYLINDER:
+            direction = "into" if socket == "bore" else "out"
+            return (
+                "tube",
+                frame_from_cylinder(where, direction=direction),
+                (0, 0, 1),
+                2.0,
+                "coincident",
+            )
+        raise AttachError(
+            f"attach(): unsupported face geom_type {gt!r}; pass a planar or cylindrical face, "
+            "a (point, normal) tuple, a MountFrame, or call attach_part() with a custom Connection"
+        )
+    if isinstance(where, (tuple, list)) and len(where) == 2:
+        point, normal = where
+        return "handle", mount_frame(point, normal), (0, 0, 1), 2.0, "flush"
+    raise AttachError(
+        f"attach(): could not interpret where={where!r}; pass a Face (planar or cylindrical), "
+        "a (point, normal) tuple, or a MountFrame"
+    )
+
+
+def attach(
     host,
     guest,
-    host_face: Face,
+    where,
     *,
     guest_origin: Sequence[float] | Vector = (0, 0, 0),
-    guest_normal: Sequence[float] | Vector = (0, 0, -1),
+    guest_normal: Sequence[float] | Vector | None = None,
     guest_x_hint: Sequence[float] | Vector | None = None,
-    inset: float = 1.0,
+    inset: float | None = None,
     min_overlap: float = 1.0,
-    name: str = "pad",
-    fuse: bool = True,
-    verify: bool = True,
-) -> AttachResult:
-    """Flush-mount a flat guest (pad, foot, cover) onto a planar host face.
-
-  ``guest_normal`` should point from the guest toward the host (default ``(0,0,-1)``
-  when the guest is modeled with its mating face on the XY plane at ``z=0``).
-  ``inset`` pushes the guest into the host along the face inward normal so
-  ``safe_add`` has real overlap instead of a tangent seam.
-    """
-    if inset <= 0:
-        raise AttachError("attach_pad(): inset must be > 0 for a fused pad mount")
-    host_frame = frame_from_face(host_face)
-    guest_frame = mount_frame(guest_origin, guest_normal, x_hint=guest_x_hint)
-    conn = define_connection(
-        name,
-        host=host_frame,
-        guest=guest_frame,
-        min_overlap=min_overlap,
-        inset=inset,
-        mate="flush",
-        kind="pad",
-    )
-    return attach_part(host, guest, conn, fuse=fuse, verify=verify)
-
-
-def attach_handle(
-    host,
-    guest,
-    *,
-    host_point: Sequence[float] | Vector,
-    host_normal: Sequence[float] | Vector,
-    guest_origin: Sequence[float] | Vector = (0, 0, 0),
-    guest_axis: Sequence[float] | Vector = (0, 0, 1),
-    penetration: float = 2.0,
-    min_overlap: float = 0.5,
-    name: str = "handle",
-    fuse: bool = True,
-    verify: bool = True,
-) -> AttachResult:
-    """Mount a handle/lug whose stem penetrates the host wall.
-
-  ``host_normal`` is outward from the host at the mount site. ``guest_axis`` is
-  the direction the stem enters the body in guest-local coords (defaults to
-  ``+Z``). The helper aligns ``guest_axis`` with ``-host_normal`` and applies
-  ``penetration`` inset so the stem is buried in solid material before fuse.
-    """
-    if penetration <= 0:
-        raise AttachError("attach_handle(): penetration must be > 0")
-    host_frame = mount_frame(host_point, host_normal)
-    guest_inward = _unit(_vec3(guest_axis, label="attach_handle.guest_axis"), label="guest_axis")
-    guest_frame = mount_frame(guest_origin, guest_inward)
-    conn = define_connection(
-        name,
-        host=host_frame,
-        guest=guest_frame,
-        min_overlap=min_overlap,
-        inset=penetration,
-        mate="flush",
-        kind="handle",
-    )
-    return attach_part(host, guest, conn, fuse=fuse, verify=verify)
-
-
-def attach_tube(
-    host,
-    guest,
-    host_socket: Face,
-    *,
-    guest_origin: Sequence[float] | Vector = (0, 0, 0),
-    guest_axis: Sequence[float] | Vector = (0, 0, 1),
     socket: Literal["bore", "boss"] = "bore",
-    overlap: float = 2.0,
-    min_overlap: float = 1.0,
-    name: str = "tube",
+    name: str | None = None,
     fuse: bool = True,
     verify: bool = True,
 ) -> AttachResult:
-    """Coaxially mount a tube, bushing, or liner on a cylindrical host feature.
+    """General sub-part mount: place ``guest`` on ``host`` at ``where``, verify, fuse.
 
-  Pass a cylindrical face from ``holes()`` (``socket='bore'``) or an external
-  boss side wall (``socket='boss'``). ``guest_axis`` is the tube centerline in
-  guest-local coords. ``overlap`` slides the guest along the shared axis into
-  the host before fuse.
+    The default for any time you would otherwise write
+    ``safe_add(host, guest.moved(Location(...)))``. ``where`` selects the host
+    mount geometry and the placement strategy:
+
+      - planar :class:`Face` (``top_face``, ``face_at``, ``face_facing`` …) →
+        flush flat mount (pad / foot / bracket / cover). Default ``inset=1.0``.
+      - cylindrical :class:`Face` (``holes(host)[0]``) → coaxial mount
+        (tube / bushing / liner / sleeve). Default ``inset=2.0``. Use
+        ``socket='boss'`` for an external boss instead of a bore.
+      - ``(point, normal)`` tuple → stem / lug mount at an arbitrary point with
+        the stem buried into the wall. Default ``inset=2.0``.
+      - :class:`MountFrame` (from ``mount_frame`` / ``frame_from_metadata``) →
+        direct frame mount for custom anchors. Default ``inset=1.0``.
+
+    Guest defaults assume the mating feature is modeled at the guest's local
+    origin: flat mounts expect the mating face on XY at ``z=0`` (normal
+    ``(0,0,-1)`` pointing toward host); coaxial and stem mounts expect the
+    centerline along ``+Z``. Override via ``guest_origin``, ``guest_normal``,
+    ``guest_x_hint`` when the guest is modeled differently.
+
+    Verifies anchor coincidence, normal alignment, and bbox overlap before
+    fusing; raises :class:`AttachError` with a hint on failure. To probe a
+    placement without raising or fusing, call with ``fuse=False, verify=False``
+    and inspect ``result.report.summary()`` and ``result.part`` (a
+    :class:`Compound` of host + positioned guest). ``result.connection`` exposes
+    the underlying :class:`Connection` for use with :func:`preview_attach` /
+    :func:`verify_attach` if more detailed inspection is needed.
     """
-    if overlap <= 0:
-        raise AttachError("attach_tube(): overlap must be > 0")
-    direction = "into" if socket == "bore" else "out"
-    host_frame = frame_from_cylinder(host_socket, direction=direction)
-    guest_frame = mount_frame(guest_origin, guest_axis)
+    kind, host_frame, default_normal, default_inset, mate = _resolve_where(
+        where, socket=socket
+    )
+    guest_n = guest_normal if guest_normal is not None else default_normal
+    inset_val = inset if inset is not None else default_inset
+    guest_frame = mount_frame(guest_origin, guest_n, x_hint=guest_x_hint)
     conn = define_connection(
-        name,
+        name or kind,
         host=host_frame,
         guest=guest_frame,
         min_overlap=min_overlap,
-        inset=overlap,
-        mate="coincident",
-        kind="tube",
+        inset=inset_val,
+        mate=mate,
+        kind=kind,
     )
     return attach_part(host, guest, conn, fuse=fuse, verify=verify)
 
@@ -539,10 +529,8 @@ __all__ = [
     "AttachResult",
     "Connection",
     "MountFrame",
-    "attach_handle",
-    "attach_pad",
+    "attach",
     "attach_part",
-    "attach_tube",
     "define_connection",
     "frame_from_cylinder",
     "frame_from_face",

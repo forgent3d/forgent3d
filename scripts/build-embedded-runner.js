@@ -12,16 +12,7 @@ function loadExportRunnerPython() {
   throw new Error('Missing compiled Electron templates. Run `npm run build:electron` before `npm run build:runner`.');
 }
 
-function loadSkillHelpers() {
-  const compiledTemplate = path.join(__dirname, '..', 'dist-electron', 'electron', 'main.templates.skill-helpers.js');
-  if (fs.existsSync(compiledTemplate)) {
-    return require(compiledTemplate).SKILL_HELPER_MODULES;
-  }
-  throw new Error('Missing compiled skill-helpers template. Run `npm run build:electron` before `npm run build:runner`.');
-}
-
 const EXPORT_RUNNER_PYTHON = loadExportRunnerPython();
-const SKILL_HELPERS = loadSkillHelpers();
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const PLATFORM_TAG = `${process.platform}-${process.arch}`;
@@ -137,15 +128,15 @@ function venvPythonPath() {
 function ensureRunnerSource() {
   fs.mkdirSync(SRC_DIR, { recursive: true });
   fs.writeFileSync(SCRIPT_PATH, EXPORT_RUNNER_PYTHON, 'utf8');
-  for (const mod of SKILL_HELPERS) {
-    fs.writeFileSync(path.join(SRC_DIR, mod.filename), mod.source, 'utf8');
-  }
   fs.writeFileSync(RUNTIME_HOOK_PATH, [
     'import os',
     'import sys',
     'if sys.platform == "win32":',
     '    os.environ["PYTHONUTF8"] = "1"',
     '    os.environ["PYTHONIOENCODING"] = "utf-8"',
+    '_helpers = os.environ.get("AICAD_SKILL_HELPERS_DIR")',
+    'if _helpers and os.path.isdir(_helpers) and _helpers not in sys.path:',
+    '    sys.path.insert(0, _helpers)',
     ''
   ].join('\n'), 'utf8');
 }
@@ -188,10 +179,6 @@ function buildRunner(venvPython) {
     SRC_DIR,
     '--runtime-hook',
     RUNTIME_HOOK_PATH,
-    '--hidden-import',
-    'aicad_select',
-    '--hidden-import',
-    'aicad_attach',
     '--collect-all',
     'build123d',
     '--collect-all',

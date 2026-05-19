@@ -99,6 +99,13 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "electron/skill-helpers",
+        "to": "skill-helpers",
+        "filter": [
+          "*.py"
+        ]
       }
     ],
     "publish": {

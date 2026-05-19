@@ -9,7 +9,12 @@
       "Bash(pnpm exec *)",
       "Read(//Users/vv/Documents/my-cad-project/ct31/models/**)",
       "Read(//Users/vv/Documents/my-cad-project/ct31/.agents/**)",
-      "Read(//Users/vv/Documents/my-cad-project/ct31/**)"
+      "Read(//Users/vv/Documents/my-cad-project/ct31/**)",
+      "Bash(python3 *)",
+      "Bash(echo \"---tsc exit: $?---\")",
+      "Bash(echo \"tsc exit: $?\")",
+      "Bash(PYTHONPATH=/Users/vv/codes/forgent3d/electron/skill-helpers $VENV_PY *)",
+      "Bash($VENV_PY *)"
     ]
   }
 }

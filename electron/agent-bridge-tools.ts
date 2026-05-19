@@ -333,6 +333,57 @@ function scriptRunnerPath() {
   throw new Error('Missing cad-agent script runner: cad-agent/lib/aicad-agent/script.py');
 }
 
+function archetypesDir() {
+  const candidates = [
+    path.resolve(__dirname, '..', '..', 'cad-agent', 'lib', 'aicad-agent', 'skills', 'archetypes'),
+    path.resolve(__dirname, '..', '..', '..', 'cad-agent', 'lib', 'aicad-agent', 'skills', 'archetypes'),
+    process.resourcesPath ? path.join(process.resourcesPath, 'cad-agent-skills', 'archetypes') : null,
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+function readArchetype(name) {
+  const dir = archetypesDir();
+  if (!dir) return { ok: false, text: 'Archetypes directory not found. Looked under cad-agent/lib/aicad-agent/skills/archetypes/.' };
+  if (!name) {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir).filter(f => f.endsWith('.md')).sort();
+    } catch (e) {
+      return { ok: false, text: `Failed to read archetypes directory: ${e && e.message ? e.message : e}` };
+    }
+    if (!entries.length) return { ok: true, text: 'No archetypes available.' };
+    const summaries = entries.map(file => {
+      const slug = path.basename(file, '.md');
+      let signals = '';
+      try {
+        const text = fs.readFileSync(path.join(dir, file), 'utf8');
+        const match = text.match(/###\s*Match signals\s*\n([\s\S]*?)(?:\n###|$)/);
+        if (match) {
+          signals = match[1].trim().replace(/\s+/g, ' ').slice(0, 240);
+        } else {
+          const firstPara = text.split(/\n\s*\n/).find(p => p.trim() && !p.startsWith('##')) || '';
+          signals = firstPara.trim().replace(/\s+/g, ' ').slice(0, 240);
+        }
+      } catch {}
+      return `- **${slug}** — ${signals || '(no description)'}`;
+    });
+    return { ok: true, text: `Available archetypes (call archetype(name=<slug>) to load full recipe):\n${summaries.join('\n')}` };
+  }
+  const file = path.join(dir, `${name}.md`);
+  if (!fs.existsSync(file)) {
+    return { ok: false, text: `Archetype '${name}' not found. Call archetype() with no name to list available archetypes.` };
+  }
+  try {
+    return { ok: true, text: fs.readFileSync(file, 'utf8') };
+  } catch (e) {
+    return { ok: false, text: `Failed to read archetype '${name}': ${e && e.message ? e.message : e}` };
+  }
+}
+
 async function runPythonFile(projectRoot, scriptPath, opts) {
   const o = opts && typeof opts === 'object' ? opts : {};
   const cwd = resolveProjectDir(projectRoot, typeof o.cwd === 'string' && o.cwd ? o.cwd : '.');
@@ -353,7 +404,6 @@ async function runPythonFile(projectRoot, scriptPath, opts) {
   const env = appendPythonPath(pythonChildProcessEnv(), [
     projectRoot,
     path.dirname(scriptPath),
-    path.resolve(__dirname, '..', '..', 'electron', 'skill-helpers'),
   ]);
   if (o.env && typeof o.env === 'object' && !Array.isArray(o.env)) {
     for (const [key, value] of Object.entries(o.env)) {
@@ -570,31 +620,8 @@ function formatScriptPayload(payload) {
   return JSON.stringify(payload, null, 2);
 }
 
-function markCadBuildFailed(ctx) {
-  if (ctx) ctx.cadBuildFailed = true;
-}
-
-function markCadBuildOk(ctx) {
-  if (ctx) ctx.cadBuildFailed = false;
-}
-
-function apiLookupAllowed(ctx) {
-  return !!ctx?.cadBuildFailed;
-}
-
-function blockApiLookupMessage() {
-  return [
-    'api lookup blocked: only allowed after rebuild_model or script build reports an error.',
-    'Workflow: edit -> rebuild_model -> on failure use api -module build123d -search <keyword> or -name <Symbol>.',
-    'Do not call api while planning. For selectors/topology use probe; for conventions use skills and grep.',
-  ].join('\n');
-}
-
 async function runScript(projectRoot, command, ctx) {
   const { script, args } = parseScriptCommand(command);
-  if (script === 'api' && !apiLookupAllowed(ctx)) {
-    return { ok: false, text: blockApiLookupMessage() };
-  }
   const active = (() => {
     try {
       const data = ctx?.mcpContext?.listParts?.();
@@ -610,10 +637,6 @@ async function runScript(projectRoot, command, ctx) {
   let payload = null;
   try { payload = JSON.parse(result.stdout || '{}'); } catch {}
   if (!payload) return { ok: false, text: result.text };
-  if (script === 'build') {
-    if (payload.ok) markCadBuildOk(ctx);
-    else markCadBuildFailed(ctx);
-  }
   return { ok: !!payload.ok && result.ok, text: formatScriptPayload(payload) };
 }
 
@@ -711,6 +734,13 @@ async function dispatch(name, args, ctx) {
         toolLog(ctx, 'script done', { elapsedMs: Date.now() - startedAt, ok: !!r.ok }, r.ok ? 'info' : 'warn');
         return textResult(r.text, !r.ok);
       }
+      case 'archetype': {
+        const name = String(a.name || '').trim();
+        toolLog(ctx, 'archetype start', { name: name || '(list)' });
+        const r = readArchetype(name);
+        toolLog(ctx, 'archetype done', { elapsedMs: Date.now() - startedAt, ok: !!r.ok, name: name || '(list)' }, r.ok ? 'info' : 'warn');
+        return textResult(r.text, !r.ok);
+      }
       case 'list_models': {
         if (!mcp) return textResult('CAD context unavailable.', true);
         toolLog(ctx, 'list_models mcp.listParts start');
@@ -732,8 +762,6 @@ async function dispatch(name, args, ctx) {
         if (!mcp) return textResult('CAD context unavailable.', true);
         toolLog(ctx, 'rebuild_model start', { model: String(a.model || '') });
         const r = await mcp.rebuildPartSync(String(a.model || ''));
-        if (r?.ok) markCadBuildOk(ctx);
-        else markCadBuildFailed(ctx);
         toolLog(ctx, 'rebuild_model done', { elapsedMs: Date.now() - startedAt, ok: !!r?.ok, error: r?.error || '' }, r?.ok ? 'info' : 'warn');
         return textResult(formatRebuildModel(r), !r?.ok);
       }
