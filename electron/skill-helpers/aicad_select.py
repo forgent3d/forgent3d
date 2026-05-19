@@ -776,6 +776,109 @@ def _ensure_shapelist(x) -> ShapeList:
     return ShapeList([x])
 
 
+# --------------------------------------------------------------------------- #
+# High-Level Macros                                                           #
+# --------------------------------------------------------------------------- #
+
+
+def make_revolved_shell(profile_curves, thickness: float, axis: Axis = Axis.Z) -> Part:
+    """Generate a revolved shell from an open profile curve.
+    
+    Automatically closes the curve to the axis, revolves it, and hollows it.
+    If the curve does not touch the axis at the top/bottom, the resulting flat
+    face at the higher end is automatically opened during hollowing.
+    """
+    from build123d import BuildLine, BuildSketch, BuildPart, Line, make_face, revolve, Plane, Vector
+    
+    wire = sweep_path(profile_curves)
+    p0 = wire.position_at(0)
+    p1 = wire.position_at(1)
+    
+    idx = _axis_index(axis)
+    
+    def project_to_axis(p):
+        if idx == "X": return Vector(p.X, 0, 0)
+        elif idx == "Y": return Vector(0, p.Y, 0)
+        else: return Vector(0, 0, p.Z)
+
+    proj0 = project_to_axis(p0)
+    proj1 = project_to_axis(p1)
+    
+    with BuildLine() as bl:
+        from build123d import add
+        add(wire)
+        if (p1 - proj1).length > 1e-5:
+            Line(p1, proj1)
+        if (proj1 - proj0).length > 1e-5:
+            Line(proj1, proj0)
+        if (proj0 - p0).length > 1e-5:
+            Line(proj0, p0)
+            
+    # Try to infer the drawing plane based on vertices
+    vs = bl.wire().vertices()
+    is_y_zero = all(abs(getattr(v, "Y", 0)) < 1e-4 for v in vs)
+    is_x_zero = all(abs(getattr(v, "X", 0)) < 1e-4 for v in vs)
+    plane = Plane.XZ if is_y_zero else (Plane.YZ if is_x_zero else Plane.XY)
+    
+    with BuildSketch(plane) as sk:
+        make_face(bl.wire())
+        
+    with BuildPart() as bp:
+        from build123d import add
+        add(sk.sketch)
+        revolve(axis=axis)
+        
+    base_part = bp.part
+    if abs(thickness) < 1e-5:
+        return base_part
+        
+    # Attempt to open the top face if one was created
+    openings = []
+    v0_val = getattr(p0, idx)
+    v1_val = getattr(p1, idx)
+    max_val = max(v0_val, v1_val)
+    
+    point_at_max = p0 if v0_val > v1_val else p1
+    proj_at_max = proj0 if v0_val > v1_val else proj1
+    
+    if (point_at_max - proj_at_max).length > 1e-5:
+        try:
+            top_face = face_at(base_part, axis, max_val, tol=1e-3)
+            openings.append(top_face)
+        except Exception:
+            pass
+
+    try:
+        from build123d import offset
+        return offset(base_part, amount=-abs(thickness), openings=openings)
+    except Exception as e:
+        raise SelectionError(f"make_revolved_shell(): hollowing failed ({e}). Try adjusting curves to avoid self-intersection or reducing thickness.")
+
+
+def make_tube_along_path(path_points, radius: float) -> Part:
+    """Generate a smooth solid tube along a 3D path of points."""
+    if len(path_points) < 2:
+        raise SelectionError("make_tube_along_path: at least 2 points required")
+        
+    from build123d import BuildLine, Spline, BuildSketch, Circle, sweep, BuildPart, Plane, Line, Vector
+    with BuildPart() as bp:
+        with BuildLine() as bl:
+            pts = [_axis_direction(p) if not isinstance(p, Vector) else p for p in path_points] if False else path_points # Ensure Vector, but build123d accepts tuples
+            if len(pts) == 2:
+                Line(pts[0], pts[1])
+            else:
+                Spline(*pts)
+        path = bl.wire()
+        
+        start_point = path.position_at(0)
+        tangent = path.tangent_at(0)
+        plane = Plane(origin=start_point, z_dir=tangent)
+        with BuildSketch(plane) as sk:
+            Circle(radius=radius)
+        sweep(path=path)
+    return bp.part
+
+
 __all__ = [
     "SelectionError",
     # Edges — general (preferred)
@@ -813,4 +916,7 @@ __all__ = [
     "sweep_path",
     "swept",
     "lofted",
+    # Macros
+    "make_revolved_shell",
+    "make_tube_along_path",
 ]

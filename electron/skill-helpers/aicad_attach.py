@@ -523,6 +523,49 @@ def attach(
     return attach_part(host, guest, conn, fuse=fuse, verify=verify)
 
 
+def attach_tube_to_surface(host, tube_part, start_point, direction, min_penetration: float = 5.0, bore_radius: float = 0.0) -> Part:
+    """
+    Attach a tube (e.g. handle, spout) to a curved surface.
+    
+    Automatically extrudes the base of the tube backward by `min_penetration` to ensure 
+    deep intersection (avoiding Z-fighting/coincident face issues), then fuses it to the host.
+    If `bore_radius` > 0, it will also drill a passage through the host wall to open the port.
+    """
+    from build123d import extrude, Cylinder, Plane, Vector
+    from aicad_select import safe_add, safe_cut
+    
+    host_p = _as_part(host)
+    tube_p = _as_part(tube_part)
+    
+    sp = _vec3(start_point, label="attach_tube_to_surface.start_point")
+    d = _unit(_vec3(direction, label="direction"), label="attach_tube_to_surface.direction")
+    
+    tube_faces = tube_p.faces()
+    # Find the planar face closest to the start point
+    planar_faces = [f for f in tube_faces if getattr(f, "geom_type", lambda: None)() == "PLANE" or getattr(f, "geom_type", lambda: None) == GeomType.PLANE]
+    if not planar_faces:
+        planar_faces = tube_faces
+    base_face = min(planar_faces, key=lambda f: (f.center() - sp).length)
+    
+    try:
+        # Extrude backwards along the negative direction
+        extension = extrude(base_face, amount=min_penetration, dir=-d)
+        extended_tube = safe_add(tube_p, extension, min_overlap=0.0)
+    except Exception:
+        # Fallback if extrude fails
+        extended_tube = tube_p
+        
+    result = safe_add(host_p, extended_tube, min_overlap=0.1)
+    
+    if bore_radius > 0:
+        drill_plane = Plane(origin=sp, z_dir=-d)
+        drill = Cylinder(radius=bore_radius, height=min_penetration * 3)
+        drill = drill.moved(drill_plane.location)
+        result = safe_cut(result, drill, min_through=0.1)
+        
+    return result
+
+
 __all__ = [
     "AttachError",
     "AttachReport",
@@ -531,6 +574,7 @@ __all__ = [
     "MountFrame",
     "attach",
     "attach_part",
+    "attach_tube_to_surface",
     "define_connection",
     "frame_from_cylinder",
     "frame_from_face",
