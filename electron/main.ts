@@ -496,6 +496,7 @@ function registerIpc() {
       currentProjectPath: () => currentProjectPath,
       currentKernel: () => currentKernel,
       activePart: () => activePart,
+      setActivePart: (v) => { activePart = v; },
       partInfoCache: () => partInfoCache
     },
     deps: {
@@ -511,10 +512,14 @@ function registerIpc() {
       getMcpStatusPayload,
       buildMcpContext,
       initProjectLayout,
+      createModelPackage,
       openProject,
       openProjectByDialog,
       scheduleBuild,
+      prepareModelDeletion: (...args) => prepareModelDeletion(...args),
+      ensureProjectDirectoryAccess: (...args) => ensureProjectDirectoryAccess(...args),
       listParts,
+      broadcastPartsList,
       selectPart,
       modelDir,
       modelParamsPath,
@@ -524,6 +529,8 @@ function registerIpc() {
       ensurePartStlArtifact,
       exportPartByRequest,
       partPng,
+      partCache,
+      modelPartStlPath,
       resolvePartLoadedWaiters,
       getBuildRuntimeStatus,
       getLanguage,
@@ -757,8 +764,12 @@ function refreshAgentWorkspace(projectPath) {
  *   - .gitignore
  *   - agent-specific rules, skills, and MCP configs
  */
-function initProjectLayout(projectPath, kernel) {
-  return logicTools.initProjectLayout(projectPath, kernel);
+function initProjectLayout(projectPath, kernel, opts) {
+  return logicTools.initProjectLayout(projectPath, kernel, opts);
+}
+
+function createModelPackage(projectPath, kernel, name, description, opts) {
+  return logicTools.createModelPackage(projectPath, kernel, name, description, opts);
 }
 
 
@@ -786,6 +797,19 @@ async function selectPart(name) {
 
 function scheduleBuild(partName, options) {
   return logicTools.scheduleBuild(partName, options);
+}
+
+async function prepareModelDeletion(modelName) {
+  return logicTools.prepareModelDeletion(modelName);
+}
+
+async function ensureProjectDirectoryAccess(projectPath) {
+  const { ensureProjectDirectoryAccess: ensureAccess } = require('./project-access');
+  return ensureAccess(projectPath, { sendLog: (message, level) => sendLog(message, level) });
+}
+
+function broadcastPartsList() {
+  return logicTools.broadcastPartsList();
 }
 
 async function ensurePartStlArtifact(modelName, partName) {

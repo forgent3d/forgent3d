@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { pythonChildProcessEnv } = require('./python-env');
 const { DOMParser } = require('@xmldom/xmldom');
 const dynamicImport = new Function('specifier', 'return import(specifier)');
 
@@ -71,7 +72,8 @@ function createMainExportTools({ dialog, state, deps }) {
     const ret = await runCommandCollect(cmd.cmd, cmd.args, {
       cwd: state.currentProjectPath(),
       shell: false,
-      windowsHide: true
+      windowsHide: true,
+      env: pythonChildProcessEnv()
     });
     if (ret.stdout?.trim()) deps.sendLog(ret.stdout.trimEnd());
     if (ret.stderr?.trim() && ret.code === 0) deps.sendLog(ret.stderr.trimEnd(), 'warn');

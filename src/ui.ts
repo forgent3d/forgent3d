@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { createTerminalPanel } from './terminal-panel.js';
 import { applyDocumentI18n, getLanguage, initRendererI18n, onLanguageChange, setLanguage, t } from './i18n.js';
+import { createFirstModelWizardController } from './ui-first-model-wizard.js';
 import { createParamsEditorController } from './ui-params-editor.js';
 import { createViewerUiController } from './ui-viewer-controls.js';
 
@@ -46,12 +47,7 @@ export function initUI(viewer) {
     paramsEditor: document.getElementById('params-editor'),
     paramsStatus: document.getElementById('params-status'),
     btnParamsRevert: document.getElementById('btn-params-revert'),
-    modalPart: document.getElementById('modal-part'),
-    inputPartName: document.getElementById('input-part-name'),
-    inputPartDesc: document.getElementById('input-part-desc'),
     selectModelKind: document.getElementById('select-model-kind'),
-    btnPartCancel: document.getElementById('btn-part-cancel'),
-    btnPartConfirm: document.getElementById('btn-part-confirm'),
 
     // Agent bar
     agentBar: document.getElementById('agent-bar'),
@@ -114,9 +110,23 @@ export function initUI(viewer) {
   let selectedModelPartModel = null;
   let displayedModelPart = null;
   const assemblyPayloads = new Map();
+  const buildingModels = new Set();
   const expandedModels = new Set();
   const LEFT_SIDEBAR_PREF_KEY = 'forgent3d.leftSidebarVisible';
   let leftSidebarVisible = false;
+  let openFirstModelWizardAfterProjectOpen = false;
+
+  const firstModelWizard = createFirstModelWizardController({
+    api,
+    getCurrentProject: () => currentProject,
+    getModels: () => partsCache,
+    openNewProjectModal,
+    setStatus,
+    appendLog,
+    showToast,
+    refreshModels: refreshParts,
+    escapeHtml
+  });
 
   function readLeftSidebarPreference() {
     try {
@@ -240,10 +250,12 @@ export function initUI(viewer) {
   onLanguageChange(refreshLocalizedUi);
 
   function setProject(p, meta = null) {
+    const projectChanged = p !== currentProject;
     currentProject = p;
     currentKernel = meta?.kernel || null;
     leftSidebarVisible = p ? readLeftSidebarPreference() : false;
-    if (!p) {
+    if (projectChanged) {
+      partsCache = [];
       activePart = null;
       loadedPart = null;
       selectedModelPart = null;
@@ -251,9 +263,11 @@ export function initUI(viewer) {
       displayedModelPart = null;
       assemblyPayloads.clear();
       expandedModels.clear();
+      if (typeof viewer.setSelectedPart === 'function') viewer.setSelectedPart(null);
+    }
+    if (!p) {
       viewerUi.stopAutoShow();
       viewerUi.stopExplodedView();
-      if (typeof viewer.setSelectedPart === 'function') viewer.setSelectedPart(null);
     }
     el.emptyHint.classList.toggle('hidden', !!p);
     el.partsPanel.style.display = p ? '' : 'none';
@@ -309,9 +323,15 @@ export function initUI(viewer) {
       viewerUi.renderAll();
       return partInfo;
     } catch (e) {
+      const message = e.message || String(e);
+      const waitingForMeshes = modelName && (buildingModels.has(modelName) || /404/.test(message));
+      if (waitingForMeshes) {
+        setStatus(t('buildingPart', { part: modelName }), true);
+        return;
+      }
       setStatus(t('modelLoadFailed'));
-      appendLog(t('failedLoadModel', { partLabel, format: 'MJCF', message: e.message || e }), 'error');
-      showToast(t('failedLoadModel', { partLabel, format: 'MJCF', message: escapeHtml(e.message || String(e)) }), 3800);
+      appendLog(t('failedLoadModel', { partLabel, format: 'MJCF', message }), 'error');
+      showToast(t('failedLoadModel', { partLabel, format: 'MJCF', message: escapeHtml(message) }), 3800);
       throw e;
     }
   }
@@ -456,7 +476,15 @@ export function initUI(viewer) {
           cancelLabel: t('cancel'),
         });
         if (!confirmed) return;
-        api.deleteModel(p.name).then(() => refreshParts()).catch((err) => showToast(String(err?.message || err)));
+        try {
+          bDelete.disabled = true;
+          await api.deleteModel(p.name);
+          await refreshParts();
+        } catch (err) {
+          showToast(String(err?.message || err));
+        } finally {
+          bDelete.disabled = false;
+        }
       });
       actions.appendChild(bReveal);
       actions.appendChild(bBuild);
@@ -544,12 +572,6 @@ export function initUI(viewer) {
     });
   });
 
-  el.btnPartCancel.addEventListener('click', () => el.modalPart.classList.add('hidden'));
-  el.btnPartConfirm.addEventListener('click', () => {
-    el.modalPart.classList.add('hidden');
-    showToast(t('modelCreationDisabled'));
-  });
-
   /* ---------------- Button Events ---------------- */
   /** New projects always use build123d (no kernel picker in UI). */
   const DEFAULT_PROJECT_KERNEL = 'build123d';
@@ -578,10 +600,12 @@ export function initUI(viewer) {
     if (!name) { alert('Please enter a project name'); return; }
     try {
       setStatus(t('creatingProject'), true);
+      openFirstModelWizardAfterProjectOpen = true;
       const p = await api.createProject(parent, name, DEFAULT_PROJECT_KERNEL);
       el.modal.classList.add('hidden');
       appendLog(t('projectCreated', { kernel: DEFAULT_PROJECT_KERNEL, path: p }));
     } catch (e) {
+      openFirstModelWizardAfterProjectOpen = false;
       appendLog(t('creationFailedDetail', { message: e.message }), 'error');
       alert(e.message);
       setStatus(t('creationFailed'));
@@ -1032,10 +1056,27 @@ export function initUI(viewer) {
           }));
         }
         refreshParts();
+        if (openFirstModelWizardAfterProjectOpen) {
+          openFirstModelWizardAfterProjectOpen = false;
+          requestAnimationFrame(() => firstModelWizard.open());
+        }
         break;
       case 'MODELS_LIST':
         partsCache = payload.models || [];
         activePart = payload.active;
+        if (!activePart || !partsCache.some((model) => model.name === activePart)) {
+          activePart = null;
+          loadedPart = null;
+          displayedModelPart = null;
+          selectedModelPart = null;
+          selectedModelPartModel = null;
+          assemblyPayloads.clear();
+          buildingModels.clear();
+          viewerUi.stopAutoShow();
+          viewerUi.stopExplodedView();
+          if (typeof viewer.clearModel === 'function') viewer.clearModel();
+          paramsEditor.setIdle(t('selectModelParams'));
+        }
         syncModelListKindToModel(activePart, { render: false });
         renderPartsList();
         renderModelNameBadge();
@@ -1048,6 +1089,7 @@ export function initUI(viewer) {
         displayedModelPart = null;
         selectedModelPart = null;
         selectedModelPartModel = null;
+        if (payload?.name) assemblyPayloads.delete(payload.name);
         syncModelListKindToModel(activePart, { render: false });
         renderPartsList();
         renderModelNameBadge();
@@ -1056,6 +1098,7 @@ export function initUI(viewer) {
         paramsEditor.refresh({ force: true });
         break;
       case 'BUILD_STARTED':
+        if (payload?.part) buildingModels.add(payload.part);
         if (payload?.part && payload.part === activePart) {
           syncModelListKindToModel(payload.part, { render: false });
           renderPartsList();
@@ -1063,6 +1106,7 @@ export function initUI(viewer) {
         setStatus(payload?.part ? t('buildingPart', { part: payload.part }) : t('building'), true);
         break;
       case 'BUILD_FAILED':
+        if (payload?.part) buildingModels.delete(payload.part);
         setStatus(t('buildFailedSeeLogs'));
         appendLog(
           (payload?.part ? `[${payload.part}] ` : '') +
@@ -1074,6 +1118,7 @@ export function initUI(viewer) {
         }
         break;
       case 'PART_BUILT':
+        if (payload?.part) buildingModels.delete(payload.part);
         refreshParts();
         // MODEL_UPDATED (which clears the spinner) is only sent for the active part.
         // For non-active part builds, clear the busy spinner here so UI doesn't hang.
@@ -1095,7 +1140,10 @@ export function initUI(viewer) {
           appendLog(t('missingModelUrl'), 'warn');
           break;
         }
-        if (fmt === 'MJCF' && payload.part) assemblyPayloads.set(payload.part, { ...payload });
+        if (fmt === 'MJCF' && payload.part) {
+          buildingModels.delete(payload.part);
+          assemblyPayloads.set(payload.part, { ...payload });
+        }
         const preserveView = !!payload.part && payload.part === loadedPart && typeof viewer.hasModel === 'function' && viewer.hasModel();
         const partLabel = payload.part ? `[${payload.part}] ` : '';
         if (fmt === 'MJCF' && payload.part && selectedModelPartModel === payload.part && selectedModelPart) {
@@ -1189,6 +1237,9 @@ export function initUI(viewer) {
         break;
       case 'MENU_NEW_PROJECT':
         openNewProjectModal();
+        break;
+      case 'MENU_OPEN_EXAMPLE_WIZARD':
+        firstModelWizard.open();
         break;
       case 'MENU_TOGGLE_DEBUG_TOOLS':
         setDebugToolsVisible(!!payload?.visible);

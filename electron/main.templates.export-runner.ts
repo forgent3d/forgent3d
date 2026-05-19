@@ -12,11 +12,16 @@ Responsibilities:
   * Export build123d geometry to .cache/<name>.brep (and STEP/STL) via OCCT APIs;
   * Let the frontend parse BREP via occt-import-js for geometry inspection.
 """
-import argparse
-import json
 import os
 import sys
-import runpy
+
+# Must run before other imports / open() on Windows (locale default is often GBK).
+if sys.platform == "win32":
+    os.environ["PYTHONUTF8"] = "1"
+    os.environ["PYTHONIOENCODING"] = "utf-8"
+
+import argparse
+import json
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -155,8 +160,19 @@ def _build_namespace(model_name: str, part_name: str):
     if model_dir not in sys.path:
         sys.path.insert(0, model_dir)
 
+    run_name = f"__aicad_model_{model_name}__"
     try:
-        ns = runpy.run_path(source_path, run_name=f"__aicad_model_{model_name}__")
+        with open(source_path, "r", encoding="utf-8") as f:
+            source = f.read()
+        code = compile(source, source_path, "exec")
+        ns = {
+            "__name__": run_name,
+            "__file__": source_path,
+            "__package__": None,
+            "__cached__": None,
+            "__spec__": None,
+        }
+        exec(code, ns, ns)
     except Exception as exc:
         print(f"[export_runner] Failed to execute {source_path}: {exc}", file=sys.stderr)
         return None, None, 3

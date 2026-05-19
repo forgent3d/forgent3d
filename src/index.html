@@ -176,21 +176,87 @@
       </div>
     </div>
 
-    <!-- New part modal -->
+    <!-- First model wizard -->
     <div id="modal-part" class="modal hidden">
-      <div class="modal-body">
-        <h3 data-i18n="newModel">New Model</h3>
-        <p class="muted" style="font-size:12px;margin:-6px 0 8px 0" data-i18n-html="newModelHelp">
-          This creates <code>models/&lt;name&gt;/asm.xml</code>, <code>params.json</code>, and a local
-          <code>parts/&lt;name&gt;/part.py</code>. Name can only contain letters, numbers, underscores, and hyphens.
+      <div class="modal-body wizard-modal-body">
+        <h3 data-i18n="firstModelWizardTitle">First Model Wizard</h3>
+        <p class="muted wizard-intro" data-i18n="firstModelWizardIntro">
+          Start with a parametric mounting plate you can edit, rebuild, and export.
         </p>
+
+        <div class="wizard-template-grid" role="radiogroup" aria-label="Model template" data-i18n-aria-label="modelTemplate">
+          <button class="wizard-template-card active" type="button" data-wizard-template="mounting_plate" aria-pressed="true">
+            <span class="wizard-template-icon" aria-hidden="true">▣</span>
+            <span class="wizard-template-copy">
+              <span class="wizard-template-title" data-i18n="wizardTemplateMountingPlate">Mounting Plate</span>
+              <span class="wizard-template-desc" data-i18n="wizardTemplateMountingPlateDesc">Flat plate, four M4 holes, visible hardware.</span>
+            </span>
+          </button>
+          <button class="wizard-template-card" type="button" data-wizard-template="l_bracket" aria-pressed="false">
+            <span class="wizard-template-icon" aria-hidden="true">∟</span>
+            <span class="wizard-template-copy">
+              <span class="wizard-template-title" data-i18n="wizardTemplateLBracket">L Bracket</span>
+              <span class="wizard-template-desc" data-i18n="wizardTemplateLBracketDesc">Right-angle support with bolt holes on both legs.</span>
+            </span>
+          </button>
+          <button class="wizard-template-card" type="button" data-wizard-template="bearing_block" aria-pressed="false">
+            <span class="wizard-template-icon" aria-hidden="true">◎</span>
+            <span class="wizard-template-copy">
+              <span class="wizard-template-title" data-i18n="wizardTemplateBearingBlock">Bearing Block</span>
+              <span class="wizard-template-desc" data-i18n="wizardTemplateBearingBlockDesc">Pillow block style mount with shaft bore and base holes.</span>
+            </span>
+          </button>
+          <button class="wizard-template-card" type="button" data-wizard-template="gear" aria-pressed="false">
+            <span class="wizard-template-icon" aria-hidden="true">⚙</span>
+            <span class="wizard-template-copy">
+              <span class="wizard-template-title" data-i18n="wizardTemplateGear">Gear</span>
+              <span class="wizard-template-desc" data-i18n="wizardTemplateGearDesc">Simple spur gear blank for exploring teeth and bore params.</span>
+            </span>
+          </button>
+          <button class="wizard-template-card" type="button" data-wizard-template="knob" aria-pressed="false">
+            <span class="wizard-template-icon" aria-hidden="true">◉</span>
+            <span class="wizard-template-copy">
+              <span class="wizard-template-title" data-i18n="wizardTemplateKnob">Knob</span>
+              <span class="wizard-template-desc" data-i18n="wizardTemplateKnobDesc">Round control knob with grip grooves and center bore.</span>
+            </span>
+          </button>
+        </div>
+
         <label data-i18n="modelName">Model name</label>
-        <input id="input-part-name" type="text" placeholder="bracket" data-i18n-placeholder="modelNamePlaceholder" />
+        <input id="input-part-name" type="text" placeholder="mounting_plate" data-i18n-placeholder="modelNamePlaceholder" />
         <label data-i18n="modelDescription">One-line description (optional, written to README.md)</label>
-        <input id="input-part-desc" type="text" placeholder="Mounting bracket for XX" data-i18n-placeholder="modelDescriptionPlaceholder" />
+        <input id="input-part-desc" type="text" placeholder="Parametric mounting plate with four M4 holes" data-i18n-placeholder="modelDescriptionPlaceholder" />
+
+        <div class="wizard-dimensions">
+          <label>
+            <span id="wizard-field-label-1" data-i18n="wizardLength">Length</span>
+            <input id="wizard-length" type="number" min="20" max="300" step="1" value="72" />
+          </label>
+          <label>
+            <span id="wizard-field-label-2" data-i18n="wizardWidth">Width</span>
+            <input id="wizard-width" type="number" min="20" max="240" step="1" value="44" />
+          </label>
+          <label>
+            <span id="wizard-field-label-3" data-i18n="wizardThickness">Thickness</span>
+            <input id="wizard-thickness" type="number" min="1" max="40" step="0.5" value="6" />
+          </label>
+          <label>
+            <span id="wizard-field-label-4" data-i18n="wizardHoleSpacingX">Hole spacing X</span>
+            <input id="wizard-hole-spacing-x" type="number" min="8" max="280" step="1" value="52" />
+          </label>
+          <label>
+            <span id="wizard-field-label-5" data-i18n="wizardHoleSpacingY">Hole spacing Y</span>
+            <input id="wizard-hole-spacing-y" type="number" min="8" max="220" step="1" value="28" />
+          </label>
+          <label>
+            <span id="wizard-field-label-6" data-i18n="wizardCornerRadius">Corner radius</span>
+            <input id="wizard-corner-radius" type="number" min="0" max="40" step="0.5" value="5" />
+          </label>
+        </div>
+
         <div class="modal-footer">
           <button id="btn-part-cancel" class="btn btn-ghost" data-i18n="cancel">Cancel</button>
-          <button id="btn-part-confirm" class="btn btn-primary" data-i18n="create">Create</button>
+          <button id="btn-part-confirm" class="btn btn-primary" data-i18n="createAndBuild">Create & Build</button>
         </div>
       </div>
     </div>

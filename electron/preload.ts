@@ -14,6 +14,12 @@ contextBridge.exposeInMainWorld('aicad', {
 
   listModels: () => ipcRenderer.invoke('models:list'),
   selectModel: (name) => ipcRenderer.invoke('models:select', name),
+  createModel: (payloadOrName, description) => ipcRenderer.invoke(
+    'models:create',
+    typeof payloadOrName === 'object' && payloadOrName !== null
+      ? payloadOrName
+      : { name: payloadOrName, description }
+  ),
   rebuildModel: (name) => ipcRenderer.invoke('models:rebuild', name),
   rebuildAllModels: () => ipcRenderer.invoke('models:rebuildAll'),
   revealModel: (name) => ipcRenderer.invoke('models:reveal', name),

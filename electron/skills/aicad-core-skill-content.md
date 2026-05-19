@@ -15,7 +15,7 @@
 - Validate only through AI CAD Companion Viewer MCP tools while the viewer is running.
 - Do not run `python part.py`, `python -m`, `pytest`, `uv run`, `poetry run`, or local Python fallbacks for generated CAD validation.
 - Standard flow: edit source -> `rebuild_model({ model })` -> inspect `ok/stderr` -> optional `screenshot_model` or `get_model_info`.
-- Available MCP tools: `list_models`, `rebuild_model`, `screenshot_model`, `get_model_info`.
+- Available MCP tools: `list_models`, `rebuild_model`, `screenshot_model`, `get_model_info`, imports, class signatures, or small build123d smoke tests before editing source.
 - If `rebuild_model` fails, fix the first deterministic error with the smallest change and rebuild again.
 - Keep final responses brief. Do not narrate internal validation unless a blocker needs user input.
 

@@ -8,6 +8,8 @@ const path = require('path');
 const chokidar = require('chokidar');
 const { DOMParser } = require('@xmldom/xmldom');
 const { spawn } = require('child_process');
+const { ensureProjectDirectoryAccess } = require('./project-access');
+const { pythonChildProcessEnv } = require('./python-env');
 
 global.DOMParser = DOMParser;
 
@@ -15,7 +17,31 @@ function createMainLogicTools({ state, deps }) {
   const dirtyBuildInputs = new Map();
   const runningBuildInputs = new Map();
   const partBrepBuildPromises = new Map();
+  const modelBuildChildren = new Map();
   const partPrepareConcurrency = Math.max(1, Math.min(4, Math.max(1, (os.cpus?.().length || 2) - 1)));
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function trackBuildChild(modelName, child) {
+    if (!modelName || !child) return;
+    if (!modelBuildChildren.has(modelName)) modelBuildChildren.set(modelName, new Set());
+    const tracked = modelBuildChildren.get(modelName);
+    tracked.add(child);
+    const untrack = () => tracked.delete(child);
+    child.once('close', untrack);
+    child.once('error', untrack);
+  }
+
+  function killBuildChild(child) {
+    if (!child || child.killed) return;
+    try {
+      child.kill();
+    } catch {
+      try { child.kill('SIGTERM'); } catch {}
+    }
+  }
 
   function elapsedMs(startMs) {
     return Math.max(0, Date.now() - startMs);
@@ -92,14 +118,126 @@ function createMainLogicTools({ state, deps }) {
     return { ok: true, agents: ['codex', 'claude', 'cli'] };
   }
 
-  function initProjectLayout(projectPath, kernel) {
+  function normalizeModelName(name) {
+    const value = String(name || '').trim();
+    if (!/^[a-zA-Z0-9_-]+$/.test(value)) {
+      throw new Error('Model name can only contain letters, numbers, underscores, and hyphens.');
+    }
+    return value;
+  }
+
+  function mergePlainObject(base, override) {
+    const out = { ...(base && typeof base === 'object' && !Array.isArray(base) ? base : {}) };
+    if (!override || typeof override !== 'object' || Array.isArray(override)) return out;
+    for (const [key, value] of Object.entries(override)) {
+      if (value === undefined) continue;
+      if (
+        value &&
+        typeof value === 'object' &&
+        !Array.isArray(value) &&
+        out[key] &&
+        typeof out[key] === 'object' &&
+        !Array.isArray(out[key])
+      ) {
+        out[key] = mergePlainObject(out[key], value);
+      } else {
+        out[key] = value;
+      }
+    }
+    return out;
+  }
+
+  function modelParamsWithOverrides(kind, name, description, opts = {}) {
+    const raw = deps.modelParamsTemplate(kind, name, description, opts);
+    let parsed = {};
+    try { parsed = JSON.parse(raw || '{}'); } catch {}
+    const merged = mergePlainObject(parsed, opts.params);
+    return JSON.stringify(merged, null, 2) + '\n';
+  }
+
+  function createModelPackage(projectPath, kernel, name, description = '', opts = {}) {
+    const k = deps.assertKernel(kernel);
+    const modelName = normalizeModelName(name);
+    const desc = String(description || '').trim() || `${modelName} model`;
+    const modelPath = deps.modelDir(projectPath, modelName);
+    if (fs.existsSync(modelPath) && opts.overwrite !== true) {
+      throw new Error(`Model already exists: ${modelName}`);
+    }
+
+    const partNames = Array.isArray(opts.partNames) && opts.partNames.length
+      ? opts.partNames.map((partName) => normalizeModelName(partName))
+      : [modelName];
+    const partDescriptions = opts.partDescriptions || {};
+    const partTemplates = opts.partTemplates || {};
+    const partParams = opts.partParams || {};
+
+    writeIfChanged(
+      deps.partSource(projectPath, modelName, k, 'asm'),
+      deps.modelSourceTemplate(k, 'asm', modelName, desc, { partNames })
+    );
+    writeIfChanged(
+      deps.modelParamsPath(projectPath, modelName),
+      modelParamsWithOverrides('asm', modelName, desc, { partNames, params: opts.rootParams })
+    );
+    writeIfChanged(
+      deps.partReadme(projectPath, modelName),
+      deps.modelReadmeTemplate(k, 'asm', modelName, desc)
+    );
+
+    for (const partName of partNames) {
+      const partDesc = String(partDescriptions[partName] || '').trim() || `${partName} part`;
+      const partOpts = {
+        ...(partTemplates[partName] ? { template: partTemplates[partName] } : {}),
+        params: partParams[partName]
+      };
+      writeIfChanged(
+        deps.modelPartSource(projectPath, modelName, partName, k),
+        deps.modelSourceTemplate(k, 'part', partName, partDesc, partOpts)
+      );
+      writeIfChanged(
+        deps.modelPartParamsPath(projectPath, modelName, partName),
+        modelParamsWithOverrides('part', partName, partDesc, partOpts)
+      );
+    }
+
+    deps.sendLog(`Model package created: models/${modelName}/`);
+    return { name: modelName, path: modelPath, parts: partNames };
+  }
+
+  function createStarterModel(projectPath, kernel) {
+    return createModelPackage(
+      projectPath,
+      kernel,
+      'starter_mount',
+      'Starter mounting plate assembly with editable hardware spacing.',
+      {
+        partNames: ['mounting_plate', 'fastener_stack'],
+        partDescriptions: {
+          mounting_plate: 'Rounded mounting plate with four standard clearance holes.',
+          fastener_stack: 'Standard visible screw and washer stack.'
+        },
+        partTemplates: {
+          fastener_stack: 'fastener_stack'
+        }
+      }
+    );
+  }
+
+  function initProjectLayout(projectPath, kernel, opts = {}) {
     const k = deps.assertKernel(kernel);
 
     writeIfChanged(deps.projectMetaPath(projectPath), deps.aicadProjectJson(k));
     writeIfChanged(path.join(projectPath, '.gitignore'), '# Forgent3D\n.cache/\n__pycache__/\n*.pyc\n');
     fs.mkdirSync(path.join(projectPath, deps.MODELS_DIR), { recursive: true });
     fs.mkdirSync(path.join(projectPath, deps.CACHE_DIR), { recursive: true });
-    deps.sendLog(`Project initialized with ${deps.kernelMeta(k).label}; no sample model was created.`);
+    void ensureProjectDirectoryAccess(projectPath, { sendLog: deps.sendLog });
+    const shouldCreateSample = opts.createSample === true;
+    if (shouldCreateSample) {
+      createStarterModel(projectPath, k);
+      deps.sendLog(`Project initialized with ${deps.kernelMeta(k).label}; starter_mount sample model was created.`);
+    } else {
+      deps.sendLog(`Project initialized with ${deps.kernelMeta(k).label}.`);
+    }
   }
 
   function ensureRuntimeDirs(projectPath) {
@@ -341,10 +479,55 @@ function createMainLogicTools({ state, deps }) {
     }
   }
 
+  async function prepareModelDeletion(modelName) {
+    const name = String(modelName || '').trim();
+    if (!name) return;
+    state.pendingParts().delete(name);
+    const tracked = modelBuildChildren.get(name);
+    if (tracked?.size) {
+      for (const child of tracked) killBuildChild(child);
+      if (process.platform === 'win32') await sleep(400);
+    }
+    const deadline = Date.now() + 3000;
+    while (state.buildingParts().has(name) && Date.now() < deadline) {
+      await sleep(100);
+    }
+    if (state.buildingParts().has(name)) {
+      state.buildingParts().delete(name);
+      runningBuildInputs.delete(name);
+      dirtyBuildInputs.delete(name);
+      resolveBuildWaiters(name, { ok: false, error: 'Model deleted' });
+    }
+    modelBuildChildren.delete(name);
+    const modelKey = `${name}__`.toLowerCase();
+    for (const key of Array.from(partBrepBuildPromises.keys())) {
+      if (String(key).toLowerCase().includes(modelKey)) partBrepBuildPromises.delete(key);
+    }
+    const projectPath = state.currentProjectPath();
+    if (projectPath) {
+      const watcher = state.watcher();
+      const modelRoot = path.join(projectPath, deps.MODELS_DIR, name);
+      if (watcher) {
+        const paths = [
+          modelRoot,
+          path.join(modelRoot, deps.modelSourceFilename(state.currentKernel(), 'asm')),
+          path.join(modelRoot, 'params.json'),
+          path.join(modelRoot, 'parts')
+        ];
+        for (const watchedPath of paths) {
+          try { await watcher.unwatch(watchedPath); } catch {}
+        }
+      }
+    }
+    state.partInfoCache().delete(name);
+    state.partLoadedWaiters().delete(name);
+  }
+
   async function openProject(projectPath, { runImmediately = false } = {}) {
     const resolvedProjectPath = path.resolve(projectPath);
     const nextKernel = deps.readProjectKernel(resolvedProjectPath);
     ensureRuntimeDirs(resolvedProjectPath);
+    await ensureProjectDirectoryAccess(resolvedProjectPath, { sendLog: deps.sendLog });
 
     stopWatcher();
     state.setCurrentProjectPath(resolvedProjectPath);
@@ -411,11 +594,50 @@ function createMainLogicTools({ state, deps }) {
     watcher.on('error', (err) => deps.sendLog(`watcher error: ${err.message}`, 'error'));
 
     if (runImmediately && state.activePart()) {
-      const source = deps.resolveModelSource(state.currentProjectPath(), state.activePart(), state.currentKernel());
-      const cache = deps.modelCacheFile(state.currentProjectPath(), state.activePart(), source, state.currentKernel());
-      const freshness = refreshModelDirtyState(state.activePart(), source);
-      if (cache && fs.existsSync(cache) && !freshness.buildDirty) deps.sendModelUpdated(state.activePart());
       scheduleBuild(state.activePart(), { force: true });
+      maybeSendModelUpdated(state.activePart());
+    }
+  }
+
+  function maybeSendModelUpdated(partName) {
+    if (!state.currentProjectPath() || !partName || partName !== state.activePart()) return;
+    const source = deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
+    const cache = deps.modelCacheFile(state.currentProjectPath(), partName, source, state.currentKernel());
+    const freshness = refreshModelDirtyState(partName, source);
+    if (cache && fs.existsSync(cache) && !freshness.buildDirty && assemblyMeshesReady(partName, source)) {
+      deps.sendModelUpdated(partName);
+    }
+  }
+
+  function assemblyMeshesReady(modelName, source) {
+    const sourcePath = source?.sourcePath;
+    if (!sourcePath || !fs.existsSync(sourcePath)) return false;
+    try {
+      const sourceLabel = path.basename(sourcePath);
+      const document = parseMjcfDocument(readAssemblyMjcfText(sourcePath), sourceLabel);
+      const meshes = new Map();
+      for (const meshEl of Array.from(document.getElementsByTagName('mesh'))) {
+        const meshName = String(meshEl.getAttribute('name') || '').trim();
+        const file = String(meshEl.getAttribute('file') || '').trim();
+        if (meshName && file) meshes.set(meshName, file);
+      }
+      const meshRefs = [];
+      for (const geomEl of Array.from(document.getElementsByTagName('geom'))) {
+        if (String(geomEl.getAttribute('type') || '').trim() === 'mesh' || geomEl.hasAttribute('mesh')) {
+          const meshName = String(geomEl.getAttribute('mesh') || '').trim();
+          const meshRef = meshes.get(meshName);
+          if (meshRef) meshRefs.push(meshRef);
+        }
+      }
+      if (meshRefs.length === 0) return false;
+      const asmDir = path.dirname(sourcePath);
+      return meshRefs.every((meshRef) => {
+        const normalized = meshRef.replace(/^package:\/\//i, '').replace(/\\/g, '/');
+        const abs = path.resolve(asmDir, normalized);
+        return fs.existsSync(abs) && fs.statSync(abs).isFile();
+      });
+    } catch {
+      return false;
     }
   }
 
@@ -428,11 +650,8 @@ function createMainLogicTools({ state, deps }) {
     deps.sendToRenderer('ACTIVE_MODEL_CHANGED', { name });
     broadcastPartsList();
 
-    const source = deps.resolveModelSource(state.currentProjectPath(), name, state.currentKernel());
-    const cache = deps.modelCacheFile(state.currentProjectPath(), name, source, state.currentKernel());
-    const freshness = refreshModelDirtyState(name, source);
-    if (cache && fs.existsSync(cache) && !freshness.buildDirty) deps.sendModelUpdated(name);
     scheduleBuild(name, { force: true });
+    maybeSendModelUpdated(name);
   }
 
   function scheduleBuild(partName, { force = false } = {}) {
@@ -449,9 +668,7 @@ function createMainLogicTools({ state, deps }) {
       return;
     }
     if (!freshness.buildDirty) {
-      if (freshness.cacheFile && fs.existsSync(freshness.cacheFile) && partName === state.activePart()) {
-        deps.sendModelUpdated(partName);
-      }
+      if (partName === state.activePart()) maybeSendModelUpdated(partName);
       resolveBuildWaiters(partName, cachedBuildResult(partName, source));
       return;
     }
@@ -500,8 +717,10 @@ function createMainLogicTools({ state, deps }) {
         : `[${modelName}/${partName}] Build using Python ${runtime.cmd} (v${runtime.version}) with ${deps.kernelMeta(state.currentKernel()).label}`
     );
     const buildStartedAt = Date.now();
+    const child = spawn(cmd.cmd, cmd.args, { cwd: state.currentProjectPath(), shell: false, windowsHide: true, env: pythonChildProcessEnv() });
+    trackBuildChild(modelName, child);
     return await runBuildChild(
-      spawn(cmd.cmd, cmd.args, { cwd: state.currentProjectPath(), shell: false, windowsHide: true }),
+      child,
       modelName,
       partName,
       outFile,
@@ -891,6 +1110,7 @@ function createMainLogicTools({ state, deps }) {
     const source = deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
     const cache = deps.modelCacheFile(state.currentProjectPath(), partName, source, state.currentKernel());
     if (!cache || !fs.existsSync(cache)) return;
+    if (!assemblyMeshesReady(partName, source)) return;
     const ts = Date.now();
     const size = fs.statSync(cache).size;
     const ext = path.extname(cache).replace(/^\./, '');
@@ -1034,7 +1254,7 @@ function createMainLogicTools({ state, deps }) {
           let stderr = '';
           let child;
           try {
-            child = spawn(cmd.cmd, cmd.args, { cwd: state.currentProjectPath(), shell: false, windowsHide: true });
+            child = spawn(cmd.cmd, cmd.args, { cwd: state.currentProjectPath(), shell: false, windowsHide: true, env: pythonChildProcessEnv() });
           } catch (err) {
             resolve({ ok: false, error: err?.message || String(err) });
             return;
@@ -1078,12 +1298,14 @@ function createMainLogicTools({ state, deps }) {
     bootstrapAgentWorkspace,
     refreshAgentWorkspace,
     initProjectLayout,
+    createModelPackage,
     ensureRuntimeDirs,
     listPartsRaw,
     readPartDescription,
     listParts,
     openProject,
     stopWatcher,
+    prepareModelDeletion,
     selectPart,
     scheduleBuild,
     runBuild,

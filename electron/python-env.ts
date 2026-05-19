@@ -133,11 +133,23 @@ async function setPythonPath(pythonPath) {
   return { ok: true, version: ok.version };
 }
 
+/** Env for Python child processes (export_runner / bundled runner). Avoids GBK decode errors on Windows. */
+function pythonChildProcessEnv() {
+  return {
+    ...process.env,
+    PYTHONUTF8: '1',
+    PYTHONIOENCODING: 'utf-8',
+    LANG: 'C.UTF-8',
+    LC_ALL: 'C.UTF-8'
+  };
+}
+
 module.exports = {
   loadConfig,
   saveConfig,
   detectPython,
   getPythonStatus,
   setPythonPath,
-  runCapture
+  runCapture,
+  pythonChildProcessEnv
 };

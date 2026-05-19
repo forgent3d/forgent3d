@@ -7,10 +7,13 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { app: electronApp } = require('electron');
 const bridgeTools = require('./agent-bridge-tools');
+const { MODEL_EXAMPLES } = require('./model-examples');
 
 /** Default Forgent3D agent (cad-agent) base URL when the desktop build is packaged. */
 const PACKAGED_DEFAULT_FORGENT3D_AGENT_URL = 'https://agent.forgent3d.com';
 const AGENT_DESKTOP_BRIDGE_VERSION = '0.1.0';
+const MODEL_EXAMPLES_BY_ID = new Map((MODEL_EXAMPLES.examples || []).map((example) => [example.id, example]));
+const DEFAULT_MODEL_EXAMPLE_ID = MODEL_EXAMPLES.defaultExampleId || 'mounting_plate';
 
 function formatBridgeDetail(detail) {
   if (!detail || typeof detail !== 'object') return '';
@@ -28,6 +31,27 @@ function agentWebviewPreloadUrl() {
 function desktopAuthCallbackUrl(mcpPort) {
   if (electronApp?.isPackaged) return '';
   return `http://127.0.0.1:${mcpPort || 41234}/desktop-auth/callback`;
+}
+
+function safeTrashSegment(name) {
+  return String(name || 'model')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80) || 'model';
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableFsError(error) {
+  const code = error?.code;
+  return code === 'EPERM' || code === 'EBUSY' || code === 'EACCES' || code === 'ENOTEMPTY';
+}
+
+function removeDirRecursive(target) {
+  fs.rmSync(target, { recursive: true, force: true, maxRetries: 8, retryDelay: 200 });
 }
 
 function registerIpcHandlers({
@@ -65,6 +89,83 @@ function registerIpcHandlers({
       } catch {}
       throw e;
     }
+  }
+
+  function projectTrashTarget(projectPath, modelName) {
+    const trashRoot = path.join(projectPath, CACHE_DIR, 'model-trash');
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const base = `${safeTrashSegment(modelName)}-${stamp}`;
+    let target = path.join(trashRoot, base);
+    let suffix = 2;
+    while (fs.existsSync(target)) {
+      target = path.join(trashRoot, `${base}-${suffix++}`);
+    }
+    return { trashRoot, target };
+  }
+
+  async function moveModelToProjectTrash(projectPath, modelName, dir, { logSystemTrashFallback = false, systemTrashError = null } = {}) {
+    const { trashRoot, target } = projectTrashTarget(projectPath, modelName);
+    fs.mkdirSync(trashRoot, { recursive: true });
+
+    let renameError = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        fs.renameSync(dir, target);
+        if (logSystemTrashFallback) {
+          deps.sendLog?.(`System trash failed for model "${modelName}"; moved to ${path.relative(projectPath, target).replace(/\\/g, '/')}.`, 'warn');
+        }
+        return {
+          mode: 'project-trash',
+          path: target,
+          error: systemTrashError?.message || (systemTrashError ? String(systemTrashError) : undefined)
+        };
+      } catch (error) {
+        renameError = error;
+        if (attempt < 2 && isRetryableFsError(error)) {
+          await sleep(250 * (attempt + 1));
+          continue;
+        }
+        break;
+      }
+    }
+
+    try {
+      fs.cpSync(dir, target, { recursive: true, force: true });
+      removeDirRecursive(dir);
+      deps.sendLog?.(`Model "${modelName}" copied to ${path.relative(projectPath, target).replace(/\\/g, '/')} after rename retries.`, 'warn');
+      return {
+        mode: 'project-trash',
+        path: target,
+        error: [systemTrashError?.message || systemTrashError, renameError?.message || renameError].filter(Boolean).join('; ')
+      };
+    } catch (fallbackError) {
+      const prefix = systemTrashError
+        ? `System trash: ${systemTrashError?.message || systemTrashError}; `
+        : '';
+      throw new Error(`Failed to move model "${modelName}" to trash. ${prefix}project trash: ${renameError?.message || renameError}; copy/remove: ${fallbackError?.message || fallbackError}`);
+    }
+  }
+
+  async function moveModelToTrash(projectPath, modelName, dir) {
+    if (process.platform === 'win32') {
+      return moveModelToProjectTrash(projectPath, modelName, dir);
+    }
+
+    let trashError = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await shell.trashItem(dir);
+        return { mode: 'system-trash' };
+      } catch (error) {
+        trashError = error;
+        if (attempt < 1) await sleep(150);
+      }
+    }
+
+    return moveModelToProjectTrash(projectPath, modelName, dir, {
+      logSystemTrashFallback: true,
+      systemTrashError: trashError
+    });
   }
 
   function resolveParamsTarget(rawTarget) {
@@ -198,6 +299,153 @@ function registerIpcHandlers({
     return state.activePart();
   });
 
+  ipcMain.handle('models:create', async (_evt, payload) => {
+    if (!state.currentProjectPath()) throw new Error('Open a project first.');
+    const request = payload && typeof payload === 'object' ? payload : {};
+    const params = request.params && typeof request.params === 'object' ? request.params : {};
+    const finiteNumber = (key, fallback, min = 0.001) => {
+      const value = Number(params[key]);
+      return Number.isFinite(value) && value >= min ? value : fallback;
+    };
+    const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+    const template = MODEL_EXAMPLES_BY_ID.has(String(request.template))
+      ? String(request.template)
+      : DEFAULT_MODEL_EXAMPLE_ID;
+    const example = MODEL_EXAMPLES_BY_ID.get(template) || MODEL_EXAMPLES_BY_ID.get(DEFAULT_MODEL_EXAMPLE_ID);
+    const singlePartTemplates = new Set((MODEL_EXAMPLES.examples || [])
+      .filter((entry) => entry.kind === 'single_part')
+      .map((entry) => entry.id));
+    const createSinglePart = (partName, partParams, description) => deps.createModelPackage(
+      state.currentProjectPath(),
+      state.currentKernel(),
+      request.name,
+      request.description,
+      {
+        partNames: [partName],
+        partDescriptions: {
+          [partName]: request.description || description
+        },
+        partTemplates: {
+          [partName]: template
+        },
+        partParams: {
+          [partName]: partParams
+        }
+      }
+    );
+
+    let result;
+    if (singlePartTemplates.has(template)) {
+      if (template === 'l_bracket') {
+        const partName = example?.partName || template;
+        const length = finiteNumber('length', 64);
+        const height = finiteNumber('height', 48);
+        const width = finiteNumber('width', 32);
+        const thickness = clamp(finiteNumber('thickness', 5), 1, Math.min(length, height, width) / 2);
+        result = createSinglePart(partName, {
+          length,
+          height,
+          width,
+          thickness,
+          hole_diameter: clamp(finiteNumber('hole_diameter', 5), 1, Math.max(1, width - 4)),
+          hole_offset: clamp(finiteNumber('hole_offset', 18), thickness + 3, Math.max(thickness + 3, length / 2 - 4)),
+          edge_fillet: Math.min(1.2, Math.max(0.2, thickness * 0.14))
+        }, example?.defaultDescription || 'Parametric L bracket with bolt holes on both legs.');
+      } else if (template === 'bearing_block') {
+        const partName = example?.partName || template;
+        const length = finiteNumber('length', 72);
+        const width = finiteNumber('width', 34);
+        const height = finiteNumber('height', 42);
+        const baseThickness = clamp(Math.max(6, height * 0.22), 3, height * 0.5);
+        result = createSinglePart(partName, {
+          length,
+          width,
+          height,
+          bore_diameter: clamp(finiteNumber('bore_diameter', 16), 2, Math.max(2, Math.min(width, height) - 6)),
+          mount_hole_spacing: clamp(finiteNumber('mount_hole_spacing', 52), 8, Math.max(8, length - 12)),
+          mount_hole_diameter: clamp(finiteNumber('mount_hole_diameter', 5), 1, Math.max(1, width - 6)),
+          base_thickness: baseThickness,
+          edge_fillet: Math.min(1.2, Math.max(0.2, baseThickness * 0.12))
+        }, example?.defaultDescription || 'Parametric bearing block with shaft bore and base mounting holes.');
+      } else if (template === 'gear') {
+        const partName = example?.partName || template;
+        const pitchRadius = finiteNumber('pitch_radius', 28);
+        const thickness = finiteNumber('thickness', 8);
+        const toothDepth = finiteNumber('tooth_depth', 3);
+        result = createSinglePart(partName, {
+          teeth: Math.round(clamp(finiteNumber('teeth', 24), 8, 96)),
+          pitch_radius: pitchRadius,
+          thickness,
+          bore_diameter: clamp(finiteNumber('bore_diameter', 8), 1, Math.max(1, pitchRadius * 1.2)),
+          hub_diameter: clamp(finiteNumber('hub_diameter', 22), 4, Math.max(4, pitchRadius * 1.6)),
+          tooth_depth: toothDepth
+        }, example?.defaultDescription || 'Parametric spur gear blank with editable teeth and bore.');
+      } else {
+        const partName = example?.partName || template;
+        const diameter = finiteNumber('diameter', 36);
+        const height = finiteNumber('height', 18);
+        result = createSinglePart(partName, {
+          diameter,
+          height,
+          bore_diameter: clamp(finiteNumber('bore_diameter', 6), 1, Math.max(1, diameter - 6)),
+          groove_count: Math.round(clamp(finiteNumber('groove_count', 18), 6, 64)),
+          groove_depth: clamp(finiteNumber('groove_depth', 1.6), 0.1, Math.max(0.1, diameter / 6)),
+          top_chamfer: clamp(finiteNumber('top_chamfer', 0.6, 0), 0, Math.max(0, height / 3))
+        }, example?.defaultDescription || 'Parametric control knob with grip grooves and center bore.');
+      }
+      await deps.selectPart(result.name);
+      return result;
+    }
+
+    const length = finiteNumber('length', 72);
+    const width = finiteNumber('width', 44);
+    const thickness = finiteNumber('thickness', 6);
+    const holeSpacingX = clamp(finiteNumber('hole_spacing_x', Math.max(12, length - 20)), 8, Math.max(8, length - 12));
+    const holeSpacingY = clamp(finiteNumber('hole_spacing_y', Math.max(12, width - 16)), 8, Math.max(8, width - 12));
+    const cornerRadius = clamp(finiteNumber('corner_radius', 5, 0), 0, Math.max(0, Math.min(length, width) / 2 - 1));
+    const edgeFillet = Math.min(1.2, Math.max(0.2, thickness * 0.14));
+    const screwLength = Math.max(10, thickness + 10);
+    result = deps.createModelPackage(
+      state.currentProjectPath(),
+      state.currentKernel(),
+      request.name,
+      request.description,
+      {
+        template,
+        partNames: ['mounting_plate', 'fastener_stack'],
+        partDescriptions: {
+          mounting_plate: request.description || 'Parametric mounting plate with four standard clearance holes.',
+          fastener_stack: 'Visible screw and washer stack for scale and assembly review.'
+        },
+        partTemplates: {
+          fastener_stack: 'fastener_stack'
+        },
+        rootParams: {
+          fastener_spacing_x: holeSpacingX,
+          fastener_spacing_y: holeSpacingY,
+          fastener_z: thickness + 0.2
+        },
+        partParams: {
+          mounting_plate: {
+            length,
+            width,
+            thickness,
+            corner_radius: cornerRadius,
+            hole_spacing_x: holeSpacingX,
+            hole_spacing_y: holeSpacingY,
+            edge_fillet: edgeFillet,
+            screw_length: screwLength
+          },
+          fastener_stack: {
+            screw_length: screwLength
+          }
+        }
+      }
+    );
+    await deps.selectPart(result.name);
+    return result;
+  });
+
   ipcMain.handle('models:rebuild', async (_evt, name) => {
     const target = name || state.activePart();
     if (target) deps.scheduleBuild(target, { force: true });
@@ -239,8 +487,41 @@ function registerIpcHandlers({
 
   ipcMain.handle('models:delete', async (_evt, name) => {
     if (!state.currentProjectPath() || !name) throw new Error('No project or model name.');
+    const projectPath = state.currentProjectPath();
+    const modelName = String(name);
+    const wasActive = state.activePart() === modelName;
     const dir = deps.modelDir(state.currentProjectPath(), name);
-    await shell.trashItem(dir);
+    if (!fs.existsSync(dir)) throw new Error(`Model does not exist: ${modelName}`);
+    const deletedModel = deps.listParts(projectPath).find((model) => model.name === modelName);
+    await deps.prepareModelDeletion?.(modelName);
+    await deps.ensureProjectDirectoryAccess?.(projectPath);
+    await moveModelToTrash(projectPath, modelName, dir);
+    const kernel = state.currentKernel();
+    const tryUnlink = (p) => {
+      if (!p) return;
+      try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch {}
+    };
+    for (const view of SCREENSHOT_VIEWS) {
+      tryUnlink(deps.partPng(projectPath, modelName, view, 'solid'));
+      tryUnlink(deps.partPng(projectPath, modelName, view, 'xray'));
+    }
+    for (const part of (deletedModel?.parts || [])) {
+      tryUnlink(deps.partCache(projectPath, modelName, part.name, kernel));
+      tryUnlink(deps.modelPartStlPath(projectPath, modelName, part.name));
+    }
+    tryUnlink(deps.partCache(projectPath, modelName, modelName, kernel));
+    const remaining = deps.listParts(projectPath).filter((model) => model.name !== modelName);
+    if (wasActive) {
+      const nextModel = remaining[0]?.name || null;
+      if (nextModel) {
+        await deps.selectPart(nextModel);
+      } else {
+        state.setActivePart?.(null);
+        deps.broadcastPartsList?.();
+      }
+    } else {
+      deps.broadcastPartsList?.();
+    }
   });
 
   ipcMain.handle('models:export', async (_evt, { name, format }) => {

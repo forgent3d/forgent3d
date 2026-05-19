@@ -33,6 +33,7 @@ function createMainUiTools({
       file: 'File',
       newProject: 'New Project...',
       openProject: 'Open Project...',
+      openExampleWizard: 'Example Models...',
       rebuild: 'Rebuild',
       revealInFolder: 'Reveal in Folder',
       refreshAgentPrompts: 'Update Prompt...',
@@ -74,6 +75,7 @@ function createMainUiTools({
       file: '文件',
       newProject: '新建项目...',
       openProject: '打开项目...',
+      openExampleWizard: '初始示例...',
       rebuild: '重新构建',
       revealInFolder: '在文件夹中显示',
       refreshAgentPrompts: '更新 Prompt...',
@@ -267,6 +269,10 @@ function createMainUiTools({
                 sendLog(`Open failed: ${e.message}`, 'error');
               }
             }
+          },
+          {
+            label: t('openExampleWizard'),
+            click: () => sendToRenderer('MENU_OPEN_EXAMPLE_WIZARD', {})
           },
           { type: 'separator' },
           {

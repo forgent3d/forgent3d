@@ -38,6 +38,7 @@ const SRC_DIR = path.join(BUILD_ROOT, 'src');
 const WORK_DIR = path.join(BUILD_ROOT, 'pyinstaller-work');
 const SPEC_DIR = path.join(BUILD_ROOT, 'pyinstaller-spec');
 const SCRIPT_PATH = path.join(SRC_DIR, 'export_runner.py');
+const RUNTIME_HOOK_PATH = path.join(SRC_DIR, 'pyi_runtime_utf8.py');
 const REQUIREMENTS_PATH = path.join(__dirname, 'embedded-runner-requirements.txt');
 const METADATA_PATH = path.join(OUT_DIR, 'metadata.json');
 
@@ -138,6 +139,14 @@ function ensureRunnerSource() {
   fs.mkdirSync(SRC_DIR, { recursive: true });
   fs.writeFileSync(SCRIPT_PATH, EXPORT_RUNNER_PYTHON, 'utf8');
   fs.writeFileSync(path.join(SRC_DIR, AICAD_SELECT.filename), AICAD_SELECT.source, 'utf8');
+  fs.writeFileSync(RUNTIME_HOOK_PATH, [
+    'import os',
+    'import sys',
+    'if sys.platform == "win32":',
+    '    os.environ["PYTHONUTF8"] = "1"',
+    '    os.environ["PYTHONIOENCODING"] = "utf-8"',
+    ''
+  ].join('\n'), 'utf8');
 }
 
 function prepareVirtualenv(hostPython) {
@@ -176,6 +185,8 @@ function buildRunner(venvPython) {
     SPEC_DIR,
     '--paths',
     SRC_DIR,
+    '--runtime-hook',
+    RUNTIME_HOOK_PATH,
     '--hidden-import',
     'aicad_select',
     '--collect-all',

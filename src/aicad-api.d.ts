@@ -68,6 +68,12 @@ type AicadApi = {
 
   listModels(): Promise<AicadModelsPayload>;
   selectModel(name: string): Promise<string | undefined>;
+  createModel(payload: {
+    name: string;
+    description?: string;
+    template?: string;
+    params?: Record<string, number | string | boolean>;
+  } | string, description?: string): Promise<{ name: string; path: string; parts: string[] }>;
   rebuildModel(name: string): Promise<boolean>;
   rebuildAllModels(): Promise<{ ok: boolean; results: Array<{ name: string; ok: boolean; error?: string }> }>;
   revealModel(name: string): Promise<void>;
