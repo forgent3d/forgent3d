@@ -589,7 +589,7 @@ def holes(
 # --------------------------------------------------------------------------- #
 
 
-def safe_fillet(part, edges, radius: float, *, factor: float = 0.9) -> Part:
+def safe_fillet(part, edges, radius: float, *, factor: float = 0.9, label: str | None = None) -> Part:
     """Apply a fillet capped to `min(radius, max_fillet(edges) * factor)`.
 
     Use this instead of `fillet(edges, r)` when `r` may be larger than the
@@ -609,6 +609,7 @@ def safe_fillet(part, edges, radius: float, *, factor: float = 0.9) -> Part:
     try:
         upper = p.max_fillet(list(edges), tolerance=0.1, max_iterations=20) * factor
     except Exception as exc:  # build123d raises generic Exception for degenerate edges
+        context = _safe_op_context("safe_fillet", p, edges, radius, factor, label)
         raise SelectionError(
             f"safe_fillet(): max_fillet failed ({exc}). Common causes:\n"
             "  1. Selection includes BOTH inner and outer rim of a hollow wall — the "
@@ -616,15 +617,17 @@ def safe_fillet(part, edges, radius: float, *, factor: float = 0.9) -> Part:
             "  2. Selection includes a seam edge from a prior boolean (e.g. handle/body "
             "join). Fillet the bodies BEFORE fusing them.\n"
             "  3. A previously-added sub-part is only tangent to the body. Re-add it "
-            "with safe_add(..., min_overlap >= 1.0)."
+            "with safe_add(..., min_overlap >= 1.0).\n"
+            f"  Debug: {context}"
         ) from exc
     r = min(radius, upper)
     if r <= 0:
-        raise SelectionError(f"safe_fillet(): computed radius {r} <= 0; edge set is too thin")
+        context = _safe_op_context("safe_fillet", p, edges, radius, factor, label)
+        raise SelectionError(f"safe_fillet(): computed radius {r} <= 0; edge set is too thin. {context}")
     return fillet(edges, radius=r)
 
 
-def safe_chamfer(part, edges, distance: float, *, factor: float = 0.9) -> Part:
+def safe_chamfer(part, edges, distance: float, *, factor: float = 0.9, label: str | None = None) -> Part:
     """Apply a chamfer capped to `min(distance, max_fillet(edges) * factor)`.
 
     `max_fillet` is reused as a topology-safety probe — chamfers share the
@@ -643,13 +646,16 @@ def safe_chamfer(part, edges, distance: float, *, factor: float = 0.9) -> Part:
     try:
         upper = p.max_fillet(list(edges), tolerance=0.1, max_iterations=20) * factor
     except Exception as exc:
+        context = _safe_op_context("safe_chamfer", p, edges, distance, factor, label)
         raise SelectionError(
             f"safe_chamfer(): max_fillet probe failed ({exc}). "
-            "See safe_fillet() for common topological causes."
+            "See safe_fillet() for common topological causes. "
+            f"Debug: {context}"
         ) from exc
     d = min(distance, upper)
     if d <= 0:
-        raise SelectionError(f"safe_chamfer(): computed distance {d} <= 0")
+        context = _safe_op_context("safe_chamfer", p, edges, distance, factor, label)
+        raise SelectionError(f"safe_chamfer(): computed distance {d} <= 0. {context}")
     return chamfer(edges, length=d)
 
 
@@ -667,6 +673,11 @@ class _Overlap:
     @property
     def min_axis(self) -> float:
         return min(self.dx, self.dy, self.dz)
+
+    @property
+    def min_axis_name(self) -> str:
+        values = {"X": self.dx, "Y": self.dy, "Z": self.dz}
+        return min(values, key=values.get)
 
 
 def _bbox_overlap(a, b) -> _Overlap:
@@ -686,15 +697,19 @@ def safe_add(main, sub, *, min_overlap: float = 1.0) -> Part:
     errors. This helper checks bbox overlap on all three axes before fusing
     and raises a clear message if the sub-part needs to be moved inward.
     """
-    overlap = _bbox_overlap(_as_part(main), _as_part(sub))
+    main_p = _as_part(main)
+    sub_p = _as_part(sub)
+    overlap = _bbox_overlap(main_p, sub_p)
     if overlap.min_axis < min_overlap:
+        axis = overlap.min_axis_name
         raise SelectionError(
             f"safe_add(): bbox overlap is only {overlap.min_axis:.3f} mm "
             f"(dx={overlap.dx:.3f}, dy={overlap.dy:.3f}, dz={overlap.dz:.3f}); "
-            f"move `sub` inward by >= {min_overlap - overlap.min_axis:.3f} mm or "
-            "lower min_overlap if a tangent join is intentional."
+            f"limiting_axis={axis}; move `sub` inward along {axis} by >= "
+            f"{min_overlap - overlap.min_axis:.3f} mm or lower min_overlap if a tangent join is intentional. "
+            f"Debug: {_bbox_summary(main_p, 'main_bbox')}; {_bbox_summary(sub_p, 'sub_bbox')}"
         )
-    return _as_part(main) + _as_part(sub)
+    return main_p + sub_p
 
 
 def safe_cut(main, tool, *, min_through: float = 0.1) -> Part:
@@ -774,6 +789,58 @@ def _ensure_shapelist(x) -> ShapeList:
     if isinstance(x, Iterable):
         return ShapeList(x)
     return ShapeList([x])
+
+
+def _bbox_summary(obj, label: str = "bbox") -> str:
+    try:
+        bb = _as_part(obj).bounding_box()
+        return (
+            f"{label}=X[{bb.min.X:.2f},{bb.max.X:.2f}] "
+            f"Y[{bb.min.Y:.2f},{bb.max.Y:.2f}] "
+            f"Z[{bb.min.Z:.2f},{bb.max.Z:.2f}]"
+        )
+    except Exception as exc:
+        return f"{label}=unavailable({exc})"
+
+
+def _edge_context(edges) -> str:
+    items = list(edges)
+    if not items:
+        return "edge_count=0"
+    lengths = []
+    centers = []
+    for edge in items[:20]:
+        try:
+            lengths.append(float(edge.length))
+        except Exception:
+            pass
+        try:
+            c = edge.center()
+            centers.append((float(c.X), float(c.Y), float(c.Z)))
+        except Exception:
+            pass
+    pieces = [f"edge_count={len(items)}"]
+    if lengths:
+        pieces.append(f"edge_length_range=[{min(lengths):.3f},{max(lengths):.3f}]")
+    if centers:
+        xs, ys, zs = zip(*centers)
+        pieces.append(
+            "edge_center_bbox="
+            f"X[{min(xs):.2f},{max(xs):.2f}] "
+            f"Y[{min(ys):.2f},{max(ys):.2f}] "
+            f"Z[{min(zs):.2f},{max(zs):.2f}]"
+        )
+    if len(items) > 20:
+        pieces.append("edge_sample=first_20")
+    return ", ".join(pieces)
+
+
+def _safe_op_context(op_name: str, part, edges, amount: float, factor: float, label: str | None = None) -> str:
+    label_text = f" label={label!r};" if label else ""
+    return (
+        f"{op_name} context:{label_text} requested={amount:.3f}, factor={factor:.3f}, "
+        f"{_bbox_summary(part, 'part_bbox')}, {_edge_context(edges)}"
+    )
 
 
 # --------------------------------------------------------------------------- #

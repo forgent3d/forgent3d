@@ -420,11 +420,13 @@ async function runPythonFile(projectRoot, scriptPath, opts) {
     }, timeoutMs);
     child.on('error', (error) => {
       clearTimeout(timer);
-      resolve({ code: -1, stdout, stderr, error });
+      const message = String(error?.message || error || 'spawn failed');
+      resolve({ code: -1, stdout, stderr: stderr || message, error });
     });
     child.on('close', (code, signal) => {
       clearTimeout(timer);
-      resolve({ code: code ?? (timedOut ? 124 : -1), signal, stdout, stderr, error: null });
+      const exitCode = timedOut ? 124 : (Number.isInteger(code) ? code : (signal ? -1 : -1));
+      resolve({ code: exitCode, signal, stdout, stderr, error: null });
     });
     if (stdin) child.stdin?.end(stdin);
     else child.stdin?.end();
@@ -433,23 +435,26 @@ async function runPythonFile(projectRoot, scriptPath, opts) {
   const elapsedMs = Date.now() - startedAt;
   const relCwd = path.relative(projectRoot, cwd).replace(/\\/g, '/') || '.';
   const stdout = trimCapturedOutput(result.stdout || '', maxOutputChars);
-  const stderr = trimCapturedOutput(result.stderr || '', maxOutputChars);
+  const spawnDetail = result.error ? String(result.error?.message || result.error) : '';
+  const stderr = trimCapturedOutput(result.stderr || spawnDetail, maxOutputChars);
+  const exitCode = timedOut ? 124 : (Number.isInteger(result.code) ? result.code : -1);
   const codeLine = timedOut
     ? 'Python timed out after ' + timeoutMs + 'ms'
-    : 'Python exited with code ' + result.code + (result.signal ? ' (signal ' + result.signal + ')' : '');
+    : 'Python exited with code ' + exitCode + (result.signal ? ' (signal ' + result.signal + ')' : '');
   const body = [
     [codeLine + ' in ' + elapsedMs + 'ms', 'interpreter: ' + (py.versionText || py.version || py.cmd), 'cwd: ' + relCwd].join('\n'),
     'stdout:\n' + (stdout || '(empty)'),
     'stderr:\n' + (stderr || '(empty)'),
   ].join('\n\n');
   return {
-    ok: !timedOut && result.code === 0,
+    ok: !timedOut && exitCode === 0,
     text: body,
     stdout,
     stderr,
-    exitCode: result.code,
+    exitCode,
     timedOut,
     elapsedMs,
+    interpreter: py.versionText || py.version || py.cmd,
   };
 }
 
@@ -463,6 +468,11 @@ function runnerCachePath(projectRoot, runnerId) {
 async function writeRunnerSource(projectRoot, runnerId, source) {
   if (typeof source !== 'string' || !source.trim()) throw new Error('runnerSource is required.');
   if (source.length > 2_000_000) throw new Error('runnerSource is too large.');
+  if (!/def\s+main\s*\(/m.test(source) || !/command_build/.test(source)) {
+    throw new Error(
+      'Invalid aicad-script runner source. Ensure cad-agent is logged in and /api/agent/runner returns script.py, not an HTML/JSON error page.'
+    );
+  }
   const filePath = runnerCachePath(projectRoot, runnerId);
   await fsp.mkdir(path.dirname(filePath), { recursive: true });
   let current = null;
@@ -516,7 +526,9 @@ function formatRebuildModel(r) {
   if (!r || typeof r !== 'object') return String(r);
   if (!r.ok) {
     const parts = [`error: ${r.error || 'build failed'}`];
+    if (r.exitCode != null) parts.push(`exitCode: ${r.exitCode}`);
     if (r.stderr) parts.push(`stderr: ${r.stderr}`);
+    if (r.stdout) parts.push(`stdout: ${r.stdout}`);
     return parts.join('\n');
   }
   const tags = [];
@@ -588,7 +600,22 @@ async function dispatch(name, args, ctx) {
           argCount: Array.isArray(a.args) ? a.args.length : 0,
           cwd: a.cwd || '.',
         });
-        return runDesktopPython(projectPath, a, ctx);
+        {
+          const pyResult = await runDesktopPython(projectPath, a, ctx);
+          toolLog(
+            ctx,
+            'desktop.python done',
+            {
+              elapsedMs: Date.now() - startedAt,
+              ok: !!pyResult.ok,
+              exitCode: pyResult.exitCode,
+              stdoutLen: String(pyResult.stdout || '').length,
+              stderrLen: String(pyResult.stderr || '').length,
+            },
+            pyResult.ok ? 'info' : 'warn',
+          );
+          return pyResult;
+        }
       case 'archetype': {
         const name = String(a.name || '').trim();
         toolLog(ctx, 'archetype start', { name: name || '(list)' });

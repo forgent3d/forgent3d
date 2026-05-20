@@ -219,6 +219,7 @@ function pythonChildProcessEnv() {
   const env = {
     ...process.env,
     PYTHONUTF8: '1',
+    PYTHONUNBUFFERED: '1',
     PYTHONIOENCODING: 'utf-8',
     LANG: 'C.UTF-8',
     LC_ALL: 'C.UTF-8'

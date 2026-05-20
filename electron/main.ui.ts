@@ -28,6 +28,32 @@ function createMainUiTools({
     sendToRenderer('LOG', { message, level, ts: Date.now() });
   }
 
+  function openDevToolsFor(contents, label = 'window') {
+    if (!deps.isDev || !contents || contents.isDestroyed?.()) return;
+    try {
+      if (!contents.isDevToolsOpened()) {
+        contents.openDevTools({ mode: 'detach', activate: true });
+      } else {
+        contents.devToolsWebContents?.focus?.();
+      }
+    } catch (e) {
+      sendLog(`DevTools (${label}): ${e?.message || e}`, 'warn');
+    }
+  }
+
+  function toggleDevToolsFor(contents, label = 'window') {
+    if (!contents || contents.isDestroyed?.()) return;
+    try {
+      if (contents.isDevToolsOpened()) {
+        contents.closeDevTools();
+      } else {
+        contents.openDevTools({ mode: 'detach', activate: true });
+      }
+    } catch (e) {
+      sendLog(`DevTools (${label}): ${e?.message || e}`, 'warn');
+    }
+  }
+
   const menuMessages = {
     en: {
       file: 'File',
@@ -56,6 +82,7 @@ function createMainUiTools({
       selectAll: 'Select All',
       view: 'View',
       reload: 'Reload',
+      toggleDeveloperTools: 'Developer Tools',
       debugTools: 'Debug Tools',
       actualSize: 'Actual Size',
       zoomIn: 'Zoom In',
@@ -97,6 +124,7 @@ function createMainUiTools({
       selectAll: '全选',
       view: '视图',
       reload: '重新加载',
+      toggleDeveloperTools: '开发者工具',
       debugTools: '调试工具',
       actualSize: '实际大小',
       zoomIn: '放大',
@@ -211,16 +239,23 @@ function createMainUiTools({
         if (/^https?:\/\//i.test(url)) shell.openExternal(url);
         return { action: 'deny' };
       });
+      webContents.once('did-finish-load', () => {
+        if (!deps.isDev) return;
+        const url = String(webContents.getURL() || '');
+        if (/localhost:3000|127\.0\.0\.1:3000|\/agent\b/i.test(url)) {
+          openDevToolsFor(webContents, 'agent-webview');
+        }
+      });
     });
 
     if (deps.isDev) {
       win.loadURL('http://localhost:7788');
-      win.webContents.openDevTools({ mode: 'detach' });
     } else {
       win.loadFile(path.join(__dirname, '..', '..', 'dist', 'index.html'));
     }
 
     win.webContents.once('did-finish-load', async () => {
+      openDevToolsFor(win.webContents, 'main');
       deps.markRendererDesktopAuthReady?.(true);
       try {
         sendToRenderer('PYTHON_STATUS', await deps.getBuildRuntimeStatus());
@@ -322,6 +357,15 @@ function createMainUiTools({
         label: t('view'),
         submenu: [
           { role: 'reload', label: t('reload') },
+          {
+            label: t('toggleDeveloperTools'),
+            accelerator: process.platform === 'darwin' ? 'Alt+Cmd+I' : 'Ctrl+Shift+I',
+            click: () => {
+              const win = state.mainWindow();
+              if (win && !win.isDestroyed()) toggleDevToolsFor(win.webContents, 'main');
+            }
+          },
+          { type: 'separator' },
           {
             type: 'checkbox',
             label: t('debugTools'),

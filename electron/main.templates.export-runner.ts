@@ -23,6 +23,7 @@ if sys.platform == "win32":
 import argparse
 import json
 import time
+import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = HERE
@@ -174,7 +175,8 @@ def _build_namespace(model_name: str, part_name: str):
         }
         exec(code, ns, ns)
     except Exception as exc:
-        print(f"[export_runner] Failed to execute {source_path}: {exc}", file=sys.stderr)
+        print(f"[export_runner] Failed to execute {source_path}: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(traceback.format_exc(limit=12), file=sys.stderr)
         return None, None, 3
     return ns, source_path, 0
 
