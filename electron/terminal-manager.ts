@@ -132,6 +132,17 @@ let _windowsPathPatchCache = null;
 // Cached PATH resolved from the user's login shell (computed once, async-safely).
 let _loginShellPath = null;
 
+// Strip env vars that break nvm in child shells. If npm_config_prefix is inherited
+// from the Electron parent process, nvm.sh refuses to load on source, so the
+// nvm-managed node bin dir never gets prepended to PATH and CLIs like `codex` /
+// `claude` installed via `npm i -g` become unfindable in the spawned shell.
+function envWithoutNpmPrefix(sourceEnv) {
+  const out = { ...sourceEnv };
+  delete out.npm_config_prefix;
+  delete out.NPM_CONFIG_PREFIX;
+  return out;
+}
+
 // Well-known bin dirs that should be on PATH on macOS/Linux but are often missed
 // when the app is launched from Finder/Dock (which inherits launchd's minimal PATH).
 // Most importantly nvm: the official installer wires nvm into ~/.zshrc, which is NOT
@@ -177,7 +188,7 @@ function probeShellPath(shell, shellArgs) {
     const r = spawnSync(shell, shellArgs, {
       stdio: ['ignore', 'pipe', 'ignore'],
       encoding: 'utf8',
-      env: process.env,
+      env: envWithoutNpmPrefix(process.env),
       timeout: 5000
     });
     if (!r.stdout) return '';
@@ -228,7 +239,7 @@ function hasCommandOnWindows(command) {
     const r = spawnSync('where', [command], {
       windowsHide: true,
       stdio: 'ignore',
-      env: buildProcessEnvWithWindowsPathFixes(process.env)
+      env: buildProcessEnvWithWindowsPathFixes(envWithoutNpmPrefix(process.env))
     });
     return r.status === 0;
   } catch {
@@ -410,7 +421,7 @@ function init(ipcMain, sendToRenderer, hooks = {}) {
     let ptyProcess;
     try {
       const mergedEnv = buildProcessEnvWithWindowsPathFixes({
-        ...process.env,
+        ...envWithoutNpmPrefix(process.env),
         ...(launch.env || {}),
         // On macOS/Linux the packaged app may inherit a minimal PATH when launched from
         // the Finder/Dock rather than a terminal.  Expand it using the login shell so
