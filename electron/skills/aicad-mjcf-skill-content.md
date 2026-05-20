@@ -1,7 +1,7 @@
 ## When To Use MJCF
 
-- Use root `models/<model_name>/asm.xml` for every model package, including simple single-body models.
-- Keep each rigid body as its own local `models/<model_name>/parts/<part_name>/part.py`; do not fuse a separable model into one monolithic `part.py`.
+- Use `models/<model_name>/asm.xml` only when the model needs MuJoCo features: joints, actuators, equality constraints, or simulated motion. For a static multi-part model use a build123d `assembly.py`; for a single-body model use the flat `part.py` layout.
+- When MJCF is in use, each rigid body lives at its own local `models/<model_name>/parts/<part_name>/part.py`; do not fuse a separable model into one monolithic `part.py`.
 - Assembly-level tunables live in `models/<model_name>/params.json`. Do not create or duplicate local part geometry parameters in the root assembly params; put those in the matching `parts/<part_name>/params.json` read by `part.py`.
 
 ## Assembly Rules

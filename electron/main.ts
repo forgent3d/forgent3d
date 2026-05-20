@@ -135,6 +135,7 @@ function modelParamsPath(projectPath, name, kind = null) { return path.join(mode
 function sourceExt(kernel = currentKernel) { return path.extname(kernelMeta(kernel).sourceFile); }
 function modelSourceFilename(kernel = currentKernel, kind = 'part') {
   if (kind === 'asm') return 'asm.xml';
+  if (kind === 'assembly') return `assembly${sourceExt(kernel)}`;
   return `${kind}${sourceExt(kernel)}`;
 }
 function resolveModelSource(projectPath, name, kernel = currentKernel, opts = {}) {
@@ -145,13 +146,22 @@ function resolveModelSource(projectPath, name, kernel = currentKernel, opts = {}
   }
   if (!k) return null;
   k = assertKernel(k);
-  const fileName = modelSourceFilename(k, 'asm');
-  const sourcePath = path.join(modelDir(projectPath, name), fileName);
-  if (fs.existsSync(sourcePath)) return { kind: 'asm', fileName, sourcePath };
+  const dir = modelDir(projectPath, name);
+  const candidates = [
+    { kind: 'assembly', fileName: modelSourceFilename(k, 'assembly') },
+    { kind: 'asm', fileName: modelSourceFilename(k, 'asm') },
+    { kind: 'part', fileName: modelSourceFilename(k, 'part') }
+  ];
+  for (const { kind, fileName } of candidates) {
+    const sourcePath = path.join(dir, fileName);
+    if (fs.existsSync(sourcePath)) return { kind, fileName, sourcePath };
+  }
   return null;
 }
 function partSource(projectPath, name, kernel = currentKernel, kind = null) {
   if (kind === 'asm') return path.join(modelDir(projectPath, name), modelSourceFilename(kernel, 'asm'));
+  if (kind === 'assembly') return path.join(modelDir(projectPath, name), modelSourceFilename(kernel, 'assembly'));
+  if (kind === 'part-flat') return path.join(modelDir(projectPath, name), modelSourceFilename(kernel, 'part'));
   return modelPartSource(projectPath, name, name, kernel);
 }
 function partReadme(projectPath, name) { return path.join(modelDir(projectPath, name), 'README.md'); }
@@ -173,10 +183,12 @@ function partCache(projectPath, modelName, partName = modelName, kernel = curren
 function modelCacheFile(projectPath, name, source = null, kernel = currentKernel) {
   const s = source || resolveModelSource(projectPath, name, kernel);
   if (!s) return null;
-  return s.sourcePath;
+  if (s.kind === 'asm') return s.sourcePath;
+  return path.join(projectPath, CACHE_DIR, `${name}${kernelMeta(kernel).cacheExt}`);
 }
 function modelPreviewFormat(source = null, kernel = currentKernel) {
-  return 'MJCF';
+  if (source && source.kind === 'asm') return 'MJCF';
+  return kernelMeta(kernel).previewFormat;
 }
 function toProjectRelativeAsset(relPath) {
   if (!currentProjectPath) return null;

@@ -98,10 +98,20 @@ def _write_stl(shape, path_out):
         raise RuntimeError(f"Unable to export STL: {exc}")
 
 
-def _resolve_model_source(model_name: str, part_name: str):
-    source_path = os.path.join(MODELS_DIR, model_name, "parts", part_name, "part.py")
-    if os.path.isfile(source_path):
-        return source_path
+def _resolve_model_source(model_name: str, part_name: str, source_override: str = None):
+    if source_override:
+        candidate = source_override
+        if not os.path.isabs(candidate):
+            candidate = os.path.join(PROJECT_ROOT, candidate)
+        return candidate if os.path.isfile(candidate) else None
+    candidates = [
+        os.path.join(MODELS_DIR, model_name, "assembly.py"),
+        os.path.join(MODELS_DIR, model_name, "part.py"),
+        os.path.join(MODELS_DIR, model_name, "parts", part_name, "part.py"),
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
     return None
 
 
@@ -130,7 +140,7 @@ def _json_safe(value):
     raise TypeError(f"metadata contains non-JSON value of type {type(value).__name__}")
 
 
-def _write_metadata(model_name: str, part_name: str, ns: dict):
+def _write_metadata(source_path: str, ns: dict):
     metadata = ns.get("metadata", None)
     if metadata is None:
         return
@@ -138,9 +148,9 @@ def _write_metadata(model_name: str, part_name: str, ns: dict):
         payload = _json_safe(metadata)
     except Exception as exc:
         raise RuntimeError(f"Invalid metadata: {exc}")
-    model_dir = os.path.join(MODELS_DIR, model_name, "parts", part_name)
-    os.makedirs(model_dir, exist_ok=True)
-    metadata_path = os.path.join(model_dir, "metadata.json")
+    target_dir = os.path.dirname(source_path)
+    os.makedirs(target_dir, exist_ok=True)
+    metadata_path = os.path.join(target_dir, "metadata.json")
     tmp_path = metadata_path + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
@@ -148,11 +158,13 @@ def _write_metadata(model_name: str, part_name: str, ns: dict):
     os.replace(tmp_path, metadata_path)
 
 
-def _build_namespace(model_name: str, part_name: str):
-    source_path = _resolve_model_source(model_name, part_name)
+def _build_namespace(model_name: str, part_name: str, source_override: str = None):
+    source_path = _resolve_model_source(model_name, part_name, source_override)
     if not source_path:
         print(
-            f"[export_runner] models/{model_name}/parts/{part_name}/part.py does not exist",
+            f"[export_runner] no source file found for model {model_name!r} "
+            f"(looked for models/{model_name}/assembly.py, models/{model_name}/part.py, "
+            f"models/{model_name}/parts/{part_name}/part.py)",
             file=sys.stderr
         )
         return None, None, 2
@@ -181,21 +193,25 @@ def _build_namespace(model_name: str, part_name: str):
     return ns, source_path, 0
 
 
-def build_one(model_name: str, part_name: str = None, export_format: str = "brep", output: str = None) -> int:
+def build_one(model_name: str, part_name: str = None, export_format: str = "brep", output: str = None, source_override: str = None) -> int:
     part_name = part_name or model_name
     build_started = time.perf_counter()
-    ns, source_path, err = _build_namespace(model_name, part_name)
+    ns, source_path, err = _build_namespace(model_name, part_name, source_override)
     build_elapsed = time.perf_counter() - build_started
     if err:
         return err
     print(f"[export_runner] {model_name} build_model time: {build_elapsed:.3f}s")
     result = ns.get("result", None)
     if result is None:
-        print(f"[export_runner] {source_path} must define a global result object (build123d).",
+        candidate = ns.get("assembly", None)
+        if candidate is not None:
+            result = candidate
+    if result is None:
+        print(f"[export_runner] {source_path} must define a global result (or assembly) object (build123d).",
               file=sys.stderr)
         return 4
     try:
-        _write_metadata(model_name, part_name, ns)
+        _write_metadata(source_path, ns)
     except Exception as exc:
         print(f"[export_runner] Failed to write metadata.json: {exc}", file=sys.stderr)
         return 8
@@ -240,6 +256,7 @@ def main() -> int:
     parser.add_argument("--model", default=None, help="Model directory name")
     parser.add_argument("--part", default=None, help="Legacy alias for --model")
     parser.add_argument("--part-name", default=None, help="Part directory name inside models/<model>/parts/")
+    parser.add_argument("--source", default=None, help="Optional project-relative or absolute source file path (overrides default lookup)")
     parser.add_argument("--export-format", default="brep", choices=["brep", "step", "stl"])
     parser.add_argument("--output", default=None, help="Optional absolute path for exported file")
     args = parser.parse_args()
@@ -250,7 +267,7 @@ def main() -> int:
     model_name = args.model or args.part
     if not model_name:
         parser.error("one of --model / --part is required")
-    return build_one(model_name, args.part_name or model_name, args.export_format, args.output)
+    return build_one(model_name, args.part_name or model_name, args.export_format, args.output, args.source)
 
 
 if __name__ == "__main__":
