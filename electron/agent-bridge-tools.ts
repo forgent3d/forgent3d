@@ -322,17 +322,6 @@ async function replaceInFile(projectRoot, userPath, oldText, newText, replaceAll
   return `${header}\n${preview}`;
 }
 
-function scriptRunnerPath() {
-  const candidates = [
-    path.resolve(__dirname, '..', '..', 'cad-agent', 'lib', 'aicad-agent', 'script.py'),
-    path.resolve(__dirname, '..', '..', '..', 'cad-agent', 'lib', 'aicad-agent', 'script.py'),
-  ];
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  throw new Error('Missing cad-agent script runner: cad-agent/lib/aicad-agent/script.py');
-}
-
 function archetypesDir() {
   const candidates = [
     path.resolve(__dirname, '..', '..', 'cad-agent', 'lib', 'aicad-agent', 'skills', 'archetypes'),
@@ -464,164 +453,27 @@ async function runPythonFile(projectRoot, scriptPath, opts) {
   };
 }
 
-function normalizeScriptCommand(value) {
-  if (value == null) return '';
-  if (typeof value === 'string') return value.trim();
-  if (Array.isArray(value)) return value.map((v) => String(v)).join(' ').trim();
-  if (typeof value === 'object') {
-    if (typeof value.command === 'string') return value.command.trim();
-    if (value.command != null) return normalizeScriptCommand(value.command);
-  }
-  const text = String(value).trim();
-  if (text === '[object Object]') {
-    throw new Error('script command must be a string, e.g. "probe -component model/part -expr top_edges(part)"');
-  }
-  return text;
+function runnerCachePath(projectRoot, runnerId) {
+  const id = String(runnerId || '').trim();
+  if (!/^[a-zA-Z0-9._-]{1,80}$/.test(id)) throw new Error('runnerId must contain only letters, numbers, dots, underscores, and hyphens.');
+  const dir = path.join(projectRoot, '.aicad-agent', 'runners');
+  return path.join(dir, `${id}.py`);
 }
 
-function parseScriptCommand(value) {
-  const command = normalizeScriptCommand(value);
-  if (!command) throw new Error('script command is required');
-  const tokens = [];
-  let current = '';
-  let quote = '';
-  let escaped = false;
-  for (const ch of command) {
-    if (escaped) {
-      current += ch;
-      escaped = false;
-      continue;
-    }
-    if (ch === '\\') {
-      escaped = true;
-      continue;
-    }
-    if (quote) {
-      if (ch === quote) quote = '';
-      else current += ch;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    if (/\s/.test(ch)) {
-      if (current) {
-        tokens.push(current);
-        current = '';
-      }
-      continue;
-    }
-    current += ch;
-  }
-  if (escaped) current += '\\';
-  if (quote) throw new Error('Unclosed quote in script command.');
-  if (current) tokens.push(current);
-  if (!tokens.length) throw new Error('script command is required');
-  let script = tokens[0].replace(/^script[\\/]+/i, '').replace(/^[/\\]+|[/\\]+$/g, '').replace(/\\/g, '/');
-  if (!/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(script)) {
-    throw new Error(`Invalid script name: ${tokens[0]}`);
-  }
-  return { script, args: tokens.slice(1).map((v) => String(v)).slice(0, 50) };
+async function writeRunnerSource(projectRoot, runnerId, source) {
+  if (typeof source !== 'string' || !source.trim()) throw new Error('runnerSource is required.');
+  if (source.length > 2_000_000) throw new Error('runnerSource is too large.');
+  const filePath = runnerCachePath(projectRoot, runnerId);
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+  let current = null;
+  try { current = await fsp.readFile(filePath, 'utf8'); } catch {}
+  if (current !== source) await fsp.writeFile(filePath, source, 'utf8');
+  return filePath;
 }
 
-function formatScriptPayload(payload) {
-  if (!payload || typeof payload !== 'object') return String(payload);
-  if (!payload.ok) return payload.error || JSON.stringify(payload, null, 2);
-  if (payload.script === 'build') {
-    const lines = [
-      `build -component ${payload.model}/${payload.part}`,
-      `source: ${payload.source}`,
-      `result: ${payload.hasResult ? payload.resultType : '(missing result)'}`,
-    ];
-    if (payload.bbox?.size) {
-      const fmt = (n) => typeof n === 'number' ? n.toFixed(3) : String(n);
-      lines.push(`bbox size: ${payload.bbox.size.map(fmt).join(', ')}`);
-    }
-    if (Array.isArray(payload.metadataKeys)) lines.push(`metadata: ${payload.metadataKeys.join(', ') || '(none)'}`);
-    return lines.join('\n');
-  }
-  if (payload.script === 'inspect' && payload.mode === 'meta') {
-    return [
-      `inspect -component ${payload.model}/${payload.part} -meta ${payload.path}`,
-      JSON.stringify(payload.value, null, 2),
-    ].join('\n');
-  }
-  if (payload.script === 'inspect' && payload.mode === 'measure') {
-    const fmt = (n) => typeof n === 'number' ? n.toFixed(3) : String(n);
-    return [
-      `inspect -component ${payload.model}/${payload.part} -from ${payload.a?.path} -to ${payload.b?.path}`,
-      `a: ${payload.a?.path} (${(payload.a?.point || []).map(fmt).join(', ')})`,
-      `b: ${payload.b?.path} (${(payload.b?.point || []).map(fmt).join(', ')})`,
-      `delta: ${(payload.delta || []).map(fmt).join(', ')}`,
-      `distance: ${fmt(payload.distance)}`,
-    ].join('\n');
-  }
-  if (payload.script === 'probe') {
-    const v = payload.value || {};
-    const lines = [];
-    const header = [`probe -component ${payload.model}/${payload.part} -expr "${payload.expression || ''}"`];
-    if (v.py_type) header.push(`py_type=${v.py_type}`);
-    if (typeof v.count === 'number') {
-      header.push(`count=${v.count}`);
-      if (v.item_type) header.push(`item_type=${v.item_type}`);
-      if (typeof v.total_length === 'number') header.push(`total_length=${v.total_length.toFixed(3)}`);
-      if (typeof v.total_area === 'number') header.push(`total_area=${v.total_area.toFixed(3)}`);
-    }
-    lines.push(header.join('  '));
-    const fmtNum = (n) => (typeof n === 'number' ? n.toFixed(3) : String(n));
-    const fmtVec = (a) => Array.isArray(a) ? `(${a.map(fmtNum).join(', ')})` : '';
-    const renderItem = (it) => {
-      const segs = [`#${it.index}`, it.type];
-      if (it.geom_type) segs.push(it.geom_type);
-      if (typeof it.length === 'number') segs.push(`len=${fmtNum(it.length)}`);
-      if (typeof it.radius === 'number') segs.push(`r=${fmtNum(it.radius)}`);
-      if (typeof it.area === 'number') segs.push(`area=${fmtNum(it.area)}`);
-      if (it.center) segs.push(`center=${fmtVec(it.center)}`);
-      if (it.bbox?.size) segs.push(`size=${fmtVec(it.bbox.size)}`);
-      return '  ' + segs.join('  ');
-    };
-    if (Array.isArray(v.items)) {
-      for (const it of v.items) lines.push(renderItem(it));
-      if (v.items_truncated) lines.push(`  ... (+${v.items_truncated} more truncated)`);
-    } else if (v.type) {
-      lines.push(renderItem({ index: 0, ...v }));
-    }
-    return lines.join('\n');
-  }
-  if (payload.script === 'api') {
-    const lines = [];
-    if (payload.name) {
-      lines.push(`api -module ${payload.module} -name ${payload.name}`);
-      lines.push(`kind: ${payload.kind || '?'}`);
-      if (payload.signature) lines.push(`signature: ${payload.signature}`);
-      if (payload.doc) lines.push(`doc:\n${payload.doc}`);
-      if (Array.isArray(payload.members) && payload.members.length) {
-        lines.push('members:');
-        for (const member of payload.members) {
-          const sig = member.signature ? ` ${member.signature}` : '';
-          lines.push(`  ${member.name}  ${member.kind || '?'}${sig}`);
-        }
-        if (payload.membersTruncated) lines.push(`  ... (+${payload.membersTruncated} more)`);
-      }
-      return lines.join('\n');
-    }
-    lines.push(`api -module ${payload.module}${payload.search ? ` -search ${payload.search}` : ''}`);
-    if (typeof payload.totalPublicSymbols === 'number') lines.push(`public symbols: ${payload.totalPublicSymbols}`);
-    if (Array.isArray(payload.symbols)) {
-      for (const symbol of payload.symbols) {
-        const sig = symbol.signature ? ` ${symbol.signature}` : '';
-        lines.push(`  ${symbol.name}  ${symbol.kind || '?'}${sig}`);
-      }
-    }
-    if (payload.truncated) lines.push('  ... (truncated; use -search or -name for details)');
-    return lines.join('\n');
-  }
-  return JSON.stringify(payload, null, 2);
-}
-
-async function runScript(projectRoot, command, ctx) {
-  const { script, args } = parseScriptCommand(command);
+async function runDesktopPython(projectRoot, payload, ctx) {
+  const p = payload && typeof payload === 'object' ? payload : {};
+  const scriptPath = await writeRunnerSource(projectRoot, p.runnerId || 'runner', p.runnerSource);
   const active = (() => {
     try {
       const data = ctx?.mcpContext?.listParts?.();
@@ -630,14 +482,17 @@ async function runScript(projectRoot, command, ctx) {
       return '';
     }
   })();
-  const result = await runPythonFile(projectRoot, scriptRunnerPath(), {
-    args: [script, ...args],
-    env: active ? { AICAD_ACTIVE_MODEL: active } : {},
+  return runPythonFile(projectRoot, scriptPath, {
+    args: Array.isArray(p.args) ? p.args : [],
+    cwd: typeof p.cwd === 'string' && p.cwd ? p.cwd : '.',
+    stdin: typeof p.stdin === 'string' ? p.stdin : '',
+    timeoutMs: p.timeoutMs,
+    maxOutputChars: p.maxOutputChars,
+    env: {
+      ...(p.env && typeof p.env === 'object' && !Array.isArray(p.env) ? p.env : {}),
+      ...(active ? { AICAD_ACTIVE_MODEL: active } : {}),
+    },
   });
-  let payload = null;
-  try { payload = JSON.parse(result.stdout || '{}'); } catch {}
-  if (!payload) return { ok: false, text: result.text };
-  return { ok: !!payload.ok && result.ok, text: formatScriptPayload(payload) };
 }
 
 function formatListModels(data) {
@@ -727,13 +582,13 @@ async function dispatch(name, args, ctx) {
       case 'replace_in_file':
         toolLog(ctx, 'replace_in_file start', { path: a.path, replaceAll: !!a.replaceAll });
         return textResult(await replaceInFile(projectPath, a.path, a.oldText, a.newText, !!a.replaceAll));
-      case 'script': {
-        const command = normalizeScriptCommand(typeof args === 'string' ? args : (a.command ?? args));
-        toolLog(ctx, 'script start', { command });
-        const r = await runScript(projectPath, command, ctx);
-        toolLog(ctx, 'script done', { elapsedMs: Date.now() - startedAt, ok: !!r.ok }, r.ok ? 'info' : 'warn');
-        return textResult(r.text, !r.ok);
-      }
+      case 'desktop.python':
+        toolLog(ctx, 'desktop.python start', {
+          runnerId: a.runnerId || '',
+          argCount: Array.isArray(a.args) ? a.args.length : 0,
+          cwd: a.cwd || '.',
+        });
+        return runDesktopPython(projectPath, a, ctx);
       case 'archetype': {
         const name = String(a.name || '').trim();
         toolLog(ctx, 'archetype start', { name: name || '(list)' });
@@ -812,4 +667,4 @@ async function dispatch(name, args, ctx) {
   }
 }
 
-module.exports = { dispatch, normalizeScriptCommand };
+module.exports = { dispatch };

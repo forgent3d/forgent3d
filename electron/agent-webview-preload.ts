@@ -29,7 +29,8 @@ if (isAllowedOrigin()) {
     platform: 'forgent3d-desktop',
     capabilities: {
       desktop: true,
-      tools: true
+      tools: true,
+      desktopPython: true
     },
     getEnvironment: async () => {
       const startedAt = Date.now();
@@ -49,6 +50,7 @@ if (isAllowedOrigin()) {
         capabilities: {
           desktop: true,
           tools: true,
+          desktopPython: true,
           ...(info?.capabilities || {})
         }
       };

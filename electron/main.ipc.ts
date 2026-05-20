@@ -627,7 +627,8 @@ function registerIpcHandlers({
       language,
       capabilities: {
         desktop: true,
-        tools: true
+        tools: true,
+        desktopPython: true
       }
     };
   });
@@ -641,9 +642,7 @@ function registerIpcHandlers({
       return { isError: true, content: [{ type: 'text', text: 'Tool name is required.' }] };
     }
     const rawArgs = payload?.args;
-    const args = name === 'script'
-      ? { command: bridgeTools.normalizeScriptCommand(rawArgs) }
-      : (rawArgs && typeof rawArgs === 'object' ? rawArgs : {});
+    const args = rawArgs && typeof rawArgs === 'object' ? rawArgs : {};
     const projectPath = state.currentProjectPath?.() || '';
     bridgeLog('callTool received', {
       callId,
