@@ -633,13 +633,6 @@ async function dispatch(name, args, ctx) {
         });
         return textResult(formatListModels(data));
       }
-      case 'get_model_info': {
-        if (!mcp) return textResult('CAD context unavailable.', true);
-        toolLog(ctx, 'get_model_info start', { model: String(a.model || '') });
-        const r = await mcp.getPartInfo(String(a.model || ''));
-        toolLog(ctx, 'get_model_info done', { elapsedMs: Date.now() - startedAt, hasError: !!r?.error });
-        return textResult(formatGetModelInfo(r), !!r?.error);
-      }
       case 'rebuild_model': {
         if (!mcp) return textResult('CAD context unavailable.', true);
         toolLog(ctx, 'rebuild_model start', { model: String(a.model || '') });
