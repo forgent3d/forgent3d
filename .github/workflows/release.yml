@@ -21,11 +21,11 @@ jobs:
           - os: windows-latest
             electron_builder_args: --win
             python_version: '3.13'
-            artifact_globs: dist/*.exe
+            artifact_globs: packages/electron/dist/*.exe
           - os: macos-latest
             electron_builder_args: --mac --arm64
             python_version: '3.13'
-            artifact_globs: dist/*.dmg dist/*.zip
+            artifact_globs: packages/electron/dist/*.dmg packages/electron/dist/*.zip
 
     runs-on: ${{ matrix.os }}
 
@@ -53,7 +53,7 @@ jobs:
             echo "Tag must be in form v<semver>, got: $GITHUB_REF_NAME"
             exit 1
           fi
-          pnpm version "$version" --no-git-tag-version
+          pnpm --filter aicad-preview version "$version" --no-git-tag-version
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -87,7 +87,7 @@ jobs:
       - name: Package app artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm exec electron-builder ${{ matrix.electron_builder_args }} --publish never
+        run: pnpm --filter aicad-preview exec electron-builder ${{ matrix.electron_builder_args }} --publish never
 
       - name: Ensure GitHub Release exists
         env:

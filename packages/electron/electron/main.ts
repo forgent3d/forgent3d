@@ -20,6 +20,7 @@ function loadAppDotenv() {
     /* ignore */
   }
   candidates.push(path.join(__dirname, '..', '..', '.env'));
+  candidates.push(path.join(__dirname, '..', '..', '..', '..', '.env'));
   for (const envPath of candidates) {
     try {
       if (fs.existsSync(envPath)) {
