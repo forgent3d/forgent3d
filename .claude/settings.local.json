@@ -14,7 +14,22 @@
       "Bash(echo \"---tsc exit: $?---\")",
       "Bash(echo \"tsc exit: $?\")",
       "Bash(PYTHONPATH=/Users/vv/codes/forgent3d/electron/skill-helpers $VENV_PY *)",
-      "Bash($VENV_PY *)"
+      "Bash($VENV_PY *)",
+      "WebFetch(domain:developers.cloudflare.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(curl *)",
+      "Bash(git -C /Users/vv/codes/forgent3d mv packages/cad-agent/runtime/embedded-runner-requirements.txt packages/cf-sandbox/runtime/)",
+      "Bash(git -C /Users/vv/codes/forgent3d mv packages/cad-agent/runtime/README.md packages/cf-sandbox/runtime/)",
+      "Bash(git -C /Users/vv/codes/forgent3d mv packages/cad-agent/runtime/sources packages/cf-sandbox/runtime/sources)",
+      "Bash(git config *)",
+      "Bash(git -C packages/cad-agent rev-parse --show-toplevel)",
+      "Bash(pnpm install *)",
+      "Bash(pnpm --filter @forgent3d/cf-sandbox typecheck)",
+      "Bash(pnpm --filter @forgent3d/cf-sandbox build)",
+      "Bash(pnpm --filter @forgent3d/shared build)",
+      "Bash(pnpm run *)",
+      "Bash(pnpm typecheck *)",
+      "Bash(pnpm build *)"
     ]
   }
 }

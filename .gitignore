@@ -1,15 +1,20 @@
 node_modules
+# Leftover from pre-monorepo layout (submodule is packages/cad-agent)
+/cad-agent/
 .env
 dist
 dist-electron
+packages/*/dist
+packages/*/dist-electron
+packages/*/.next
 release
 *.log
 .DS_Store
 .vscode
 .idea
 build-cache
-vendor/export-runner/*/
-!vendor/export-runner/README.md
+packages/electron/vendor/export-runner/*/
+!packages/electron/vendor/export-runner/README.md
 
 # Generated model files (in user workspace)
 output.glb

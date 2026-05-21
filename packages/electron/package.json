@@ -1,0 +1,126 @@
+{
+  "name": "aicad-preview",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Forgent3D companion previewer - watch build123d Python changes and render 3D in real time",
+  "main": "dist-electron/electron/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev:renderer": "vite",
+    "build:electron": "pnpm --filter @forgent3d/shared run build && pnpm exec tsc -p tsconfig.electron.json",
+    "dev:electron": "pnpm run build:electron && wait-on tcp:7788 && cross-env NODE_ENV=development electron .",
+    "dev:electron:watch": "pnpm run build:electron && concurrently -k -n TSC,ELECTRON -c blue,magenta \"pnpm exec tsc -p tsconfig.electron.json -w --preserveWatchOutput\" \"wait-on tcp:7788 && cross-env NODE_ENV=development electronmon .\"",
+    "dev": "concurrently -k -n RENDERER,ELECTRON -c cyan,magenta \"pnpm:dev:renderer\" \"pnpm:dev:electron\"",
+    "typecheck": "pnpm exec tsc --noEmit && pnpm exec tsc -p tsconfig.electron.json --noEmit",
+    "build:renderer": "vite build",
+    "build:runner": "node scripts/build-embedded-runner.js",
+    "start": "pnpm run build:electron && electron .",
+    "mcp:curl-test": "bash scripts/mcp-curl-test.sh",
+    "build": "pnpm run build:renderer && pnpm run build:electron && pnpm run build:runner && electron-builder",
+    "rebuild:native": "electron-rebuild -f -w node-pty"
+  },
+  "keywords": [
+    "electron",
+    "cad",
+    "build123d",
+    "three.js",
+    "cursor-ai"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/three": "^0.184.0",
+    "concurrently": "^9.0.1",
+    "cross-env": "^7.0.3",
+    "electron": "^32.0.0",
+    "electron-builder": "^26.8.1",
+    "electron-rebuild": "^3.2.9",
+    "electronmon": "^2.0.4",
+    "typescript": "^6.0.3",
+    "vite": "^5.4.0",
+    "wait-on": "^8.0.0"
+  },
+  "dependencies": {
+    "@forgent3d/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@mujoco/mujoco": "^3.8.0",
+    "@types/node": "^25.6.0",
+    "@xmldom/xmldom": "^0.9.10",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-unicode11": "^0.9.0",
+    "@xterm/xterm": "^6.0.0",
+    "chokidar": "^3.6.0",
+    "dotenv": "^17.4.2",
+    "node-pty": "^1.1.0",
+    "occt-import-js": "^0.0.23",
+    "three": "^0.168.0",
+    "zod": "^4.3.6"
+  },
+  "build": {
+    "appId": "com.aicad.preview",
+    "productName": "Forgent3D Preview",
+    "icon": "assets/images/logo.png",
+    "win": {
+      "icon": "assets/images/logo.png",
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "icon": "assets/images/logo.png",
+      "identity": "-",
+      "hardenedRuntime": true,
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.plist"
+    },
+    "linux": {
+      "icon": "assets/images/logo.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "displayLanguageSelector": true,
+      "multiLanguageInstaller": true,
+      "installerLanguages": [
+        "en_US",
+        "zh_CN"
+      ]
+    },
+    "files": [
+      "dist-electron/electron/**",
+      "electron/skills/**",
+      "electron/skill-helpers/**",
+      "dist/**",
+      "assets/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/export-runner",
+        "to": "export-runner",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "electron/skill-helpers",
+        "to": "skill-helpers",
+        "filter": [
+          "*.py"
+        ]
+      }
+    ],
+    "publish": {
+      "provider": "github",
+      "releaseType": "release"
+    }
+  },
+  "electronmon": {
+    "patterns": [
+      "electron/**",
+      "dist-electron/**",
+      "!node_modules/**",
+      "!dist/**"
+    ]
+  }
+}
