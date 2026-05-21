@@ -324,8 +324,8 @@ async function replaceInFile(projectRoot, userPath, oldText, newText, replaceAll
 
 function archetypesDir() {
   const candidates = [
-    path.resolve(__dirname, '..', '..', 'cad-agent', 'lib', 'aicad-agent', 'skills', 'archetypes'),
     path.resolve(__dirname, '..', '..', '..', 'cad-agent', 'lib', 'aicad-agent', 'skills', 'archetypes'),
+    path.resolve(__dirname, '..', '..', '..', '..', 'packages', 'cad-agent', 'lib', 'aicad-agent', 'skills', 'archetypes'),
     process.resourcesPath ? path.join(process.resourcesPath, 'cad-agent-skills', 'archetypes') : null,
   ].filter(Boolean);
   for (const candidate of candidates) {

@@ -1,3 +1,7 @@
-[submodule "cad-agent"]
-	path = cad-agent
+[submodule "packages/cad-agent"]
+	path = packages/cad-agent
 	url = git@github.com:forgent3d/cad-agent.git
+
+[submodule "packages/cf-sandbox"]
+	path = packages/cf-sandbox
+	url = git@github.com:forgent3d/cf-sandbox.git

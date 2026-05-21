@@ -45,8 +45,8 @@ const PLATFORM_TAG = `${process.platform}-${process.arch}`;
 
 function repoRootCandidates() {
   return [
-    path.resolve(__dirname, '..'),
     path.resolve(__dirname, '..', '..'),
+    path.resolve(__dirname, '..', '..', '..', '..'),
   ];
 }
 
