@@ -4,7 +4,7 @@ export {};
  * Built-in MCP server for the AI CAD companion previewer
  * ------------------------------------------
  * - transport: Streamable HTTP on fixed localhost port
- * - 4 tools: list_models / get_model_info / screenshot_model / rebuild_model
+ * - 4 tools: list_models / screenshot_model / rebuild_model
  * - ctx is injected from electron/main.js; all runtime state is accessed via callbacks
  * - Each MCP client (Cursor / curl) gets isolated McpServer + Transport on initialize,
  *   then POST/GET/DELETE is routed by Mcp-Session-Id so curl testing does not break Cursor sessions.
@@ -72,29 +72,6 @@ function buildMcpServer(ctx, { McpServer, z }) {
   );
 
   server.registerTool(
-    'get_model_info',
-    {
-      title: 'Get quantitative geometry info for a model',
-      description: [
-        'Purpose: return bbox, faceCount, cacheStale, kind, sourceFile, and description for numerical geometry verification.',
-        'Prerequisite: recommended to call list_models first to confirm model name and kernel type.',
-        'If failed: call rebuild_model first; if still failing, call list_models to verify model name and active state, then retry.'
-      ].join('\n'),
-      inputSchema: {
-        model: z.string().describe('Model directory name, for example "bracket"')
-      }
-    },
-    async ({ model }) => {
-      const info = await ctx.getPartInfo(model);
-      const isError = !!info.error;
-      return {
-        isError,
-        content: [{ type: 'text', text: JSON.stringify(info, null, 2) }]
-      };
-    }
-  );
-
-  server.registerTool(
     'screenshot_model',
     {
       title: 'Get a 3D screenshot (PNG) for a model',
@@ -146,7 +123,7 @@ function buildMcpServer(ctx, { McpServer, z }) {
       description: [
         'Purpose: synchronously rebuild the model and return ok/stderr/cacheSize/faceCount/kernel; this is the only trusted verification entry.',
         'Prerequisite: the model must exist under models/<name>/asm.xml and the latest code must be saved.',
-        'If failed: make minimal fix based on stderr and retry; after success call get_model_info/screenshot_model.'
+        'If failed: make minimal fix based on stderr and retry; after success call screenshot_model.'
       ].join('\n'),
       inputSchema: {
         model: z.string()

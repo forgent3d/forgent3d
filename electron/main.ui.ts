@@ -28,19 +28,6 @@ function createMainUiTools({
     sendToRenderer('LOG', { message, level, ts: Date.now() });
   }
 
-  function openDevToolsFor(contents, label = 'window') {
-    if (!deps.isDev || !contents || contents.isDestroyed?.()) return;
-    try {
-      if (!contents.isDevToolsOpened()) {
-        contents.openDevTools({ mode: 'detach', activate: true });
-      } else {
-        contents.devToolsWebContents?.focus?.();
-      }
-    } catch (e) {
-      sendLog(`DevTools (${label}): ${e?.message || e}`, 'warn');
-    }
-  }
-
   function toggleDevToolsFor(contents, label = 'window') {
     if (!contents || contents.isDestroyed?.()) return;
     try {
@@ -239,13 +226,6 @@ function createMainUiTools({
         if (/^https?:\/\//i.test(url)) shell.openExternal(url);
         return { action: 'deny' };
       });
-      webContents.once('did-finish-load', () => {
-        if (!deps.isDev) return;
-        const url = String(webContents.getURL() || '');
-        if (/localhost:3000|127\.0\.0\.1:3000|\/agent\b/i.test(url)) {
-          openDevToolsFor(webContents, 'agent-webview');
-        }
-      });
     });
 
     if (deps.isDev) {
@@ -255,7 +235,6 @@ function createMainUiTools({
     }
 
     win.webContents.once('did-finish-load', async () => {
-      openDevToolsFor(win.webContents, 'main');
       deps.markRendererDesktopAuthReady?.(true);
       try {
         sendToRenderer('PYTHON_STATUS', await deps.getBuildRuntimeStatus());
