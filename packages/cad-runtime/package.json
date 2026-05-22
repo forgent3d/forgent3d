@@ -1,0 +1,44 @@
+{
+  "name": "@forgent3d/cad-runtime",
+  "version": "0.1.0",
+  "description": "Shared CAD runtime protocol, types, and pure utilities for Forgent3D cloud services.",
+  "license": "MIT",
+  "author": "Forgent3D",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/forgent3d/cad-runtime.git"
+  },
+  "homepage": "https://github.com/forgent3d/cad-runtime#readme",
+  "bugs": {
+    "url": "https://github.com/forgent3d/cad-runtime/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "python",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm run build"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.2"
+  }
+}
