@@ -144,27 +144,35 @@ def _json_safe(value):
     raise TypeError(f"metadata contains non-JSON value of type {type(value).__name__}")
 
 
-def _collect_compound_labels(shape):
+def _collect_compound_labels(shape, ns=None):
     labels = []
     children = getattr(shape, "children", None)
-    if children is None:
+    if children is not None:
+        try:
+            iterable = list(children)
+        except TypeError:
+            iterable = []
+        for child in iterable:
+            label = getattr(child, "label", None)
+            if label is None and hasattr(child, "part"):
+                label = getattr(child.part, "label", None)
+            text = str(label).strip() if label is not None else ""
+            if text:
+                labels.append(text)
+    if labels:
         return labels
-    try:
-        iterable = list(children)
-    except TypeError:
-        return labels
-    for child in iterable:
-        label = getattr(child, "label", None)
-        if label is None and hasattr(child, "part"):
-            label = getattr(child.part, "label", None)
-        text = str(label).strip() if label is not None else ""
-        if text:
-            labels.append(text)
+    if isinstance(ns, dict):
+        parts_var = ns.get("parts")
+        if isinstance(parts_var, (list, tuple)):
+            for item in parts_var:
+                text = str(getattr(item, "label", "") or "").strip()
+                if text:
+                    labels.append(text)
     return labels
 
 
 def _ensure_assembly_metadata(ns: dict, result) -> None:
-    labels = _collect_compound_labels(result)
+    labels = _collect_compound_labels(result, ns)
     if not labels:
         return
     metadata = ns.get("metadata")

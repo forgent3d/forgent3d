@@ -10,13 +10,11 @@
 - Mesh files must point at local package assets like `parts/<part>/<part>.stl`; the viewer can generate missing/stale STL assets from fresh BREP caches during rebuild.
 - Use `${...}` substitutions for mesh filenames and user-facing tunable positions, axes, ranges, and limits. Do not scale part meshes from `asm.xml` as a substitute for part parameters; rebuild the part geometry from `parts/<part_name>/params.json` instead. Keep derived placements, repeated mechanical offsets, and one-off constants in `asm.xml` unless the user needs to tune them.
 - Body origins should be meaningful anchors. If the body origin is an anchor, move the visual mesh with `geom pos`, not the joint/site.
-- Prefer anchors derived from each part's source-level `metadata` in `part.py`; do not hand-maintain duplicate anchor math in `params.json`.
-- Treat generated `metadata.json` files as rebuild artifacts, not source. Do not read, edit, or create them unless the user explicitly asks or you are debugging rebuild output.
 - Keep `__viewer.materials` renderer-only. Material keys for assemblies should match MJCF body, geom, or mesh names. Presets must be objects like `{ "preset": "rubber" }`, not bare strings.
 
 ## Anchors And Constraints
 
-- Define reusable part-local anchors in each part's `metadata`, for example `origin`, `pin`, `hinge`, `link_end`, or `slide_axis`.
+- Define connection anchors in assembly `params.json` or directly in `asm.xml` as named `<site>` elements, for example `origin`, `pin`, `hinge`, `link_end`, or `slide_axis`.
 - Anchors must be in the same local coordinate frame as the exported mesh.
 - Expose connection points with named `<site>` elements.
 - Add `hinge` or `slide` joints only for intended degrees of freedom.

@@ -51,7 +51,7 @@ function baseMarkdown(agentHint) {
   const { agentHintBlock, codexQuickBlock } = agentBlocks(agentHint);
   let md = `# AI CAD Project Rules (build123d)${agentHintBlock}${codexQuickBlock}\n`;
   md += `Current CAD kernel: **build123d (Python)** with bundled **bd_warehouse** standard parts. Each model is a self-contained package at \`models/<model>/\` with root \`asm.xml\` + \`params.json\` and local parts under \`models/<model>/parts/<part>/part.py\` + \`params.json\`. Validate through the viewer MCP tools.\n\n`;
-  md += `Parameter ownership: root \`models/<model>/params.json\` is for assembly-level placement, motion, constraints, anchors derived from source-level \`metadata\` in \`part.py\`, and \`__viewer\` appearance only. Do not put local part geometry knobs such as teeth, bore, thickness, radius, hole sizes, or feature counts in root params for \`asm.xml\`; those belong in the matching \`models/<model>/parts/<part>/params.json\` and are read by \`part.py\`. Treat generated \`metadata.json\` files as rebuild artifacts, not source.\n\n`;
+  md += `Parameter ownership: root \`models/<model>/params.json\` is for assembly-level placement, motion, constraints, anchors, and \`__viewer\` appearance only. Do not put local part geometry knobs such as teeth, bore, thickness, radius, hole sizes, or feature counts in root params for \`asm.xml\`; those belong in the matching \`models/<model>/parts/<part>/params.json\` and are read by \`part.py\`.\n\n`;
   md += `Use \`bd_warehouse\` for standard hardware such as screws, washers, bearings, gears, pipes, and flanges; use native build123d for custom brackets, plates, housings, and adapters.\n\n`;
   if (agentHint === 'Claude Code') {
      md += `Detailed rules are located in \`.claude/rules/\`.\n`;

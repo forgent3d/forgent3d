@@ -6,13 +6,11 @@
 - Add `models/<model_name>/asm.xml` (MJCF) only when the model needs MuJoCo features: joints, actuators, equality constraints, or simulation. Otherwise use the build123d assembly form.
 - Each part source assigns the final build123d object to global `result`. An `assembly.py` assigns the final build123d `Compound` to global `result` (or global `assembly`).
 - The bundled build runtime includes `bd_warehouse`; use it for standard hardware and mechanical catalog parts, while keeping custom structural geometry in build123d source.
-- Store only assembly-level values in root `params.json`: placement, motion, constraints, anchors derived from part source metadata, and `__viewer` appearance. Do not put local part geometry knobs in root params.
+- Store only assembly-level values in root `params.json`: placement, motion, constraints, anchors, and `__viewer` appearance. Do not put local part geometry knobs in root params.
 - Store each part's geometry knobs beside that part:
   - flat single-part model: `models/<model_name>/params.json`
   - multi-part assembly: `models/<model_name>/parts/<part_name>/params.json`
   Examples: teeth, bore, thickness, radii, hole sizes, feature counts, and local dimensions.
-- For assembly-ready parts, expose derived anchors through global `metadata` in `part.py`.
-- Treat `metadata.json` as a generated rebuild artifact. Do not read, edit, or create it unless the user explicitly asks or you are debugging rebuild output.
 - Do not create project overview docs unless the user asks. The file tree and UI are the overview.
 
 ## Validation
@@ -21,9 +19,7 @@
 - Do not run `python part.py`, `python -m`, `pytest`, `uv run`, `poetry run`, or local Python fallbacks for generated CAD validation.
 - Standard flow: edit source -> `rebuild_model({ model })` -> inspect `ok/stderr` -> optional `screenshot_model`.
 - Available CAD validation tools: `list_models`, `rebuild_model`, `screenshot_model`.
-- `script` is available for auxiliary project automation and external tool extensions. Its input is a single command string: `build -component <name>`, `inspect -from <a> -to <b>`, `inspect -meta <a>`, or `probe -component <model/part> -expr "top_edges(part)"`. Do not call Python directly or use scripts as a substitute for CAD validation.
-- **API lookup (error-only)**: do **not** call `api -module build123d` while planning or before a build attempt. Reserve it for *after* `rebuild_model` or `script build` reports an error, using `api -module build123d -search <keyword>` or `api -module build123d -name <Symbol>` to resolve the specific API/signature mistake in stderr — never a bare `api -module build123d` list. For selectors and topology use `probe`; for project patterns use `grep` and the build123d skill.
-- **Selection debugging**: when a selector or boolean is non-obvious, call `script` with `probe -component <model/part> -expr "<expression>"` to evaluate a one-line Python expression against a fresh build and inspect what it returns (count, type, total length/area, center, bbox). Use it before committing an edit to verify intent, and after an unexpected build to localize which selector returned the wrong entities. The expression namespace has `part`, all `aicad_select` helpers, and `Axis/Plane/Vector/GeomType` pre-imported.
+- `script` is available for auxiliary project automation and external tool extensions. Its input is a single command string: `build -component <name>`, `inspect -from <a> -to <b>`, or `inspect -meta <a>`. Do not call Python directly or use scripts as a substitute for CAD validation.
 - If `rebuild_model` fails, fix the first deterministic error with the smallest change and rebuild again.
 - Keep final responses brief. Do not narrate internal validation unless a blocker needs user input.
 
@@ -67,4 +63,4 @@ Available presets: `cad_clay`, `matte_plastic`, `gloss_plastic`, `rubber`, `pain
 
 Preset materials must be objects, not bare strings. Use `{ "preset": "painted_metal" }` or `{ "preset": "painted_metal", "color": "#2f80ed" }`. Bare strings are reserved for explicit color values such as `"#2f80ed"`.
 
-For build123d assemblies, `__viewer.materials.parts` keys should match part labels in the compound. When `asm.xml` is present, keys may match MJCF body, geom, or mesh names instead. Use color to distinguish parts, not to replace correct geometry.
+For build123d assemblies, `__viewer.materials.parts` keys must match each instance `label` in `assembly.py` (e.g. `front_arm`), not the `parts/<part_name>/` folder name (e.g. `arm`). Rebuild auto-writes `models/<model>/metadata.json` with `assembly_parts` from those labels; use it as reference, do not hand-edit. When `asm.xml` is present, keys may match MJCF body, geom, or mesh names instead.

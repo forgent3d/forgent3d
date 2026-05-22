@@ -2,12 +2,26 @@
 
 - **File & Output**: A single-part model lives at `models/<model_name>/part.py` (no `parts/` folder). A part inside a multi-part build123d assembly lives at `models/<model_name>/parts/<part_name>/part.py`, with the model's `models/<model_name>/assembly.py` composing them into a `Compound`. Either way, assign the final build123d object to the global `result` variable. Do not use manual `export_*()` calls. Unit: mm.
 - **Parameterization**: Load only user-facing tunable variables from `params.json`. Keep defaults small: expose main dimensions and genuinely reusable knobs, compute derived values in source, and keep one-off construction constants local.
-- **Viewer Materials**: Treat `__viewer` values as preview-only renderer metadata.
-- **Assembly Metadata**: For parts intended for assemblies, compute local connection anchors in `part.py` from the same geometry parameters used to build the shape, then expose them through a global `metadata` dict.
-- **Metadata Format**: Use `metadata = {"schema": "aicad.part.metadata.v1", "units": "mm", "anchors": {...}}`. Keep anchors in the same local coordinate frame as the exported mesh so `assembly.py` (or `asm.xml` when MJCF is used) can reference them directly for placement, body origins, sites, joints, and equality constraints.
-- **Generated Metadata Files**: `metadata.json` is a rebuild artifact derived from the global `metadata` dict. Do not read, edit, or create `metadata.json` unless the user explicitly asks or you are debugging rebuild output.
-- **Safe boolean & rounding ops**: Use `aicad_select` safe wrappers instead of raw boolean or raw rounding ops when geometry may be fragile. Fuse placed bodies with `safe_add(main, sub, min_overlap=...)`; cut with `safe_cut(main, tool, min_through=...)`; round with `safe_fillet(part, edges, radius, label="feature_name")` or `safe_chamfer(part, edges, distance, label="feature_name")`. Add a short `label` for every non-trivial fillet/chamfer so rebuild errors identify the feature.
-- **Failure localization**: When a rebuild fails inside `safe_fillet`, `safe_chamfer`, `safe_add`, `safe_cut`, metadata writing, or a generated feature helper, use the traceback line/function and helper debug context to identify the exact call site before editing geometry. If two consecutive rebuilds show the same helper-level message, assume it may be a different call site with the same wrapper text: grep/read all matching calls, add/keep labels, or isolate feature functions with `script build` / `script probe` before changing dimensions again.
+- **Viewer Materials**: Treat `__viewer` values as preview-only renderer settings. In `assembly.py`, give every placed instance a unique `label`; root `__viewer.materials.parts` keys must use those same instance labels (not `parts/<part_name>/` folder names). Keep a `parts = [...]` list before `result = Compound(parts)` so rebuild can emit `metadata.json` `assembly_parts`.
 - **Standard Parts**: The bundled runtime includes `bd_warehouse`. Use it when a standard mechanical catalog part is a better fit than custom source.
-- **Disjoint Bodies**: For separate items such as individual hardware stacks or repeated loose parts, use separate solids or compounds instead of fusing unrelated bodies into one solid.
 - **Standard Threads**: Do not model real screw threads by default unless thread geometry is the core deliverable.
+
+## Performance (CRITICAL)
+
+- **Context-based modeling**: Always use `with BuildPart():` and `with BuildSketch():`. Avoid ad-hoc free-form object composition outside builders.
+- **Orientation**: Declare the coordinate frame before geometry (+X right, +Y back, +Z up). Lay out features so ISO / front / top views expose key geometry cleanly.
+- **2D booleans before 3D**: For flat parts with many cuts (e.g. keyboard plates), never extrude first and subtract 3D holes in a loop. Do subtractions in a 2D `BuildSketch`, then apply one `extrude()`.
+- **Batch operations**: Never use `for` loops for `Hole`, `fillet`, or booleans. Pre-calculate lists of `Pos`, activate via `with Locations(*locs):`, and apply the operation once.
+- **Do not fuse disjoint parts**: For separate items (e.g. individual keycaps or hardware stacks), use `Compound.make_compound([...])` or `add(..., mode=Mode.PRIVATE)`. Fusing non-intersecting solids with `Mode.ADD` causes severe performance crashes.
+
+## Troubleshooting
+
+- **Fillet / chamfer failures**: Usually radius too large or wrong edges. Reduce size or use precise selectors such as `.edges().filter_by(Axis.Z)`. Apply fillets and chamfers at the very end of the feature tree.
+
+## API Quick Reference
+
+- **2D**: `Circle(r)`, `Rectangle(w, h)`, `RegularPolygon(r, sides)`, `SlotCenterToCenter(dist, r)`
+- **3D**: `Box(l, w, h)`, `Cylinder(r, h)`, `Sphere(r)`, `Cone(r_bottom, r_top, h)`
+- **Ops**: `extrude(amount)`, `revolve(axis=Axis.Y)`, `sweep(path)`
+- **Locations**: `Pos(x, y, z)`, `GridLocations(x_sp, y_sp, x_c, y_c)`, `with Locations(*list_of_pos):`
+- **Mods**: `fillet(edges, r)`, `chamfer(edges, d)`, `Hole(r, depth)`
