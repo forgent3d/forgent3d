@@ -29,7 +29,10 @@
       "Bash(pnpm --filter @forgent3d/shared build)",
       "Bash(pnpm run *)",
       "Bash(pnpm typecheck *)",
-      "Bash(pnpm build *)"
+      "Bash(pnpm build *)",
+      "Bash(git submodule *)",
+      "Bash(cd *)",
+      "Bash(git ls-tree *)"
     ]
   }
 }

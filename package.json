@@ -28,7 +28,8 @@
       "node-pty",
       "better-sqlite3",
       "sharp",
-      "workerd"
+      "workerd",
+      "@forgent3d/cad-runtime"
     ]
   }
 }

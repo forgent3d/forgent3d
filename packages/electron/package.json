@@ -28,6 +28,10 @@
   ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/forgent3d/forgent3d.git"
+  },
   "devDependencies": {
     "@types/three": "^0.184.0",
     "concurrently": "^9.0.1",
@@ -41,6 +45,7 @@
     "wait-on": "^8.0.0"
   },
   "dependencies": {
+    "@forgent3d/cad-runtime": "workspace:*",
     "@forgent3d/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mujoco/mujoco": "^3.8.0",
@@ -89,7 +94,6 @@
     "files": [
       "dist-electron/electron/**",
       "electron/skills/**",
-      "electron/skill-helpers/**",
       "dist/**",
       "assets/**",
       "package.json"
@@ -103,17 +107,13 @@
         ]
       },
       {
-        "from": "electron/skill-helpers",
+        "from": "../cad-runtime/python/skill-helpers",
         "to": "skill-helpers",
         "filter": [
           "*.py"
         ]
       }
-    ],
-    "publish": {
-      "provider": "github",
-      "releaseType": "release"
-    }
+    ]
   },
   "electronmon": {
     "patterns": [
