@@ -40,7 +40,12 @@
       "Bash(pnpm update *)",
       "Bash(pnpm pack *)",
       "Bash(npm pack *)",
-      "Bash(pnpm -r typecheck)"
+      "Bash(pnpm -r typecheck)",
+      "Bash(pnpm --filter aicad-preview run build:electron)",
+      "Bash(node *)",
+      "Read(//opt/anaconda3/bin/**)",
+      "Bash(/opt/anaconda3/bin/python --version)",
+      "Bash(/Users/vv/codes/forgent3d/packages/electron/build-cache/embedded-runner/darwin-arm64/venv/bin/python3 --version)"
     ]
   }
 }
