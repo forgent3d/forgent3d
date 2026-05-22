@@ -31,6 +31,9 @@ importers:
       '@auth/drizzle-adapter':
         specifier: ^1.10.0
         version: 1.11.2
+      '@forgent3d/cad-runtime':
+        specifier: workspace:*
+        version: link:../cad-runtime
       '@opennextjs/cloudflare':
         specifier: ^1.15.1
         version: 1.19.11(encoding@0.1.13)(next@15.5.18(@opentelemetry/api@1.9.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(wrangler@4.93.1(@cloudflare/workers-types@4.20260521.1))
@@ -132,11 +135,23 @@ importers:
         specifier: ^5
         version: 5.9.3
 
+  packages/cad-runtime:
+    dependencies:
+      tsup:
+        specifier: ^8.4.0
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.15)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+
   packages/cf-sandbox:
     dependencies:
       '@cloudflare/sandbox':
         specifier: ^0.10.1
         version: 0.10.2(@xterm/xterm@6.0.0)
+      '@forgent3d/cad-runtime':
+        specifier: workspace:*
+        version: link:../cad-runtime
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250506.0
@@ -159,6 +174,9 @@ importers:
 
   packages/electron:
     dependencies:
+      '@forgent3d/cad-runtime':
+        specifier: workspace:*
+        version: link:../cad-runtime
       '@forgent3d/shared':
         specifier: workspace:*
         version: link:../shared

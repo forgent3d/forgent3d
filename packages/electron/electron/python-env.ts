@@ -210,7 +210,7 @@ function skillHelpersDir() {
     const packaged = path.join(process.resourcesPath, 'skill-helpers');
     if (fs.existsSync(packaged)) return packaged;
   }
-  const dev = path.resolve(__dirname, '..', '..', 'electron', 'skill-helpers');
+  const dev = path.resolve(__dirname, '..', '..', 'cad-runtime', 'python', 'skill-helpers');
   if (fs.existsSync(dev)) return dev;
   return null;
 }
