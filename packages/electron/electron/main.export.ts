@@ -53,10 +53,18 @@ function createMainExportTools({ dialog, state, deps }) {
     });
   }
 
-  async function runPythonExport(modelName, partName, format, outFile) {
+  function appendExportSourceArg(args, sourcePath) {
+    if (!sourcePath || !fs.existsSync(sourcePath)) return;
+    args.push(
+      '--source',
+      path.relative(state.currentProjectPath(), sourcePath).replace(/\\/g, '/')
+    );
+  }
+
+  async function runPythonExport(modelName, partName, format, outFile, sourcePath = null) {
     const runtime = await deps.detectBuildRuntime(state.currentKernel());
     if (!runtime) throw new Error(deps.missingRuntimeMessage(state.currentKernel()));
-    const cmd = deps.buildRuntimeSpawn(runtime, [
+    const args = [
       '--project',
       state.currentProjectPath(),
       '--model',
@@ -67,7 +75,26 @@ function createMainExportTools({ dialog, state, deps }) {
       format,
       '--output',
       outFile
-    ]);
+    ];
+    let explicitSource = sourcePath;
+    if (!explicitSource) {
+      if (partName !== modelName) {
+        explicitSource = deps.modelPartSource(
+          state.currentProjectPath(),
+          modelName,
+          partName,
+          state.currentKernel()
+        );
+      } else {
+        explicitSource = deps.resolveModelSource(
+          state.currentProjectPath(),
+          modelName,
+          state.currentKernel()
+        )?.sourcePath;
+      }
+    }
+    appendExportSourceArg(args, explicitSource);
+    const cmd = deps.buildRuntimeSpawn(runtime, args);
     const startedAt = Date.now();
     const ret = await runCommandCollect(cmd.cmd, cmd.args, {
       cwd: state.currentProjectPath(),
@@ -317,9 +344,22 @@ function createMainExportTools({ dialog, state, deps }) {
         if (level === 'error' || level === 'fatalError') errors.push(message);
       }
     });
-    const document = parser.parseFromString(readAssemblyText(sourcePath), 'application/xml');
+    const xmlText = readAssemblyText(sourcePath);
+    if (!String(xmlText || '').trim()) {
+      throw new Error(`MJCF XML parse failed: ${path.basename(sourcePath)} is empty`);
+    }
+    let document;
+    try {
+      document = parser.parseFromString(xmlText, 'application/xml');
+    } catch (err) {
+      throw new Error(`MJCF XML parse failed: ${err?.message || err}`);
+    }
+    const parserError = document?.getElementsByTagName?.('parsererror')?.[0];
+    if (parserError) {
+      throw new Error(`MJCF XML parse failed: ${parserError.textContent || 'invalid XML'}`);
+    }
     const root = document?.documentElement;
-    if (errors.length || !root) throw new Error(`MJCF XML parse failed: ${errors[0] || 'empty document'}`);
+    if (errors.length || !root) throw new Error(`MJCF XML parse failed: ${errors[0] || 'missing root element'}`);
     if (root.nodeName !== 'mujoco') throw new Error('MJCF must contain a <mujoco> root element');
     return document;
   }
@@ -508,11 +548,34 @@ function createMainExportTools({ dialog, state, deps }) {
   }
 
   async function generateExportFile(partName, format, outFile, source = null, opts = {}) {
-    if (format === 'step') {
-      throw new Error('Model package assemblies can be exported as STL or OBJ only.');
+    const resolved = source || deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
+    if (!resolved) throw new Error(`Model does not exist: ${partName}`);
+
+    if (resolved.kind === 'asm') {
+      if (format === 'step') {
+        throw new Error('MJCF assemblies can be exported as STL or OBJ only.');
+      }
+      if (format === 'stl' || format === 'obj') {
+        await exportAssemblyScene(resolved.sourcePath, outFile, format);
+        return;
+      }
+      throw new Error(`Unsupported export format: ${format}`);
     }
-    if (format === 'stl' || format === 'obj') {
-      await exportAssemblyScene(source.sourcePath, outFile, format);
+
+    if (format === 'step' || format === 'stl') {
+      await runPythonExport(partName, partName, format, outFile, resolved.sourcePath);
+      return;
+    }
+    if (format === 'obj') {
+      const tmpStl = path.join(os.tmpdir(), `aicad-export-${partName}-${Date.now()}.stl`);
+      try {
+        await runPythonExport(partName, partName, 'stl', tmpStl, resolved.sourcePath);
+        await convertStlToObj(tmpStl, outFile, 'obj');
+      } finally {
+        try {
+          fs.unlinkSync(tmpStl);
+        } catch {}
+      }
       return;
     }
     throw new Error(`Unsupported export format: ${format}`);
@@ -524,7 +587,7 @@ function createMainExportTools({ dialog, state, deps }) {
     return stlPath;
   }
 
-  async function exportPartByRequest(partName, format) {
+  async function exportPartByRequest(partName, format, opts = {}) {
     if (!state.currentProjectPath()) throw new Error('Open a project first.');
     const cleanPart = String(partName || '').trim();
     if (!cleanPart) throw new Error('Model name is required.');
@@ -534,19 +597,28 @@ function createMainExportTools({ dialog, state, deps }) {
     }
     const fmt = ensureExportFormat(format);
     const ext = exportExt(fmt);
-    if (fmt === 'step') {
-      throw new Error('Model package assemblies can be exported as STL or OBJ only.');
-    }
+    const childPart = String(opts.partName || '').trim();
+    if (fmt === 'step' && source.kind === 'asm' && !childPart) throw new Error('MJCF assemblies can be exported as STL or OBJ only.');
+    const exportName = childPart || cleanPart;
     const saveRes = await dialog.showSaveDialog(state.mainWindow(), {
-      title: `Export ${cleanPart} as ${fmt.toUpperCase()}`,
-      defaultPath: path.join(deps.modelDir(state.currentProjectPath(), cleanPart), `${cleanPart}${ext}`),
+      title: `Export ${exportName} as ${fmt.toUpperCase()}`,
+      defaultPath: path.join(deps.modelDir(state.currentProjectPath(), cleanPart), `${exportName}${ext}`),
       filters: [{ name: `${fmt.toUpperCase()} File`, extensions: [ext.replace(/^\./, '')] }]
     });
     if (saveRes.canceled || !saveRes.filePath) return { canceled: true };
 
-    deps.sendLog(`[${cleanPart}] Exporting ${fmt.toUpperCase()}...`);
-    await generateExportFile(cleanPart, fmt, saveRes.filePath, source);
-    return { canceled: false, path: saveRes.filePath, format: fmt, part: cleanPart };
+    deps.sendLog(`[${childPart ? `${cleanPart}/${childPart}` : cleanPart}] Exporting ${fmt.toUpperCase()}...`);
+    if (childPart) {
+      if (fmt === 'obj') {
+        const stlPath = await ensurePartStlArtifact(cleanPart, childPart);
+        await convertStlToObj(stlPath, saveRes.filePath, fmt);
+      } else {
+        await runPythonExport(cleanPart, childPart, fmt, saveRes.filePath);
+      }
+    } else {
+      await generateExportFile(cleanPart, fmt, saveRes.filePath, source);
+    }
+    return { canceled: false, path: saveRes.filePath, format: fmt, part: exportName, model: cleanPart };
   }
 
   return {

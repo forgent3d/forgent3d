@@ -37,6 +37,10 @@ export type LoadModelOptions = {
   format?: LoadModelFormat | string;
   paramsUrl?: string;
   preserveView?: boolean;
+  /** Logical sub-part id for STL pick/highlight (e.g. parts/<name>/). */
+  materialPart?: string;
+  /** Compound child labels from models/<model>/metadata.json for BREP assemblies. */
+  assemblyPartLabels?: string[];
 };
 
 export type LogHandler = (message: string, level?: string) => void;
@@ -121,6 +125,7 @@ export type Viewer = {
   setPartMaterialColor(partKey: string | number, color: THREE.ColorRepresentation): boolean;
   setPartMaterialColors(colorsByPart: Record<string, THREE.ColorRepresentation>): void;
   setSelectedPart(partKey: string | number | null): string | number | null;
+  setOnSelectedPartChange(handler: ((partKey: string | number | null) => void) | null): void;
   getMaterialParts(): Array<MaterialPart & { color: string | null }>;
   getSelectedPart(): string | number | null;
   getPartMaterialState(): Record<string, MaterialSpec>;

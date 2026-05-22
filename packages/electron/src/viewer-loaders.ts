@@ -3,6 +3,8 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { createCadClayMaterial, createCadEdgeMaterial } from './viewer-materials.js';
 
 type OcctMesh = {
+  name?: string;
+  color?: [number, number, number] | null;
   attributes: {
     position: { array: ArrayLike<number> };
     normal?: { array: ArrayLike<number> };
@@ -23,8 +25,26 @@ type FaceRange = {
   normal: THREE.Vector3;
 };
 
-export function buildSceneFromOcctResult(occtResult: OcctResult): THREE.Group {
+export function inferMaterialPartNameFromUrl(url: string): string {
+  const raw = String(url || '').split('?')[0] || '';
+  let path = raw;
+  try {
+    path = decodeURIComponent(raw.replace(/^[^:]*:\/\/[^/]*\//, '').replace(/^aicad:\/\/asset\//, ''));
+  } catch {
+    path = raw.replace(/^[^:]*:\/\/[^/]*\//, '').replace(/^aicad:\/\/asset\//, '');
+  }
+  const match = path.match(/(?:^|\/)parts\/([^/]+)\//i);
+  return match?.[1] ?? '';
+}
+
+export function buildSceneFromOcctResult(
+  occtResult: OcctResult,
+  opts: { assemblyPartLabels?: string[] } = {}
+): THREE.Group {
   const group = new THREE.Group();
+  if (occtResult.meshes.length > 1) {
+    return buildSceneFromOcctMeshes(occtResult, opts.assemblyPartLabels || []);
+  }
 
   const positions: number[] = [];
   const normals: number[] = [];
@@ -88,6 +108,74 @@ export function buildSceneFromOcctResult(occtResult: OcctResult): THREE.Group {
   return group;
 }
 
+function buildSceneFromOcctMeshes(occtResult: OcctResult, assemblyPartLabels: string[] = []): THREE.Group {
+  const group = new THREE.Group();
+  let globalFaceIdx = 0;
+
+  occtResult.meshes.forEach((mesh, meshIndex) => {
+    const posArr = mesh.attributes.position.array;
+    const nrmArr = mesh.attributes.normal?.array;
+    const idxArr = mesh.index.array;
+    if (!idxArr.length) return;
+
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const indices: number[] = [];
+    const faceRanges: FaceRange[] = [];
+
+    for (let i = 0; i < posArr.length; i++) positions.push(posArr[i] ?? 0);
+    if (nrmArr && nrmArr.length === posArr.length) {
+      for (let i = 0; i < nrmArr.length; i++) normals.push(nrmArr[i] ?? 0);
+    } else {
+      for (let i = 0; i < posArr.length; i++) normals.push(0);
+    }
+    for (let i = 0; i < idxArr.length; i++) indices.push(idxArr[i] ?? 0);
+
+    for (const bf of mesh.brep_faces) {
+      const triCount = bf.last - bf.first + 1;
+      const c = estimateFaceCentroidAndNormal(posArr, idxArr, bf.first, bf.last);
+      faceRanges.push({
+        faceIndex: globalFaceIdx++,
+        triStart: bf.first,
+        triCount,
+        centroid: c.centroid,
+        normal: c.normal
+      });
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geometry.setIndex(indices);
+    if (normals.every((v) => v === 0)) geometry.computeVertexNormals();
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+
+    const meshName = String(mesh.name || '').trim();
+    const fallbackLabel = String(assemblyPartLabels[meshIndex] || '').trim();
+    const partName = meshName || fallbackLabel || `part_${meshIndex}`;
+    const threeMesh = new THREE.Mesh(geometry, createCadClayMaterial());
+    threeMesh.name = partName;
+    threeMesh.userData.faceRanges = faceRanges;
+    threeMesh.userData.materialPart = {
+      id: partName,
+      name: partName,
+      aliases: [partName, meshName, fallbackLabel, meshIndex].filter((item) => item !== '' && item != null),
+      index: meshIndex,
+      materialIndex: 0
+    };
+    group.add(threeMesh);
+
+    const edges = new THREE.EdgesGeometry(geometry, 20);
+    const lines = new THREE.LineSegments(edges, createCadEdgeMaterial());
+    lines.name = `${partName}_edges`;
+    lines.userData.isWireframe = true;
+    group.add(lines);
+  });
+
+  return group;
+}
+
 function estimateFaceCentroidAndNormal(
   posArr: ArrayLike<number>,
   idxArr: ArrayLike<number>,
@@ -138,4 +226,22 @@ export function buildSceneFromStlBuffer(buffer: ArrayBuffer): { group: THREE.Gro
   group.add(new THREE.LineSegments(edges, createCadEdgeMaterial()));
 
   return { group, geometry };
+}
+
+export function tagSceneAsMaterialPart(group: THREE.Group, partName: string): void {
+  const key = String(partName || '').trim();
+  if (!key) return;
+  let index = 0;
+  group.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    child.name = child.name || key;
+    child.userData.materialPart = {
+      id: key,
+      name: key,
+      aliases: [key, index],
+      index,
+      materialIndex: 0
+    };
+    index++;
+  });
 }

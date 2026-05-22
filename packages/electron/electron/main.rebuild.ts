@@ -659,9 +659,10 @@ function createMainRebuildTools({ state, deps }) {
     if (isFileFreshForInput(cacheFile, modelPartInputMtime(modelName, partName))) {
       return { ok: true, skipped: true, cacheFile };
     }
+    const sourceRelpath = path.relative(state.currentProjectPath(), sourcePath).replace(/\\/g, '/');
     const key = path.resolve(cacheFile).toLowerCase();
     if (partBrepBuildPromises.has(key)) return partBrepBuildPromises.get(key);
-    const promise = runBuildPython(modelName, partName, cacheFile).finally(() => {
+    const promise = runBuildPython(modelName, partName, cacheFile, { sourceRelpath }).finally(() => {
       partBrepBuildPromises.delete(key);
     });
     partBrepBuildPromises.set(key, promise);

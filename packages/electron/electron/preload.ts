@@ -24,7 +24,7 @@ contextBridge.exposeInMainWorld('aicad', {
   rebuildAllModels: () => ipcRenderer.invoke('models:rebuildAll'),
   revealModel: (name) => ipcRenderer.invoke('models:reveal', name),
   deleteModel: (name) => ipcRenderer.invoke('models:delete', name),
-  exportModel: (name, format) => ipcRenderer.invoke('models:export', { name, format }),
+  exportModel: (name, format, opts = {}) => ipcRenderer.invoke('models:export', { name, format, ...opts }),
   ensureModelPartStl: (model, part) => ipcRenderer.invoke('models:partStl', { model, part }),
   getParams: (target) => ipcRenderer.invoke('params:get', target),
   saveParams: (target, text) => ipcRenderer.invoke('params:save', { target, text }),
