@@ -37,7 +37,10 @@
       "Bash(echo \"EXIT: $?\")",
       "Bash(pnpm --filter @forgent3d/cad-runtime run build)",
       "Bash(pnpm --filter @forgent3d/cf-sandbox run sandbox:sync)",
-      "Bash(pnpm update *)"
+      "Bash(pnpm update *)",
+      "Bash(pnpm pack *)",
+      "Bash(npm pack *)",
+      "Bash(pnpm -r typecheck)"
     ]
   }
 }

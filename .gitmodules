@@ -5,7 +5,3 @@
 [submodule "packages/cf-sandbox"]
 	path = packages/cf-sandbox
 	url = git@github.com:forgent3d/cf-sandbox.git
-
-[submodule "packages/cad-runtime"]
-	path = packages/cad-runtime
-	url = git@github.com:forgent3d/cad-runtime.git

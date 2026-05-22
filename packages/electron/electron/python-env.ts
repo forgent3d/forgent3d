@@ -211,7 +211,7 @@ function skillHelpersDir() {
     if (fs.existsSync(packaged)) return packaged;
   }
   // __dirname is dist-electron/electron/ — go up to packages/electron/ then into node_modules.
-  // Works for both the workspace symlink (-> packages/cad-runtime/) and a git+ssh install.
+  // Works for both the workspace symlink (-> packages/cad-runtime/) and an npm install.
   const dev = path.resolve(__dirname, '..', '..', 'node_modules', '@forgent3d', 'cad-runtime', 'python', 'skill-helpers');
   if (fs.existsSync(dev)) return dev;
   return null;

@@ -45,7 +45,7 @@
     "wait-on": "^8.0.0"
   },
   "dependencies": {
-    "@forgent3d/cad-runtime": "git+ssh://git@github.com/forgent3d/cad-runtime.git",
+    "@forgent3d/cad-runtime": "^0.1.0",
     "@forgent3d/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mujoco/mujoco": "^3.8.0",
