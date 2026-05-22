@@ -524,11 +524,11 @@ function registerIpcHandlers({
     }
   });
 
-  ipcMain.handle('models:export', async (_evt, { name, format }) => {
+  ipcMain.handle('models:export', async (_evt, { name, format, part }) => {
     if (!state.currentProjectPath()) throw new Error('Open a project first.');
     const partName = String(name || state.activePart() || '').trim();
     if (!partName) throw new Error('Select a model first.');
-    return deps.exportPartByRequest(partName, format);
+    return deps.exportPartByRequest(partName, format, { partName: part });
   });
 
   ipcMain.handle('models:partStl', async (_evt, { model, part }) => {

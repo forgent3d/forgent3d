@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { applyMaterialSpec } from './viewer-materials.js';
+import { applyMaterialSpec, normalizeMaterialSpec } from './viewer-materials.js';
 import type { MaterialParams, MaterialPart, MaterialSpec } from './types.js';
 
 function materialList(material: THREE.Material | THREE.Material[] | null | undefined): THREE.Material[] {
@@ -30,15 +30,27 @@ function matchesPart(part: MaterialPart, key: string | number) {
 }
 
 function normalizeMaterialConfig(config: MaterialSpec | THREE.ColorRepresentation): MaterialSpec {
-  if (typeof config === 'string' || typeof config === 'number' || config instanceof THREE.Color) {
-    return { color: config };
+  return normalizeMaterialSpec(config as MaterialSpec);
+}
+
+function resolvePartMaterialSpec(
+  part: MaterialPart,
+  materialsParts: Record<string, MaterialSpec | THREE.ColorRepresentation> | undefined,
+  stored: Map<string, MaterialSpec>
+): MaterialSpec | null {
+  if (!materialsParts || typeof materialsParts !== 'object') {
+    return stored.get(String(part.id)) || null;
   }
-  return { ...(config || {}) };
+  for (const [key, config] of Object.entries(materialsParts)) {
+    if (matchesPart(part, key)) return normalizeMaterialConfig(config);
+  }
+  return stored.get(String(part.id)) || null;
 }
 
 export function createAppearanceController({ getCurrentRoot }: { getCurrentRoot: () => THREE.Object3D | null }) {
   let defaultMaterial: MaterialSpec = {};
   const partMaterials = new Map<string, MaterialSpec>();
+  let configuredParts: Record<string, MaterialSpec | THREE.ColorRepresentation> = {};
   let selectedPartKey: string | number | null = null;
 
   function backupSelectionMaterial(material: THREE.Material | null) {
@@ -68,9 +80,11 @@ export function createAppearanceController({ getCurrentRoot }: { getCurrentRoot:
 
   function applySelectionMaterial(material: THREE.Material | null, selected: boolean) {
     if (!material) return;
-    backupSelectionMaterial(material);
+    if (!material.userData.__selectionBackup) backupSelectionMaterial(material);
     const materialWithColor = material as THREE.Material & { color?: THREE.Color; emissive?: THREE.Color };
     if (selected) {
+      const backup = material.userData.__selectionBackup;
+      if (materialWithColor.color && Number.isFinite(backup?.color)) materialWithColor.color.setHex(backup.color);
       if (materialWithColor.color) materialWithColor.color.set('#ffd45a');
       if (materialWithColor.emissive) materialWithColor.emissive.set('#332000');
       material.opacity = 1;
@@ -98,7 +112,7 @@ export function createAppearanceController({ getCurrentRoot }: { getCurrentRoot:
       }
       for (const part of parts) {
         const material = getPartMaterial(child, part);
-        const partMaterial = partMaterials.get(String(part.id));
+        const partMaterial = resolvePartMaterialSpec(part, configuredParts, partMaterials);
         applyMaterialSpec(material, { ...defaultMaterial, ...(partMaterial || {}) });
         if (selectedPartKey != null) {
           applySelectionMaterial(material, matchesPart(part, selectedPartKey));
@@ -143,13 +157,15 @@ export function createAppearanceController({ getCurrentRoot }: { getCurrentRoot:
   function setMaterialParams(params: MaterialParams = {}) {
     defaultMaterial = {};
     partMaterials.clear();
+    configuredParts = {};
     const materials = params?.__viewer?.materials || params?.viewer?.materials;
     if (!materials || typeof materials !== 'object') {
       apply();
       return;
     }
     defaultMaterial = normalizeMaterialConfig(materials.default || {});
-    for (const [partKey, config] of Object.entries(materials.parts || {})) {
+    configuredParts = { ...(materials.parts || {}) };
+    for (const [partKey, config] of Object.entries(configuredParts)) {
       setPartMaterial(partKey, config);
     }
     apply();

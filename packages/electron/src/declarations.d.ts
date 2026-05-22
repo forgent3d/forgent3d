@@ -10,6 +10,8 @@ declare module 'occt-import-js' {
     ): {
       success: boolean;
       meshes: Array<{
+        name?: string;
+        color?: [number, number, number] | null;
         attributes: {
           position: { array: ArrayLike<number> };
           normal?: { array: ArrayLike<number> };

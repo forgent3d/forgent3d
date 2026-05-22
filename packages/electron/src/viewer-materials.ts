@@ -72,6 +72,13 @@ function isPresetName(value: string): value is MaterialPresetName {
 }
 
 export function normalizeMaterialSpec(spec: MaterialSpec = {}): MaterialSpec & { preset: MaterialPresetName } {
+  if (typeof spec === 'string' || typeof spec === 'number' || spec instanceof THREE.Color) {
+    const text = String(spec).trim();
+    if (typeof spec === 'string' && isPresetName(text)) {
+      return { ...MATERIAL_PRESETS[text], preset: text };
+    }
+    return { color: spec, preset: 'cad_clay' };
+  }
   const presetName = String(spec.preset || spec.material || 'cad_clay').trim() || 'cad_clay';
   const resolvedPresetName = isPresetName(presetName) ? presetName : 'cad_clay';
   const preset = MATERIAL_PRESETS[resolvedPresetName];

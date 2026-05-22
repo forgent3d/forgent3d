@@ -154,20 +154,29 @@ export function initUI(viewer) {
     if (el.btnToggleLeftHandle) el.btnToggleLeftHandle.classList.toggle('hidden', leftSidebarVisible || !hasProject);
   }
 
+  function activeModelSupportsStepExport() {
+    if (!activePart) return false;
+    const model = partsCache.find((p) => p.name === activePart);
+    if (!model) return true;
+    const isAsm = String(model.sourceFile || '').toLowerCase() === 'asm.xml';
+    if (!isAsm) return true;
+    return selectedModelPartModel === activePart && !!selectedModelPart;
+  }
+
   function syncExportControls() {
     const hasProject = !!currentProject;
     const hasActivePart = !!activePart;
     if (!el.selectExportFormat || !el.btnExportActive) return;
 
+    const stepEnabled = activeModelSupportsStepExport();
     for (const option of Array.from(el.selectExportFormat.options || [])) {
-      option.disabled = option.value === 'step';
+      option.disabled = option.value === 'step' && !stepEnabled;
     }
-    if (el.selectExportFormat.value === 'step') {
+    if (!stepEnabled && el.selectExportFormat.value === 'step') {
       el.selectExportFormat.value = 'stl';
     }
     el.selectExportFormat.disabled = !hasProject || !hasActivePart;
     el.btnExportActive.disabled = !hasProject || !hasActivePart;
-
   }
 
   const viewerUi = createViewerUiController({
@@ -291,10 +300,52 @@ export function initUI(viewer) {
     return modelPartsFor(modelName).find((part) => String(part.name || part.id || '') === target) || null;
   }
 
+  function findModelPartByPick(modelName, pickedId) {
+    const target = String(pickedId || '');
+    if (!target) return null;
+    const direct = findModelPart(modelName, target);
+    if (direct) return direct;
+    const lower = target.toLowerCase();
+    return modelPartsFor(modelName).find((part) => {
+      const partId = String(part.name || part.id || '');
+      const idLower = partId.toLowerCase();
+      return idLower === lower
+        || lower.startsWith(`${idLower}/`)
+        || lower.endsWith(`/${idLower}`)
+        || lower.includes(idLower);
+    }) || null;
+  }
+
+  function syncSelectionFromViewer(partKey) {
+    if (!activePart) return;
+    if (partKey == null || partKey === '') {
+      if (!displayedModelPart) {
+        selectedModelPart = null;
+        selectedModelPartModel = null;
+        renderPartsList();
+        paramsEditor.refresh();
+      }
+      return;
+    }
+    const part = findModelPartByPick(activePart, partKey);
+    const partId = String(part?.name || part?.id || partKey);
+    const changed = selectedModelPartModel !== activePart || selectedModelPart !== partId;
+    selectedModelPart = partId;
+    selectedModelPartModel = activePart;
+    if (modelPartsFor(activePart).length >= 2) expandedModels.add(activePart);
+    if (changed) {
+      renderPartsList();
+      paramsEditor.refresh({ force: true });
+    } else {
+      syncExportControls();
+    }
+  }
+
   async function showAssembly(modelName = activePart, { preserveView = true } = {}) {
     selectedModelPart = null;
     selectedModelPartModel = null;
     displayedModelPart = null;
+    syncExportControls();
     paramsEditor.refresh({ force: true });
     const payload = assemblyPayloads.get(modelName);
     if (!payload?.url) {
@@ -306,11 +357,15 @@ export function initUI(viewer) {
     }
     if (typeof viewer.setSelectedPart === 'function') viewer.setSelectedPart(null);
     viewerUi.stopExplodedView();
+    const fmt = String(payload.format || 'BREP').toUpperCase();
     const partLabel = payload.part ? `[${payload.part}] ` : '';
-    setStatus(`${partLabel}${t('loadingMjcf')} ...`, true);
+    const loadingLabel = fmt === 'MJCF'
+      ? t('loadingMjcf')
+      : (fmt === 'STL' ? t('parsingStl') : t('parsingBrep'));
+    setStatus(`${partLabel}${loadingLabel} ...`, true);
     try {
       const partInfo = await viewer.loadModel(payload.url, (msg) => appendLog(msg), {
-        format: 'MJCF',
+        format: fmt,
         paramsUrl: payload.paramsUrl,
         preserveView
       });
@@ -319,7 +374,10 @@ export function initUI(viewer) {
       if (payload?.part && modelParts.length >= 2) expandedModels.add(payload.part);
       renderPartsList();
       const sizeKB = payload.size ? (payload.size / 1024).toFixed(1) + ' KB' : '';
-      setStatus(t('modelReady', { partLabel, sizeLabel: sizeKB ?  sizeKB : '', tail: t('mjcfAssembly') }));
+      const tail = fmt === 'MJCF'
+        ? t('mjcfAssembly')
+        : (fmt === 'STL' ? t('stlMesh') : t('brepFaces', { count: partInfo?.faceCount ?? 0 }));
+      setStatus(t('modelReady', { partLabel, sizeLabel: sizeKB ? sizeKB : '', tail }));
       viewerUi.renderAll();
       return partInfo;
     } catch (e) {
@@ -330,8 +388,8 @@ export function initUI(viewer) {
         return;
       }
       setStatus(t('modelLoadFailed'));
-      appendLog(t('failedLoadModel', { partLabel, format: 'MJCF', message }), 'error');
-      showToast(t('failedLoadModel', { partLabel, format: 'MJCF', message: escapeHtml(message) }), 3800);
+      appendLog(t('failedLoadModel', { partLabel, format: fmt, message }), 'error');
+      showToast(t('failedLoadModel', { partLabel, format: fmt, message: escapeHtml(message) }), 3800);
       throw e;
     }
   }
@@ -344,6 +402,7 @@ export function initUI(viewer) {
     selectedModelPart = partId;
     selectedModelPartModel = modelName;
     displayedModelPart = partId;
+    syncExportControls();
     paramsEditor.refresh({ force: true });
     if (typeof viewer.setSelectedPart === 'function') viewer.setSelectedPart(null);
     renderPartsList();
@@ -352,7 +411,13 @@ export function initUI(viewer) {
       const stl = await api.ensureModelPartStl(modelName, partId);
       part.hasStl = true;
       part.stlUrl = stl.url;
-      const partInfo = await viewer.loadModel(stl.url, (msg) => appendLog(msg), { format: 'STL', preserveView: false });
+      const parentPayload = assemblyPayloads.get(modelName);
+      const partInfo = await viewer.loadModel(stl.url, (msg) => appendLog(msg), {
+        format: 'STL',
+        paramsUrl: parentPayload?.paramsUrl,
+        preserveView: false,
+        materialPart: partId
+      });
       setStatus(t('modelReady', {
         partLabel: `[${part.name || partId}] `,
         sizeLabel: '',
@@ -375,7 +440,7 @@ export function initUI(viewer) {
     for (const part of items) {
       const li = document.createElement('li');
       const partId = String(part.name || part.id);
-      li.className = 'model-part-item' + (selectedModelPartModel === modelName && String(displayedModelPart || '') === partId ? ' selected' : '');
+      li.className = 'model-part-item' + (selectedModelPartModel === modelName && selectedModelPart === partId ? ' selected' : '');
       li.dataset.partId = partId;
       li.title = part.hasStl ? partId : `${partId} (STL not built yet)`;
       li.textContent = partId;
@@ -503,6 +568,7 @@ export function initUI(viewer) {
       });
       el.partsList.appendChild(li);
     }
+    syncExportControls();
   }
 
   async function refreshParts() {
@@ -554,10 +620,11 @@ export function initUI(viewer) {
       }
       const fmt = (el.selectExportFormat?.value || 'stl').toLowerCase();
       try {
-        const res = await api.exportModel(activePart, fmt);
+        const exportPart = selectedModelPartModel === activePart ? selectedModelPart : null;
+        const res = await api.exportModel(activePart, fmt, exportPart ? { part: exportPart } : {});
         if (!res?.canceled) {
           const label = String(fmt).toUpperCase();
-          showToast(t('exported', { name: escapeHtml(activePart), format: label }));
+          showToast(t('exported', { name: escapeHtml(exportPart || activePart), format: label }));
         }
       } catch (e) {
         appendLog(t('exportFailed', { message: e.message }), 'error');
@@ -1140,12 +1207,21 @@ export function initUI(viewer) {
           appendLog(t('missingModelUrl'), 'warn');
           break;
         }
+        if (payload.part) {
+          assemblyPayloads.set(payload.part, { ...payload });
+        }
         if (fmt === 'MJCF' && payload.part) {
           buildingModels.delete(payload.part);
-          assemblyPayloads.set(payload.part, { ...payload });
         }
         const preserveView = !!payload.part && payload.part === loadedPart && typeof viewer.hasModel === 'function' && viewer.hasModel();
         const partLabel = payload.part ? `[${payload.part}] ` : '';
+        if (payload.part && displayedModelPart && selectedModelPartModel === payload.part) {
+          const selectedPart = findModelPart(payload.part, displayedModelPart)
+            || findModelPart(payload.part, selectedModelPart)
+            || { name: displayedModelPart };
+          showModelPart(payload.part, selectedPart).catch(() => {});
+          break;
+        }
         if (fmt === 'MJCF' && payload.part && selectedModelPartModel === payload.part && selectedModelPart) {
           const selectedPart = findModelPart(payload.part, selectedModelPart) || { name: selectedModelPart };
           showModelPart(payload.part, selectedPart).catch(() => {});
@@ -1183,7 +1259,11 @@ export function initUI(viewer) {
         }
         setStatus(`${partLabel}${fmt === 'STL' ? t('parsingStl') : t('parsingBrep')} ...`, true);
         const sizeKB = payload.size ? (payload.size / 1024).toFixed(1) + ' KB' : '';
-        viewer.loadModel(url, (msg) => appendLog(msg), { format: fmt, paramsUrl: payload.paramsUrl, preserveView })
+        viewer.loadModel(url, (msg) => appendLog(msg), {
+          format: fmt,
+          paramsUrl: payload.paramsUrl,
+          preserveView
+        })
           .then(async (partInfo) => {
             if (payload?.part) loadedPart = payload.part;
             renderPartsList();
@@ -1280,6 +1360,10 @@ export function initUI(viewer) {
   applyLayoutVisibility();
   syncExportControls();
   viewerUi.renderAll();
+
+  if (typeof viewer.setOnSelectedPartChange === 'function') {
+    viewer.setOnSelectedPartChange(syncSelectionFromViewer);
+  }
 
   initRendererI18n(api).then(refreshLocalizedUi);
   setStatus(t('waitingForProject'));

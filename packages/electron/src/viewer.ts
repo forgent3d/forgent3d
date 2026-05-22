@@ -3,7 +3,12 @@ import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls
 import occtImportJs from 'occt-import-js';
 import loadMujoco from '@mujoco/mujoco';
 import { createViewCubeOverlay } from './viewer-viewcube.js';
-import { buildSceneFromOcctResult, buildSceneFromStlBuffer } from './viewer-loaders.js';
+import {
+  buildSceneFromOcctResult,
+  buildSceneFromStlBuffer,
+  inferMaterialPartNameFromUrl,
+  tagSceneAsMaterialPart
+} from './viewer-loaders.js';
 import { disposeMjcfSimulation, loadMjcfScene, stepMjcfSimulation } from './viewer-mjcf.js';
 import { createContactShadow, createViewerLighting, decorateModelForCadDisplay } from './viewer-scene.js';
 import { createSnapshotRenderer } from './viewer-snapshot.js';
@@ -37,6 +42,7 @@ type ViewCubeOverlay = {
  *  - Keep feature-specific display logic in focused viewer-* modules; this file wires controllers together
  */
 export function createViewer(host: HTMLElement): Viewer {
+  let onSelectedPartChange: ((partKey: string | number | null) => void) | null = null;
   const scene = new THREE.Scene();
   scene.background = null;
 
@@ -133,6 +139,9 @@ export function createViewer(host: HTMLElement): Viewer {
   let currentRoot: THREE.Object3D | null = null;         // three.Group for current BREP model
   let currentMjcfRoot: THREE.Object3D | null = null;
   let mjcfSimulation: MjcfSimulation = null;
+  const partPickRaycaster = new THREE.Raycaster();
+  const partPickPointer = new THREE.Vector2();
+  let partPickDown: { x: number; y: number } | null = null;
   let viewCube: ViewCubeOverlay | null = null;
   const previewController = createPreviewModeController({
     getCurrentRoot: () => currentRoot,
@@ -234,6 +243,53 @@ export function createViewer(host: HTMLElement): Viewer {
     if (viewCube) viewCube.setEnabled(false);
   }
 
+  function materialPartFromObject(object: THREE.Object3D | null): string | number | null {
+    let cursor: THREE.Object3D | null = object;
+    while (cursor) {
+      const part = cursor.userData?.materialPart;
+      if (part?.id != null) return part.id;
+      cursor = cursor.parent;
+    }
+    return null;
+  }
+
+  function pickMaterialPart(event: PointerEvent): string | number | null {
+    if (!currentRoot) return null;
+    const rect = renderer.domElement.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    partPickPointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    partPickPointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    partPickRaycaster.setFromCamera(partPickPointer, camera);
+    const hits = partPickRaycaster
+      .intersectObject(currentRoot, true)
+      .filter((hit) => !hit.object.userData?.isWireframe);
+    for (const hit of hits) {
+      const partId = materialPartFromObject(hit.object);
+      if (partId != null) return partId;
+    }
+    return null;
+  }
+
+  function handlePartPickPointerDown(event: PointerEvent) {
+    if (event.button !== 0) return;
+    partPickDown = { x: event.clientX, y: event.clientY };
+  }
+
+  function handlePartPickClick(event: MouseEvent) {
+    if (event.button !== 0) return;
+    if (partPickDown) {
+      const dx = event.clientX - partPickDown.x;
+      const dy = event.clientY - partPickDown.y;
+      partPickDown = null;
+      if ((dx * dx + dy * dy) > 16) return;
+    }
+    const pickedPart = pickMaterialPart(event as PointerEvent);
+    setSelectedPart(pickedPart);
+  }
+
+  renderer.domElement.addEventListener('pointerdown', handlePartPickPointerDown);
+  renderer.domElement.addEventListener('click', handlePartPickClick);
+
   function replaceCurrentModel(
     nextRoot: THREE.Object3D,
     { preserveView = false, isMjcf = false }: { preserveView?: boolean; isMjcf?: boolean } = {}
@@ -272,6 +328,11 @@ export function createViewer(host: HTMLElement): Viewer {
     if (viewCube) viewCube.setEnabled(true);
   }
 
+  function metadataUrlFromParamsUrl(paramsUrl: string | undefined): string | null {
+    if (!paramsUrl) return null;
+    return paramsUrl.replace(/params\.json(?:\?.*)?$/i, 'metadata.json');
+  }
+
   async function loadViewerParams(paramsUrl: string | undefined, onLog: LogHandler = () => {}): Promise<Record<string, unknown>> {
     if (!paramsUrl) return {};
     try {
@@ -281,6 +342,22 @@ export function createViewer(host: HTMLElement): Viewer {
     } catch (err: any) {
       onLog(`params.json appearance config unavailable: ${err?.message || err}`);
       return {};
+    }
+  }
+
+  async function loadAssemblyPartLabels(paramsUrl: string | undefined, onLog: LogHandler = () => {}): Promise<string[]> {
+    const metadataUrl = metadataUrlFromParamsUrl(paramsUrl);
+    if (!metadataUrl) return [];
+    try {
+      const response = await fetch(metadataUrl);
+      if (!response.ok) return [];
+      const payload = await response.json();
+      const labels = payload?.assembly_parts;
+      if (!Array.isArray(labels)) return [];
+      return labels.map((label) => String(label || '').trim()).filter(Boolean);
+    } catch (err: any) {
+      onLog(`metadata.json assembly labels unavailable: ${err?.message || err}`);
+      return [];
     }
   }
 
@@ -305,7 +382,9 @@ export function createViewer(host: HTMLElement): Viewer {
     if (!res.success) throw new Error('OCCT failed to parse BREP');
 
     // 3) Build Three.js scene
-    const group = buildSceneFromOcctResult(res);
+    const group = buildSceneFromOcctResult(res, {
+      assemblyPartLabels: opts.assemblyPartLabels || []
+    });
 
     // Center model + adapt camera
     const box = new THREE.Box3().setFromObject(group);
@@ -360,6 +439,8 @@ export function createViewer(host: HTMLElement): Viewer {
     onLog(`STL parsing (${(buf.byteLength / 1024).toFixed(1)} KB)...`);
 
     const { group, geometry } = buildSceneFromStlBuffer(buf);
+    const partName = String(opts.materialPart || '').trim() || inferMaterialPartNameFromUrl(url);
+    if (partName) tagSceneAsMaterialPart(group, partName);
 
     const box = new THREE.Box3().setFromObject(group);
     const size = new THREE.Vector3();
@@ -412,14 +493,21 @@ export function createViewer(host: HTMLElement): Viewer {
   async function loadModel(url: string, onLog: LogHandler = () => {}, opts: LoadModelOptions = {}): Promise<PartInfo> {
     const fmt = (opts.format || '').toUpperCase();
     appearanceController.reset();
+    const [params, assemblyPartLabels] = await Promise.all([
+      loadViewerParams(opts.paramsUrl, onLog),
+      loadAssemblyPartLabels(opts.paramsUrl, onLog)
+    ]);
+    const loadOpts = {
+      ...opts,
+      assemblyPartLabels: opts.assemblyPartLabels?.length ? opts.assemblyPartLabels : assemblyPartLabels
+    };
     let partInfo;
     if (fmt === 'MJCF' || /\/asm\.xml(\?|$)/i.test(url)) {
-      partInfo = await loadMjcf(url, opts.paramsUrl, onLog, opts);
+      partInfo = await loadMjcf(url, opts.paramsUrl, onLog, loadOpts);
     } else {
       const isStl = fmt === 'STL' || /\.stl(\?|$)/i.test(url);
-      partInfo = await (isStl ? loadStl(url, onLog, opts) : loadBrep(url, onLog, opts));
+      partInfo = await (isStl ? loadStl(url, onLog, loadOpts) : loadBrep(url, onLog, loadOpts));
     }
-    const params = await loadViewerParams(opts.paramsUrl, onLog);
     appearanceController.setMaterialParams(params);
     backgroundController.update(currentRoot);
     previewController.refresh();
@@ -483,7 +571,14 @@ export function createViewer(host: HTMLElement): Viewer {
     const selected = appearanceController.setSelectedPart(partKey);
     previewController.refresh();
     backgroundController.update(currentRoot);
+    onSelectedPartChange?.(selected);
     return selected;
+  }
+
+  function setOnSelectedPartChange(
+    handler: ((partKey: string | number | null) => void) | null
+  ) {
+    onSelectedPartChange = handler;
   }
 
   function setExplodeEnabled(enabled: boolean) {
@@ -526,6 +621,7 @@ export function createViewer(host: HTMLElement): Viewer {
     setPartMaterialColor,
     setPartMaterialColors,
     setSelectedPart,
+    setOnSelectedPartChange,
     getMaterialParts: appearanceController.getMaterialParts,
     getSelectedPart: appearanceController.getSelectedPart,
     getPartMaterialState: appearanceController.getPartMaterialState,
@@ -540,6 +636,8 @@ export function createViewer(host: HTMLElement): Viewer {
         viewCube = null;
       }
       clearModel();
+      renderer.domElement.removeEventListener('pointerdown', handlePartPickPointerDown);
+      renderer.domElement.removeEventListener('click', handlePartPickClick);
       cursorWheelZoom.dispose();
       contactShadow.dispose();
       lighting.dispose();

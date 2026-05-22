@@ -104,10 +104,14 @@ def _resolve_model_source(model_name: str, part_name: str, source_override: str 
         if not os.path.isabs(candidate):
             candidate = os.path.join(PROJECT_ROOT, candidate)
         return candidate if os.path.isfile(candidate) else None
+    part_sub_path = os.path.join(MODELS_DIR, model_name, "parts", part_name, "part.py")
+    # Sub-part builds must not fall back to assembly.py (would export the whole assembly for every mesh).
+    if part_name != model_name:
+        return part_sub_path if os.path.isfile(part_sub_path) else None
     candidates = [
         os.path.join(MODELS_DIR, model_name, "assembly.py"),
         os.path.join(MODELS_DIR, model_name, "part.py"),
-        os.path.join(MODELS_DIR, model_name, "parts", part_name, "part.py"),
+        part_sub_path,
     ]
     for candidate in candidates:
         if os.path.isfile(candidate):
@@ -138,6 +142,39 @@ def _json_safe(value):
         except Exception:
             pass
     raise TypeError(f"metadata contains non-JSON value of type {type(value).__name__}")
+
+
+def _collect_compound_labels(shape):
+    labels = []
+    children = getattr(shape, "children", None)
+    if children is None:
+        return labels
+    try:
+        iterable = list(children)
+    except TypeError:
+        return labels
+    for child in iterable:
+        label = getattr(child, "label", None)
+        if label is None and hasattr(child, "part"):
+            label = getattr(child.part, "label", None)
+        text = str(label).strip() if label is not None else ""
+        if text:
+            labels.append(text)
+    return labels
+
+
+def _ensure_assembly_metadata(ns: dict, result) -> None:
+    labels = _collect_compound_labels(result)
+    if not labels:
+        return
+    metadata = ns.get("metadata")
+    if metadata is None:
+        metadata = {}
+        ns["metadata"] = metadata
+    if not isinstance(metadata, dict):
+        return
+    if not metadata.get("assembly_parts"):
+        metadata["assembly_parts"] = labels
 
 
 def _write_metadata(source_path: str, ns: dict):
@@ -211,6 +248,7 @@ def build_one(model_name: str, part_name: str = None, export_format: str = "brep
               file=sys.stderr)
         return 4
     try:
+        _ensure_assembly_metadata(ns, result)
         _write_metadata(source_path, ns)
     except Exception as exc:
         print(f"[export_runner] Failed to write metadata.json: {exc}", file=sys.stderr)

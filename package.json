@@ -12,6 +12,8 @@
     "test": "pnpm --filter @forgent3d/shared test",
     "test:shared": "pnpm --filter @forgent3d/shared test",
     "build:shared": "pnpm --filter @forgent3d/shared build",
+    "build:runtime": "pnpm --filter @forgent3d/cad-runtime build",
+    "postinstall": "pnpm run build:runtime",
     "typecheck": "pnpm -r typecheck",
     "build": "pnpm --filter aicad-preview build",
     "build:renderer": "pnpm --filter aicad-preview build:renderer",
@@ -30,6 +32,9 @@
       "sharp",
       "workerd",
       "@forgent3d/cad-runtime"
-    ]
+    ],
+    "overrides": {
+      "@forgent3d/cad-runtime": "workspace:*"
+    }
   }
 }

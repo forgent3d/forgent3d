@@ -32,7 +32,12 @@
       "Bash(pnpm build *)",
       "Bash(git submodule *)",
       "Bash(cd *)",
-      "Bash(git ls-tree *)"
+      "Bash(git ls-tree *)",
+      "Bash(git *)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(pnpm --filter @forgent3d/cad-runtime run build)",
+      "Bash(pnpm --filter @forgent3d/cf-sandbox run sandbox:sync)",
+      "Bash(pnpm update *)"
     ]
   }
 }

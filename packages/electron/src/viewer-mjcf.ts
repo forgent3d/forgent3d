@@ -16,6 +16,18 @@ function parseVec3(value, fallback = [0, 0, 0]) {
   return new THREE.Vector3(nums[0] ?? fallback[0], nums[1] ?? fallback[1], nums[2] ?? fallback[2]);
 }
 
+function parseRgbaMaterial(value) {
+  const nums = parseNumberList(value, []);
+  if (nums.length < 3) return null;
+  const color = new THREE.Color(nums[0], nums[1], nums[2]);
+  const opacity = nums.length >= 4 && Number.isFinite(nums[3]) ? nums[3] : 1;
+  return {
+    color,
+    opacity,
+    transparent: opacity < 0.999
+  };
+}
+
 function parseQuat(value) {
   const nums = parseNumberList(value, []);
   if (nums.length < 4) return null;
@@ -289,17 +301,22 @@ export async function loadMjcfScene({ url, paramsUrl, mjcfText = null, baseUrl =
     if (!meshName && type !== 'mesh') return;
     const asset = meshAssets.get(meshName);
     if (!asset) throw new Error(`MJCF references unknown mesh asset: ${meshName}`);
+    const geomName = String(geomEl.getAttribute('name') || '').trim();
+    const bodyName = String(parent?.name || '').trim();
+    const partName = bodyName || meshName || geomName || 'geom';
+    const rgbaMaterial = parseRgbaMaterial(geomEl.getAttribute('rgba'));
     const mesh = new THREE.Mesh(
       asset.geometry.clone(),
-      createCadClayMaterial()
+      createCadClayMaterial(rgbaMaterial || {})
     );
-    mesh.name = String(geomEl.getAttribute('name') || meshName || 'geom');
-    const partName = meshName || mesh.name;
+    mesh.name = geomName || meshName || partName;
     mesh.userData.materialPart = {
       id: partName,
       name: partName,
       aliases: [
         partName,
+        bodyName,
+        geomName,
         mesh.name,
         meshName,
         parent?.name,
