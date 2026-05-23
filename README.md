@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/images/logo.png" width="96" alt="Forgent3D logo" />
+  <img src="docs/logo.png" width="96" alt="Forgent3D logo" />
 </p>
 
 <h1 align="center">Forgent3D</h1>
