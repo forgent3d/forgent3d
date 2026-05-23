@@ -191,6 +191,10 @@ const messages = {
     shareFailed: 'Share failed: {message}',
     shareCopyFailed: 'Copy failed: {message}',
     shareCopied: 'Copied.',
+    shareSignInRequired: 'Sign in to share models.',
+    shareSignInHint: 'Sign in to Forgent3D in your browser to create or manage share links.',
+    shareSignInButton: 'Sign in in browser',
+    shareSignInOpened: 'Opened browser for sign-in. Return here after signing in.',
   },
   'zh-CN': {
     appTitle: 'Forgent3D',
@@ -376,6 +380,10 @@ const messages = {
     shareFailed: '分享失败：{message}',
     shareCopyFailed: '复制失败：{message}',
     shareCopied: '已复制。',
+    shareSignInRequired: '登录后才能分享模型。',
+    shareSignInHint: '请在浏览器中登录 Forgent3D，以创建或管理分享链接。',
+    shareSignInButton: '在浏览器中登录',
+    shareSignInOpened: '已在浏览器中打开登录页，登录完成后请返回此处。',
   }
 };
 

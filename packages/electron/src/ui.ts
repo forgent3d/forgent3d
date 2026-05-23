@@ -39,9 +39,12 @@ export function initUI(viewer) {
 
     viewShareBtn: document.getElementById('view-share-btn'),
     modalShare: document.getElementById('modal-share'),
+    modalShareContent: document.getElementById('modal-share-content'),
     modalShareUrl: document.getElementById('modal-share-url'),
     modalSharePublic: document.getElementById('modal-share-public'),
     modalShareStatus: document.getElementById('modal-share-status'),
+    modalShareLogin: document.getElementById('modal-share-login'),
+    btnModalShareLogin: document.getElementById('btn-modal-share-login'),
     btnModalShareCopy: document.getElementById('btn-modal-share-copy'),
     btnModalShareClose: document.getElementById('btn-modal-share-close'),
     btnModalShareGenerate: document.getElementById('btn-modal-share-generate'),
@@ -235,6 +238,100 @@ export function initUI(viewer) {
 
   let shareDialogPublished = false;
   let sharePublicBusy = false;
+  let shareAwaitingAuth = false;
+  let shareRefreshTimer = null;
+  const SHARE_AUTH_REQUIRED = 'SHARE_AUTH_REQUIRED';
+
+  function isShareDialogOpen() {
+    return !!el.modalShare && !el.modalShare.classList.contains('hidden');
+  }
+
+  function shouldRefreshShareDialog() {
+    if (!isShareDialogOpen() || !activePart) return false;
+    return shareAwaitingAuth || !el.modalShareLogin?.classList.contains('hidden');
+  }
+
+  function isShareAuthRequired(err) {
+    const msg = String(err?.message || err || '');
+    return msg.includes(SHARE_AUTH_REQUIRED)
+      || /not signed in/i.test(msg)
+      || /未授权/.test(msg);
+  }
+
+  /** @param {'loading' | 'login' | 'share'} mode */
+  function setShareDialogMode(mode) {
+    const loginOnly = mode === 'login';
+    const loading = mode === 'loading';
+    el.modalShareContent?.classList.toggle('hidden', loginOnly || loading);
+    el.modalShareLogin?.classList.toggle('hidden', !loginOnly);
+    el.btnModalShareGenerate?.classList.toggle('hidden', loginOnly || loading);
+    if (loginOnly || loading) {
+      el.btnModalShareUnshare?.classList.add('hidden');
+    }
+  }
+
+  async function openShareExternalLogin() {
+    if (!currentProject) return;
+    shareAwaitingAuth = true;
+    try {
+      const res = await api.agentOpenNext(currentProject, undefined, true);
+      el.modalShareStatus.textContent = t('shareSignInOpened');
+      appendLog(t('nextAgentOpenedExternal', { url: res?.url || '' }));
+      showToast(t('nextAgentOpenedExternalToast'), 2600);
+    } catch (e) {
+      shareAwaitingAuth = false;
+      el.modalShareStatus.textContent = t('shareFailed', { message: e?.message || String(e) });
+      showToast(t('shareFailed', { message: escapeHtml(e?.message || String(e)) }), 4200);
+    }
+  }
+
+  function handleShareAuthRequired() {
+    shareDialogPublished = false;
+    shareAwaitingAuth = true;
+    setShareDialogMode('login');
+    el.modalShareStatus.textContent = '';
+  }
+
+  function scheduleShareDialogRefresh() {
+    if (!shouldRefreshShareDialog()) return;
+    if (shareRefreshTimer) clearTimeout(shareRefreshTimer);
+    shareRefreshTimer = setTimeout(() => {
+      shareRefreshTimer = null;
+      void refreshShareDialogAfterAuth();
+    }, 250);
+  }
+
+  async function refreshShareDialogAfterAuth() {
+    if (!shouldRefreshShareDialog()) return;
+    setShareDialogMode('loading');
+    el.modalShareStatus.textContent = t('shareLoading');
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        const status = await api.getShareStatus(activePart);
+        shareAwaitingAuth = false;
+        setShareDialogMode('share');
+        applyShareDialogState(status);
+        el.modalShareStatus.textContent = '';
+        el.btnModalShareGenerate.disabled = false;
+        if (el.modalSharePublic) el.modalSharePublic.disabled = false;
+        return;
+      } catch (err) {
+        if (!isShareAuthRequired(err)) {
+          shareAwaitingAuth = false;
+          setShareDialogMode('share');
+          el.modalShareStatus.textContent = t('shareFailed', { message: String(err?.message || err) });
+          applyShareDialogState({ published: false });
+          el.btnModalShareGenerate.disabled = false;
+          if (el.modalSharePublic) el.modalSharePublic.disabled = false;
+          return;
+        }
+        if (attempt < 7) {
+          await new Promise((resolve) => setTimeout(resolve, 400));
+        }
+      }
+    }
+    handleShareAuthRequired();
+  }
 
   function applyShareDialogState(status) {
     shareDialogPublished = !!status?.published;
@@ -256,25 +353,42 @@ export function initUI(viewer) {
   async function openShareDialog() {
     if (!el.modalShare || !activePart) return;
     el.modalShare.classList.remove('hidden');
+    setShareDialogMode('loading');
     el.modalShareStatus.textContent = t('shareLoading');
     el.btnModalShareGenerate.disabled = true;
     el.btnModalShareCopy.disabled = true;
     if (el.modalSharePublic) el.modalSharePublic.disabled = true;
     try {
       const status = await api.getShareStatus(activePart);
+      shareAwaitingAuth = false;
+      setShareDialogMode('share');
       applyShareDialogState(status);
       el.modalShareStatus.textContent = '';
     } catch (err) {
-      el.modalShareStatus.textContent = t('shareFailed', { message: String(err?.message || err) });
-      applyShareDialogState({ published: false });
+      if (isShareAuthRequired(err)) {
+        handleShareAuthRequired();
+      } else {
+        shareAwaitingAuth = false;
+        setShareDialogMode('share');
+        el.modalShareStatus.textContent = t('shareFailed', { message: String(err?.message || err) });
+        applyShareDialogState({ published: false });
+      }
     } finally {
-      el.btnModalShareGenerate.disabled = false;
-      if (el.modalSharePublic) el.modalSharePublic.disabled = false;
+      if (el.modalShareLogin?.classList.contains('hidden')) {
+        el.btnModalShareGenerate.disabled = false;
+        if (el.modalSharePublic) el.modalSharePublic.disabled = false;
+      }
     }
   }
 
   function closeShareDialog() {
     el.modalShare?.classList.add('hidden');
+    shareAwaitingAuth = false;
+    if (shareRefreshTimer) {
+      clearTimeout(shareRefreshTimer);
+      shareRefreshTimer = null;
+    }
+    setShareDialogMode('share');
   }
 
   async function generateShareLink() {
@@ -290,7 +404,12 @@ export function initUI(viewer) {
       el.modalShareUrl.focus();
       el.modalShareUrl.select();
     } catch (err) {
-      el.modalShareStatus.textContent = t('shareFailed', { message: String(err?.message || err) });
+      if (isShareAuthRequired(err)) {
+        handleShareAuthRequired();
+        await openShareExternalLogin();
+      } else {
+        el.modalShareStatus.textContent = t('shareFailed', { message: String(err?.message || err) });
+      }
     } finally {
       el.btnModalShareGenerate.disabled = false;
     }
@@ -306,7 +425,11 @@ export function initUI(viewer) {
       applyShareDialogState({ published: false });
       el.modalShareStatus.textContent = t('shareRemoved');
     } catch (err) {
-      el.modalShareStatus.textContent = t('shareFailed', { message: String(err?.message || err) });
+      if (isShareAuthRequired(err)) {
+        handleShareAuthRequired();
+      } else {
+        el.modalShareStatus.textContent = t('shareFailed', { message: String(err?.message || err) });
+      }
     } finally {
       el.btnModalShareUnshare.disabled = false;
     }
@@ -321,7 +444,11 @@ export function initUI(viewer) {
       applyShareDialogState(result);
     } catch (err) {
       if (el.modalSharePublic) el.modalSharePublic.checked = !isPublic;
-      el.modalShareStatus.textContent = t('shareFailed', { message: String(err?.message || err) });
+      if (isShareAuthRequired(err)) {
+        handleShareAuthRequired();
+      } else {
+        el.modalShareStatus.textContent = t('shareFailed', { message: String(err?.message || err) });
+      }
     } finally {
       sharePublicBusy = false;
     }
@@ -340,6 +467,9 @@ export function initUI(viewer) {
   }
   if (el.btnModalShareGenerate) {
     el.btnModalShareGenerate.addEventListener('click', generateShareLink);
+  }
+  if (el.btnModalShareLogin) {
+    el.btnModalShareLogin.addEventListener('click', openShareExternalLogin);
   }
   if (el.btnModalShareUnshare) {
     el.btnModalShareUnshare.addEventListener('click', unshareModelLink);
@@ -1028,6 +1158,7 @@ export function initUI(viewer) {
       el.termTitle.textContent = t('nextAgentPanelTitle');
       if (el.agentNextFrame) el.agentNextFrame.src = url.toString();
       appendLog(t('nextAgentDesktopAuthReceived'));
+      scheduleShareDialogRefresh();
     } catch (e) {
       appendLog(t('nextAgentOpenFailed', { message: e?.message || String(e) }), 'error');
       showToast(t('nextAgentOpenFailed', { message: escapeHtml(e?.message || String(e)) }), 4200);
@@ -1135,10 +1266,12 @@ export function initUI(viewer) {
 
   if (el.agentNextFrame) {
     el.agentNextFrame.addEventListener('did-finish-load', () => {
-      if (!pendingNextAgentWebviewLoad) return;
-      pendingNextAgentWebviewLoad = false;
-      setNextAgentLoadingVisible(false);
-      syncNextAgentLanguage();
+      if (pendingNextAgentWebviewLoad) {
+        pendingNextAgentWebviewLoad = false;
+        setNextAgentLoadingVisible(false);
+        syncNextAgentLanguage();
+      }
+      scheduleShareDialogRefresh();
     });
     el.agentNextFrame.addEventListener('did-fail-load', () => {
       if (!pendingNextAgentWebviewLoad) return;

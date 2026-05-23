@@ -775,6 +775,19 @@ html, body, #app {
   cursor: pointer;
 }
 .share-status { margin-top: 10px; font-size: 12px; min-height: 16px; }
+.share-login-prompt {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.2);
+}
+.share-login-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.share-login-prompt .btn { width: 100%; margin: 0; }
 .share-modal-footer {
   flex-wrap: wrap;
   justify-content: space-between;

@@ -63,14 +63,30 @@ function getAgentApiBase() {
   ).replace(/\/+$/, '');
 }
 
+const SHARE_AUTH_REQUIRED = 'SHARE_AUTH_REQUIRED';
+
+function throwShareAuthRequired() {
+  throw new Error(SHARE_AUTH_REQUIRED);
+}
+
 async function getAgentAuthHeaders() {
   const rawBase = getAgentApiBase();
   const { session } = require('electron');
   const cookies = await session.fromPartition('persist:aicad-forgent3d').cookies.get({ url: rawBase });
   if (!cookies || cookies.length === 0) {
-    throw new Error('Not signed in. Please open the Forgent3D agent and sign in first.');
+    throwShareAuthRequired();
   }
   return { rawBase, cookieHeader: cookies.map((c) => `${c.name}=${c.value}`).join('; ') };
+}
+
+async function readShareApiError(response, fallbackMsg) {
+  if (response.status === 401) throwShareAuthRequired();
+  let errorMsg = fallbackMsg;
+  try {
+    const err = await response.json();
+    if (err.error) errorMsg = err.error;
+  } catch {}
+  throw new Error(errorMsg);
 }
 
 function resolveShareModelInput(input) {
@@ -663,12 +679,7 @@ function registerIpcHandlers({
     url.searchParams.set('sourceModelName', modelName);
     const response = await fetch(url, { headers: { cookie: cookieHeader } });
     if (!response.ok) {
-      let errorMsg = `Share status failed: ${response.status}`;
-      try {
-        const err = await response.json();
-        if (err.error) errorMsg = err.error;
-      } catch {}
-      throw new Error(errorMsg);
+      await readShareApiError(response, `Share status failed: ${response.status}`);
     }
     return response.json();
   });
@@ -690,12 +701,7 @@ function registerIpcHandlers({
       }),
     });
     if (!response.ok) {
-      let errorMsg = `Update failed: ${response.status}`;
-      try {
-        const err = await response.json();
-        if (err.error) errorMsg = err.error;
-      } catch {}
-      throw new Error(errorMsg);
+      await readShareApiError(response, `Update failed: ${response.status}`);
     }
     return response.json();
   });
@@ -713,12 +719,7 @@ function registerIpcHandlers({
       body: JSON.stringify({ sourceProjectPath: projectPath, sourceModelName: modelName }),
     });
     if (!response.ok) {
-      let errorMsg = `Unshare failed: ${response.status}`;
-      try {
-        const err = await response.json();
-        if (err.error) errorMsg = err.error;
-      } catch {}
-      throw new Error(errorMsg);
+      await readShareApiError(response, `Unshare failed: ${response.status}`);
     }
     return response.json();
   });
@@ -873,12 +874,7 @@ function registerIpcHandlers({
     });
 
     if (!response.ok) {
-      let errorMsg = `Publish failed: ${response.status}`;
-      try {
-        const err = await response.json();
-        if (err.error) errorMsg = err.error;
-      } catch {}
-      throw new Error(errorMsg);
+      await readShareApiError(response, `Publish failed: ${response.status}`);
     }
 
     const result = await response.json();

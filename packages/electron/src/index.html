@@ -275,17 +275,23 @@
     <div id="modal-share" class="modal hidden">
       <div class="modal-body share-modal-body">
         <h3 data-i18n="shareTitle">Share</h3>
-        <p class="share-hint muted" data-i18n="shareLinkHint">Anyone with the link can view.</p>
-        <label data-i18n="shareLinkLabel">Link</label>
-        <div class="row">
-          <input id="modal-share-url" type="text" readonly placeholder="" data-i18n-placeholder="shareLinkPlaceholder" />
-          <button id="btn-modal-share-copy" class="btn" type="button" disabled data-i18n="shareCopy">Copy</button>
-        </div>
-        <div class="share-public-row">
-          <input id="modal-share-public" type="checkbox" />
-          <label for="modal-share-public" data-i18n="sharePublicLine">Show in gallery — listed on forgent3d.com</label>
+        <div id="modal-share-content" class="share-modal-content">
+          <p class="share-hint muted" data-i18n="shareLinkHint">Anyone with the link can view.</p>
+          <label data-i18n="shareLinkLabel">Link</label>
+          <div class="row">
+            <input id="modal-share-url" type="text" readonly placeholder="" data-i18n-placeholder="shareLinkPlaceholder" />
+            <button id="btn-modal-share-copy" class="btn" type="button" disabled data-i18n="shareCopy">Copy</button>
+          </div>
+          <div class="share-public-row">
+            <input id="modal-share-public" type="checkbox" />
+            <label for="modal-share-public" data-i18n="sharePublicLine">Show in gallery — listed on forgent3d.com</label>
+          </div>
         </div>
         <div id="modal-share-status" class="muted share-status"></div>
+        <div id="modal-share-login" class="share-login-prompt hidden">
+          <p class="share-login-hint muted" data-i18n="shareSignInHint">Sign in to Forgent3D in your browser to create or manage share links.</p>
+          <button id="btn-modal-share-login" class="btn btn-primary" type="button" data-i18n="shareSignInButton">Sign in in browser</button>
+        </div>
         <div class="modal-footer share-modal-footer">
           <button id="btn-modal-share-unshare" class="btn btn-ghost hidden" type="button" data-i18n="shareUnshare">Remove link</button>
           <div class="share-modal-footer-main">
