@@ -57,6 +57,16 @@ type AicadEventHandler = (message: {
   payload?: unknown;
 }) => void;
 
+type AicadShareStatus =
+  | { published: false }
+  | {
+      published: true;
+      shareUrl: string;
+      shareSlug: string;
+      isPublic: boolean;
+      publishedAt?: string | null;
+    };
+
 type AicadApi = {
   dialogConfirm(opts: { title: string; message: string; confirmLabel?: string; cancelLabel?: string }): Promise<boolean>;
   chooseDirectory(): Promise<string | null>;
@@ -82,6 +92,11 @@ type AicadApi = {
   ensureModelPartStl(model: string, part: string): Promise<{ model: string; part: string; path: string; url: string }>;
   getParams(target: string | { model: string; part?: string | null; label?: string }): Promise<AicadParamsPayload>;
   saveParams(target: string | { model: string; part?: string | null; label?: string }, text: string): Promise<AicadParamsPayload>;
+
+  shareModel(name: string, options?: { isPublic?: boolean }): Promise<AicadShareStatus>;
+  getShareStatus(name: string): Promise<AicadShareStatus>;
+  updateSharePublic(name: string, isPublic: boolean): Promise<AicadShareStatus>;
+  unshareModel(name: string): Promise<{ ok: boolean }>;
 
   notifyPartLoaded(payload: unknown): Promise<void>;
 

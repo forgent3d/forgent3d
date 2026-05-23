@@ -444,6 +444,37 @@ html, body, #app {
   height: 100% !important;
 }
 
+.view-share-btn {
+  position: absolute;
+  top: 18px;
+  right: 168px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid #2a3143;
+  background: rgba(14, 18, 27, 0.9);
+  color: #dfe6f6;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+  z-index: 6;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.view-share-btn:hover {
+  border-color: rgba(110, 231, 255, 0.72);
+  color: #6ee7ff;
+}
+.view-share-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.view-share-btn svg { display: block; }
+
 .view-control-panel {
   position: absolute;
   top: 154px;
@@ -709,6 +740,51 @@ html, body, #app {
   margin-top: 20px;
 }
 .modal-footer .btn { width: auto; margin: 0; padding: 8px 18px; }
+
+.share-modal-body .share-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.share-public-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #a8b3c7;
+  user-select: none;
+}
+.share-public-row input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  padding: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.share-public-row label {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  color: #a8b3c7;
+  cursor: pointer;
+}
+.share-status { margin-top: 10px; font-size: 12px; min-height: 16px; }
+.share-modal-footer {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+.share-modal-footer-main {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
 
 .wizard-modal-body {
   width: min(620px, calc(100vw - 40px));

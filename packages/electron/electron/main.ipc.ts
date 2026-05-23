@@ -54,6 +54,42 @@ function removeDirRecursive(target) {
   fs.rmSync(target, { recursive: true, force: true, maxRetries: 8, retryDelay: 200 });
 }
 
+function getAgentApiBase() {
+  return String(
+    process.env.AICAD_FORGENT3D_URL ||
+    process.env.AICAD_NEXT_AGENT_URL ||
+    process.env.CAD_AGENT_URL ||
+    (require('electron').app?.isPackaged ? PACKAGED_DEFAULT_FORGENT3D_AGENT_URL : 'http://localhost:3000')
+  ).replace(/\/+$/, '');
+}
+
+async function getAgentAuthHeaders() {
+  const rawBase = getAgentApiBase();
+  const { session } = require('electron');
+  const cookies = await session.fromPartition('persist:aicad-forgent3d').cookies.get({ url: rawBase });
+  if (!cookies || cookies.length === 0) {
+    throw new Error('Not signed in. Please open the Forgent3D agent and sign in first.');
+  }
+  return { rawBase, cookieHeader: cookies.map((c) => `${c.name}=${c.value}`).join('; ') };
+}
+
+function resolveShareModelInput(input) {
+  if (typeof input === 'string') return { name: input.trim(), isPublic: false };
+  return {
+    name: String(input?.name || '').trim(),
+    isPublic: !!input?.isPublic,
+  };
+}
+
+function appendShareUpload(formData, fieldName, buffer, filename, mimeType) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  if (typeof File !== 'undefined') {
+    formData.append(fieldName, new File([bytes], filename, { type: mimeType }));
+    return;
+  }
+  formData.append(fieldName, new Blob([bytes], { type: mimeType }), filename);
+}
+
 function registerIpcHandlers({
   ipcMain,
   clipboard,
@@ -614,6 +650,249 @@ function registerIpcHandlers({
   });
 
   ipcMain.handle('python:status', async () => deps.getBuildRuntimeStatus());
+
+  ipcMain.handle('models:shareStatus', async (_evt, name) => {
+    const projectPath = state.currentProjectPath();
+    if (!projectPath) throw new Error('Open a project first.');
+    const modelName = String(name || state.activePart() || '').trim();
+    if (!modelName) throw new Error('Select a model first.');
+
+    const { rawBase, cookieHeader } = await getAgentAuthHeaders();
+    const url = new URL(`${rawBase}/api/published-models/mine`);
+    url.searchParams.set('sourceProjectPath', projectPath);
+    url.searchParams.set('sourceModelName', modelName);
+    const response = await fetch(url, { headers: { cookie: cookieHeader } });
+    if (!response.ok) {
+      let errorMsg = `Share status failed: ${response.status}`;
+      try {
+        const err = await response.json();
+        if (err.error) errorMsg = err.error;
+      } catch {}
+      throw new Error(errorMsg);
+    }
+    return response.json();
+  });
+
+  ipcMain.handle('models:sharePublic', async (_evt, payload) => {
+    const projectPath = state.currentProjectPath();
+    if (!projectPath) throw new Error('Open a project first.');
+    const modelName = String(payload?.name || state.activePart() || '').trim();
+    if (!modelName) throw new Error('Select a model first.');
+
+    const { rawBase, cookieHeader } = await getAgentAuthHeaders();
+    const response = await fetch(`${rawBase}/api/published-models/mine`, {
+      method: 'PATCH',
+      headers: { cookie: cookieHeader, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sourceProjectPath: projectPath,
+        sourceModelName: modelName,
+        isPublic: !!payload?.isPublic,
+      }),
+    });
+    if (!response.ok) {
+      let errorMsg = `Update failed: ${response.status}`;
+      try {
+        const err = await response.json();
+        if (err.error) errorMsg = err.error;
+      } catch {}
+      throw new Error(errorMsg);
+    }
+    return response.json();
+  });
+
+  ipcMain.handle('models:unshare', async (_evt, name) => {
+    const projectPath = state.currentProjectPath();
+    if (!projectPath) throw new Error('Open a project first.');
+    const modelName = String(name || state.activePart() || '').trim();
+    if (!modelName) throw new Error('Select a model first.');
+
+    const { rawBase, cookieHeader } = await getAgentAuthHeaders();
+    const response = await fetch(`${rawBase}/api/published-models/mine`, {
+      method: 'DELETE',
+      headers: { cookie: cookieHeader, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceProjectPath: projectPath, sourceModelName: modelName }),
+    });
+    if (!response.ok) {
+      let errorMsg = `Unshare failed: ${response.status}`;
+      try {
+        const err = await response.json();
+        if (err.error) errorMsg = err.error;
+      } catch {}
+      throw new Error(errorMsg);
+    }
+    return response.json();
+  });
+
+  ipcMain.handle('models:share', async (_evt, input) => {
+    const { name: modelName, isPublic } = resolveShareModelInput(input);
+    const projectPath = state.currentProjectPath();
+    if (!projectPath) throw new Error('Open a project first.');
+    if (!modelName) throw new Error('Select a model first.');
+
+    const modelDir = path.join(projectPath, 'models', modelName);
+    if (!fs.existsSync(modelDir)) throw new Error(`Model does not exist: ${modelName}`);
+
+    // Resolve model kind from source files
+    let kind = 'part';
+    if (fs.existsSync(path.join(modelDir, 'asm.xml'))) kind = 'mjcf';
+    else if (fs.existsSync(path.join(modelDir, 'assembly.py'))) kind = 'assembly';
+
+    // Read params
+    let params = {};
+    const paramsPath = path.join(modelDir, 'params.json');
+    if (fs.existsSync(paramsPath)) {
+      try { params = JSON.parse(fs.readFileSync(paramsPath, 'utf-8')); } catch {}
+    }
+
+    // Read project metadata for kernel info
+    let kernel = 'build123d';
+    const projectMetaPath = path.join(projectPath, '.aicad', 'project.json');
+    if (fs.existsSync(projectMetaPath)) {
+      try {
+        const meta = JSON.parse(fs.readFileSync(projectMetaPath, 'utf-8'));
+        if (meta.kernel) kernel = meta.kernel;
+      } catch {}
+    }
+
+    // Collect parts
+    const parts = [];
+    const partsDir = path.join(modelDir, 'parts');
+    if (fs.existsSync(partsDir)) {
+      for (const entry of fs.readdirSync(partsDir)) {
+        const partDir = path.join(partsDir, entry);
+        if (fs.statSync(partDir).isDirectory()) {
+          const src = fs.existsSync(path.join(partDir, 'part.py'))
+            ? `models/${modelName}/parts/${entry}/part.py`
+            : null;
+          parts.push({ name: entry, path: src || `models/${modelName}/parts/${entry}` });
+        }
+      }
+    }
+
+    // Build entry path
+    let entry = `models/${modelName}/part.py`;
+    if (kind === 'mjcf') entry = `models/${modelName}/asm.xml`;
+    else if (kind === 'assembly') entry = `models/${modelName}/assembly.py`;
+
+    const manifest = {
+      title: modelName.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+      kind,
+      sourceModelName: modelName,
+      kernel,
+      entry,
+      filesRoot: `models/${modelName}`,
+      params,
+      parts,
+      preview: 'preview.png',
+      glb: 'model.glb',
+    };
+
+    // Get preview image
+    const previewPng = deps.partPng(projectPath, modelName);
+    let previewBuffer = null;
+    if (fs.existsSync(previewPng)) {
+      previewBuffer = fs.readFileSync(previewPng);
+    }
+
+    // Generate GLB (best-effort)
+    let glbBuffer = null;
+    try {
+      glbBuffer = await deps.buildModelGlbBuffer(modelName, kind);
+    } catch (glbErr) {
+      bridgeLog('glb generation failed', { error: glbErr?.message }, 'warn');
+    }
+
+    // Create zip archive — collect files to include
+    const tmpDir = path.join(projectPath, '.cache', '_share_tmp');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const archivePath = path.join(tmpDir, `${modelName}.zip`);
+    try {
+      const archiver = require('archiver');
+      await new Promise((resolve, reject) => {
+        const output = fs.createWriteStream(archivePath);
+        const archive = archiver('zip', { zlib: { level: 6 } });
+        output.on('close', () => resolve());
+        output.on('error', (err) => reject(err));
+        archive.on('warning', (err) => {
+          if (err.code !== 'ENOENT') reject(err);
+        });
+        archive.on('error', (err) => reject(err));
+        archive.pipe(output);
+
+        archive.directory(modelDir, `models/${modelName}`);
+
+        const cacheDir = path.join(projectPath, '.cache');
+        if (fs.existsSync(cacheDir)) {
+          for (const entry of fs.readdirSync(cacheDir)) {
+            if (entry === '_share_tmp') continue;
+            if (entry.startsWith(modelName)) {
+              archive.file(path.join(cacheDir, entry), { name: `.cache/${entry}` });
+            }
+          }
+        }
+
+        if (fs.existsSync(projectMetaPath)) {
+          archive.file(projectMetaPath, { name: '.aicad/project.json' });
+        }
+
+        archive.finalize();
+      });
+    } catch (zipErr) {
+      bridgeLog('zip failed', { error: zipErr?.message }, 'warn');
+    }
+
+    const { rawBase, cookieHeader } = await getAgentAuthHeaders();
+
+    // Build multipart form
+    const formData = new FormData();
+    formData.append('title', manifest.title);
+    formData.append('sourceProjectPath', projectPath);
+    formData.append('sourceModelName', modelName);
+    formData.append('kind', kind);
+    formData.append('manifest', JSON.stringify(manifest));
+    formData.append('isPublic', isPublic ? 'true' : 'false');
+
+    if (fs.existsSync(archivePath)) {
+      const archiveBuf = fs.readFileSync(archivePath);
+      appendShareUpload(formData, 'archive', archiveBuf, 'model.zip', 'application/zip');
+    }
+
+    if (previewBuffer) {
+      appendShareUpload(formData, 'preview', previewBuffer, 'preview.png', 'image/png');
+    }
+
+    if (glbBuffer) {
+      appendShareUpload(formData, 'glb', glbBuffer, 'model.glb', 'model/gltf-binary');
+    }
+
+    const publishUrl = `${rawBase}/api/published-models/publish`;
+    const response = await fetch(publishUrl, {
+      method: 'POST',
+      headers: { cookie: cookieHeader },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      let errorMsg = `Publish failed: ${response.status}`;
+      try {
+        const err = await response.json();
+        if (err.error) errorMsg = err.error;
+      } catch {}
+      throw new Error(errorMsg);
+    }
+
+    const result = await response.json();
+
+    // Cleanup temp archive
+    try { fs.rmSync(path.join(projectPath, '.cache', '_share_tmp'), { recursive: true, force: true }); } catch {}
+
+    return {
+      published: true,
+      shareUrl: result.shareUrl,
+      shareSlug: result.shareSlug,
+      isPublic: !!result.isPublic,
+    };
+  });
 
   ipcMain.handle('agent:bridgeInfo', () => {
     const projectPath = state.currentProjectPath?.() || '';

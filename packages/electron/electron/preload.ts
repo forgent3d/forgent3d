@@ -29,6 +29,11 @@ contextBridge.exposeInMainWorld('aicad', {
   getParams: (target) => ipcRenderer.invoke('params:get', target),
   saveParams: (target, text) => ipcRenderer.invoke('params:save', { target, text }),
 
+  shareModel: (name, options) => ipcRenderer.invoke('models:share', { name, ...options }),
+  getShareStatus: (name) => ipcRenderer.invoke('models:shareStatus', name),
+  updateSharePublic: (name, isPublic) => ipcRenderer.invoke('models:sharePublic', { name, isPublic }),
+  unshareModel: (name) => ipcRenderer.invoke('models:unshare', name),
+
   notifyPartLoaded: (payload) => ipcRenderer.invoke('viewer:partLoaded', payload),
 
   mcpStatus: () => ipcRenderer.invoke('mcp:status'),

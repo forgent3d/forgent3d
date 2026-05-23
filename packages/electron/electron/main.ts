@@ -538,6 +538,7 @@ function registerIpc() {
       resolveModelSource,
       ensurePartStlArtifact,
       exportPartByRequest,
+      buildModelGlbBuffer,
       partPng,
       partCache,
       modelPartStlPath,
@@ -837,6 +838,10 @@ function sendModelUpdated(partName) {
 
 async function exportPartByRequest(partName, format) {
   return exportTools.exportPartByRequest(partName, format);
+}
+
+async function buildModelGlbBuffer(modelName, kind, source = null) {
+  return exportTools.buildModelGlbBuffer(modelName, kind, source);
 }
 
 /* ---------------- Broadcast ---------------- */

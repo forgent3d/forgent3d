@@ -37,6 +37,16 @@ export function initUI(viewer) {
     btnModalCancel: document.getElementById('btn-modal-cancel'),
     btnModalConfirm: document.getElementById('btn-modal-confirm'),
 
+    viewShareBtn: document.getElementById('view-share-btn'),
+    modalShare: document.getElementById('modal-share'),
+    modalShareUrl: document.getElementById('modal-share-url'),
+    modalSharePublic: document.getElementById('modal-share-public'),
+    modalShareStatus: document.getElementById('modal-share-status'),
+    btnModalShareCopy: document.getElementById('btn-modal-share-copy'),
+    btnModalShareClose: document.getElementById('btn-modal-share-close'),
+    btnModalShareGenerate: document.getElementById('btn-modal-share-generate'),
+    btnModalShareUnshare: document.getElementById('btn-modal-share-unshare'),
+
     partsPanel: document.getElementById('parts-panel'),
     partsList: document.getElementById('parts-list'),
     btnRebuildAll: document.getElementById('btn-rebuild-all'),
@@ -217,6 +227,139 @@ export function initUI(viewer) {
     t
   });
 
+  function syncShareButton() {
+    if (!el.viewShareBtn) return;
+    const visible = !!currentProject && !!activePart;
+    el.viewShareBtn.classList.toggle('hidden', !visible);
+  }
+
+  let shareDialogPublished = false;
+  let sharePublicBusy = false;
+
+  function applyShareDialogState(status) {
+    shareDialogPublished = !!status?.published;
+    if (shareDialogPublished && status?.shareUrl) {
+      el.modalShareUrl.value = status.shareUrl;
+      el.btnModalShareCopy.disabled = false;
+      el.modalSharePublic.checked = !!status.isPublic;
+      el.btnModalShareUnshare?.classList.remove('hidden');
+      el.btnModalShareGenerate.textContent = t('shareUpdateSnapshot');
+    } else {
+      el.modalShareUrl.value = '';
+      el.btnModalShareCopy.disabled = true;
+      el.modalSharePublic.checked = !!status?.isPublic;
+      el.btnModalShareUnshare?.classList.add('hidden');
+      el.btnModalShareGenerate.textContent = t('shareCreateLink');
+    }
+  }
+
+  async function openShareDialog() {
+    if (!el.modalShare || !activePart) return;
+    el.modalShare.classList.remove('hidden');
+    el.modalShareStatus.textContent = t('shareLoading');
+    el.btnModalShareGenerate.disabled = true;
+    el.btnModalShareCopy.disabled = true;
+    if (el.modalSharePublic) el.modalSharePublic.disabled = true;
+    try {
+      const status = await api.getShareStatus(activePart);
+      applyShareDialogState(status);
+      el.modalShareStatus.textContent = '';
+    } catch (err) {
+      el.modalShareStatus.textContent = t('shareFailed', { message: String(err?.message || err) });
+      applyShareDialogState({ published: false });
+    } finally {
+      el.btnModalShareGenerate.disabled = false;
+      if (el.modalSharePublic) el.modalSharePublic.disabled = false;
+    }
+  }
+
+  function closeShareDialog() {
+    el.modalShare?.classList.add('hidden');
+  }
+
+  async function generateShareLink() {
+    if (!activePart) return;
+    const modelName = activePart;
+    const isPublic = !!el.modalSharePublic?.checked;
+    el.btnModalShareGenerate.disabled = true;
+    el.modalShareStatus.textContent = t('sharePublishing');
+    try {
+      const result = await api.shareModel(modelName, { isPublic });
+      applyShareDialogState(result);
+      el.modalShareStatus.textContent = t('shareLinkReady');
+      el.modalShareUrl.focus();
+      el.modalShareUrl.select();
+    } catch (err) {
+      el.modalShareStatus.textContent = t('shareFailed', { message: String(err?.message || err) });
+    } finally {
+      el.btnModalShareGenerate.disabled = false;
+    }
+  }
+
+  async function unshareModelLink() {
+    if (!activePart || !shareDialogPublished) return;
+    const modelName = activePart;
+    el.btnModalShareUnshare.disabled = true;
+    el.modalShareStatus.textContent = t('sharePublishing');
+    try {
+      await api.unshareModel(modelName);
+      applyShareDialogState({ published: false });
+      el.modalShareStatus.textContent = t('shareRemoved');
+    } catch (err) {
+      el.modalShareStatus.textContent = t('shareFailed', { message: String(err?.message || err) });
+    } finally {
+      el.btnModalShareUnshare.disabled = false;
+    }
+  }
+
+  async function onSharePublicToggle() {
+    if (!activePart || !shareDialogPublished || sharePublicBusy) return;
+    sharePublicBusy = true;
+    const isPublic = !!el.modalSharePublic?.checked;
+    try {
+      const result = await api.updateSharePublic(activePart, isPublic);
+      applyShareDialogState(result);
+    } catch (err) {
+      if (el.modalSharePublic) el.modalSharePublic.checked = !isPublic;
+      el.modalShareStatus.textContent = t('shareFailed', { message: String(err?.message || err) });
+    } finally {
+      sharePublicBusy = false;
+    }
+  }
+
+  if (el.viewShareBtn) {
+    el.viewShareBtn.addEventListener('click', openShareDialog);
+  }
+  if (el.btnModalShareClose) {
+    el.btnModalShareClose.addEventListener('click', closeShareDialog);
+  }
+  if (el.modalShare) {
+    el.modalShare.addEventListener('click', (e) => {
+      if (e.target === el.modalShare) closeShareDialog();
+    });
+  }
+  if (el.btnModalShareGenerate) {
+    el.btnModalShareGenerate.addEventListener('click', generateShareLink);
+  }
+  if (el.btnModalShareUnshare) {
+    el.btnModalShareUnshare.addEventListener('click', unshareModelLink);
+  }
+  if (el.modalSharePublic) {
+    el.modalSharePublic.addEventListener('change', onSharePublicToggle);
+  }
+  if (el.btnModalShareCopy) {
+    el.btnModalShareCopy.addEventListener('click', async () => {
+      const url = el.modalShareUrl.value;
+      if (!url) return;
+      try {
+        await api.clipboardWriteText(url);
+        el.modalShareStatus.textContent = t('shareCopied');
+      } catch (err) {
+        el.modalShareStatus.textContent = t('shareCopyFailed', { message: String(err?.message || err) });
+      }
+    });
+  }
+
   function renderModelNameBadge() {
     if (!el.modelNameBadge) return;
     if (!currentProject || !activePart) {
@@ -248,6 +391,7 @@ export function initUI(viewer) {
     applyDocumentI18n();
     applyLayoutVisibility();
     renderModelNameBadge();
+    syncShareButton();
     renderPartsList();
     viewerUi.renderAll();
     if (!currentProject) {
@@ -285,6 +429,7 @@ export function initUI(viewer) {
     applyLayoutVisibility();
     syncModelKindButtons();
     renderModelNameBadge();
+    syncShareButton();
     syncExportControls();
     viewerUi.renderAll();
     if (!p) paramsEditor.setIdle(t('selectModelParams'));
@@ -580,6 +725,7 @@ export function initUI(viewer) {
       syncModelListKindToModel(activePart, { render: false });
       renderPartsList();
       renderModelNameBadge();
+      syncShareButton();
       syncExportControls();
       paramsEditor.refresh();
     } catch (e) {
@@ -1147,6 +1293,7 @@ export function initUI(viewer) {
         syncModelListKindToModel(activePart, { render: false });
         renderPartsList();
         renderModelNameBadge();
+        syncShareButton();
         syncExportControls();
         viewerUi.renderAll();
         paramsEditor.refresh();
@@ -1160,6 +1307,7 @@ export function initUI(viewer) {
         syncModelListKindToModel(activePart, { render: false });
         renderPartsList();
         renderModelNameBadge();
+        syncShareButton();
         syncExportControls();
         viewerUi.renderAll();
         paramsEditor.refresh({ force: true });
@@ -1200,6 +1348,7 @@ export function initUI(viewer) {
           syncModelListKindToModel(activePart, { render: false });
           renderPartsList();
           renderModelNameBadge();
+          syncShareButton();
         }
         const fmt = (payload.format || 'BREP').toUpperCase();
         const url = payload.url;

@@ -10,6 +10,52 @@ const { pythonChildProcessEnv } = require('./python-env');
 const { DOMParser } = require('@xmldom/xmldom');
 const dynamicImport = new Function('specifier', 'return import(specifier)');
 
+/** GLTFExporter (binary GLB) uses FileReader; polyfill for Electron main / Node. */
+function ensureGltfExporterGlobals() {
+  if (globalThis.__aicadGltfExporterGlobals) return;
+  globalThis.__aicadGltfExporterGlobals = true;
+
+  if (typeof globalThis.FileReader !== 'undefined') return;
+
+  globalThis.FileReader = class FileReader {
+    constructor() {
+      this.result = null;
+      this.onloadend = null;
+      this.onerror = null;
+    }
+
+    _blobToArrayBuffer(blob) {
+      if (blob && typeof blob.arrayBuffer === 'function') return blob.arrayBuffer();
+      if (blob instanceof ArrayBuffer) return Promise.resolve(blob);
+      if (ArrayBuffer.isView(blob)) {
+        return Promise.resolve(
+          blob.buffer.slice(blob.byteOffset, blob.byteOffset + blob.byteLength)
+        );
+      }
+      return Promise.reject(new Error('Unsupported blob type for FileReader polyfill'));
+    }
+
+    readAsArrayBuffer(blob) {
+      this._blobToArrayBuffer(blob)
+        .then((buf) => {
+          this.result = buf;
+          this.onloadend?.({ target: this });
+        })
+        .catch((err) => this.onerror?.(err));
+    }
+
+    readAsDataURL(blob) {
+      this._blobToArrayBuffer(blob)
+        .then((buf) => {
+          const type = blob?.type || 'application/octet-stream';
+          this.result = `data:${type};base64,${Buffer.from(buf).toString('base64')}`;
+          this.onloadend?.({ target: this });
+        })
+        .catch((err) => this.onerror?.(err));
+    }
+  };
+}
+
 function createMainExportTools({ dialog, state, deps }) {
   const stlExportPromises = new Map();
   let occtPromise = null;
@@ -587,6 +633,102 @@ function createMainExportTools({ dialog, state, deps }) {
     return stlPath;
   }
 
+  async function buildSceneFromStl(stlPath) {
+    const THREE = require('three');
+    const { STLLoader } = await dynamicImport('three/examples/jsm/loaders/STLLoader.js');
+    const data = fs.readFileSync(stlPath);
+    const geometry = new STLLoader().parse(
+      data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+    );
+    geometry.computeVertexNormals();
+    const mesh = new THREE.Mesh(
+      geometry,
+      new THREE.MeshStandardMaterial({ color: 0xb0b0b0 })
+    );
+    const scene = new THREE.Scene();
+    scene.add(mesh);
+    scene.updateMatrixWorld(true);
+    return scene;
+  }
+
+  function disposeScene(scene) {
+    scene.traverse((child) => {
+      child.geometry?.dispose?.();
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      for (const material of materials) material?.dispose?.();
+    });
+  }
+
+  async function exportSceneToGlb(scene) {
+    ensureGltfExporterGlobals();
+    const { GLTFExporter } = await dynamicImport('three/examples/jsm/exporters/GLTFExporter.js');
+    const exporter = new GLTFExporter();
+    const data = await new Promise((resolve, reject) => {
+      try {
+        exporter.parse(
+          scene,
+          (result) => resolve(result),
+          (err) => reject(err),
+          { binary: true }
+        );
+      } catch (err) {
+        reject(err);
+      }
+    });
+    return exportPayloadToBuffer(data, 'GLB');
+  }
+
+  /**
+   * Best-effort GLB generation for the share flow. Returns null on any failure.
+   * - part / assembly (python): build the model-level STL, load it, export GLB.
+   * - mjcf: rebuild the assembly scene (transforms applied), export GLB.
+   */
+  async function buildModelGlbBuffer(modelName, kind, source = null) {
+    if (!state.currentProjectPath() || !modelName) return null;
+    try {
+      const startedAt = Date.now();
+      const resolved =
+        source || deps.resolveModelSource(state.currentProjectPath(), modelName, state.currentKernel());
+      if (!resolved) {
+        deps.sendLog(`[${modelName}] GLB skipped: model source not found.`, 'warn');
+        return null;
+      }
+
+      if (kind === 'mjcf' || resolved.kind === 'asm') {
+        const scene = await buildAssemblyScene(resolved.sourcePath);
+        try {
+          const buffer = await exportSceneToGlb(scene);
+          deps.sendLog(`[${modelName}] GLB generated (${formatDuration(elapsedMs(startedAt))}).`);
+          return buffer;
+        } finally {
+          disposeScene(scene);
+        }
+      }
+
+      // part or build123d assembly: produce model-level STL then convert.
+      const stlPath = path.join(
+        os.tmpdir(),
+        `aicad-share-${modelName}-${Date.now()}.stl`
+      );
+      try {
+        await runPythonExport(modelName, modelName, 'stl', stlPath, resolved.sourcePath);
+        const scene = await buildSceneFromStl(stlPath);
+        try {
+          const buffer = await exportSceneToGlb(scene);
+          deps.sendLog(`[${modelName}] GLB generated (${formatDuration(elapsedMs(startedAt))}).`);
+          return buffer;
+        } finally {
+          disposeScene(scene);
+        }
+      } finally {
+        try { fs.unlinkSync(stlPath); } catch {}
+      }
+    } catch (err) {
+      deps.sendLog(`[${modelName}] GLB generation failed: ${err?.message || err}`, 'warn');
+      return null;
+    }
+  }
+
   async function exportPartByRequest(partName, format, opts = {}) {
     if (!state.currentProjectPath()) throw new Error('Open a project first.');
     const cleanPart = String(partName || '').trim();
@@ -629,7 +771,8 @@ function createMainExportTools({ dialog, state, deps }) {
     convertStlToObj,
     generateExportFile,
     ensurePartStlArtifact,
-    exportPartByRequest
+    exportPartByRequest,
+    buildModelGlbBuffer
   };
 }
 
