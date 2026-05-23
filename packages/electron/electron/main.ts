@@ -7,7 +7,7 @@ const dotenv = require('dotenv');
 
 const APP_NAME = 'Forgent3D';
 app.setName(APP_NAME);
-app.setAboutPanelOptions({ applicationName: APP_NAME });
+app.setAboutPanelOptions({ applicationName: APP_NAME, applicationVersion: app.getVersion() });
 
 /** Load repo-root or install-dir `.env` into `process.env` before other startup (IPC reads AICAD_FORGENT3D_URL / legacy AICAD_NEXT_AGENT_URL). */
 function loadAppDotenv() {

@@ -14,6 +14,11 @@ export {};
 
 const http = require('http');
 const { randomUUID } = require('crypto');
+const { app: electronApp } = require('electron');
+
+function appVersion() {
+  try { return electronApp.getVersion(); } catch { return '0.0.0'; }
+}
 
 let state = null;
 
@@ -52,7 +57,7 @@ function writeDesktopAuthResponse(res, ok, message) {
 function buildMcpServer(ctx, { McpServer, z }) {
   const server = new McpServer({
     name: 'aicad',
-    version: '0.1.0'
+    version: appVersion()
   });
 
   server.registerTool(

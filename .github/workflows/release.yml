@@ -53,7 +53,16 @@ jobs:
             echo "Tag must be in form v<semver>, got: $GITHUB_REF_NAME"
             exit 1
           fi
-          pnpm --filter aicad-preview version "$version" --no-git-tag-version
+          node -e "
+            const fs = require('fs');
+            const p = 'packages/electron/package.json';
+            const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
+            pkg.version = process.argv[1];
+            fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
+            console.log('Wrote', p, 'version =', pkg.version);
+          " "$version"
+          echo "Verifying packages/electron/package.json version:"
+          node -e "console.log(require('./packages/electron/package.json').version)"
 
       - name: Setup Python
         uses: actions/setup-python@v5

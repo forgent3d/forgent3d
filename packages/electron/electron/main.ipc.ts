@@ -11,7 +11,9 @@ const { MODEL_EXAMPLES } = require('./model-examples');
 
 /** Default Forgent3D agent (cad-agent) base URL when the desktop build is packaged. */
 const PACKAGED_DEFAULT_FORGENT3D_AGENT_URL = 'https://agent.forgent3d.com';
-const AGENT_DESKTOP_BRIDGE_VERSION = '0.1.0';
+const AGENT_DESKTOP_BRIDGE_VERSION = (() => {
+  try { return electronApp.getVersion(); } catch { return '0.0.0'; }
+})();
 const MODEL_EXAMPLES_BY_ID = new Map((MODEL_EXAMPLES.examples || []).map((example) => [example.id, example]));
 const DEFAULT_MODEL_EXAMPLE_ID = MODEL_EXAMPLES.defaultExampleId || 'mounting_plate';
 

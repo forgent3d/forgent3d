@@ -1,6 +1,17 @@
 // @ts-nocheck
 export {};
 const { contextBridge, ipcRenderer } = require('electron');
+const path = require('path');
+
+function readPackageVersion() {
+  try {
+    // dist-electron/electron/ -> ../../package.json (asar root has package.json)
+    return require(path.join(__dirname, '..', '..', 'package.json')).version || '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+const BRIDGE_VERSION = readPackageVersion();
 
 const ALLOWED_ORIGINS = new Set([
   'https://agent.forgent3d.com',
@@ -25,7 +36,7 @@ function bridgeDebug(message, detail) {
 if (isAllowedOrigin()) {
   bridgeDebug('exposing bridge', { origin: window.location.origin });
   contextBridge.exposeInMainWorld('forgent3dBridge', {
-    version: '0.1.0',
+    version: BRIDGE_VERSION,
     platform: 'forgent3d-desktop',
     capabilities: {
       desktop: true,
@@ -43,7 +54,7 @@ if (isAllowedOrigin()) {
         hasTools: !!info?.capabilities?.tools
       });
       return {
-        version: info?.version || '0.1.0',
+        version: info?.version || BRIDGE_VERSION,
         platform: 'forgent3d-desktop',
         projectPath: info?.projectPath || '',
         language: info?.language || 'en',

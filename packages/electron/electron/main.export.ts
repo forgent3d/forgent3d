@@ -8,7 +8,14 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { pythonChildProcessEnv } = require('./python-env');
 const { DOMParser } = require('@xmldom/xmldom');
+const { pathToFileURL } = require('url');
 const dynamicImport = new Function('specifier', 'return import(specifier)');
+
+/** Resolve three.js example modules for Electron main (packaged app omits examples/jsm by default). */
+async function importThreeExample(relativePath) {
+  const resolved = require.resolve(`three/examples/jsm/${relativePath}`);
+  return dynamicImport(pathToFileURL(resolved).href);
+}
 
 /** GLTFExporter (binary GLB) uses FileReader; polyfill for Electron main / Node. */
 function ensureGltfExporterGlobals() {
@@ -228,7 +235,7 @@ function createMainExportTools({ dialog, state, deps }) {
     const brepPath = freshBrepPath(modelName, partName);
     if (!brepPath) return false;
     const THREE = require('three');
-    const { STLExporter } = await dynamicImport('three/examples/jsm/exporters/STLExporter.js');
+    const { STLExporter } = await importThreeExample('exporters/STLExporter.js');
     const occt = await getOcct();
     const bytes = fs.readFileSync(brepPath);
     const result = occt.ReadBrepFile(bytes, {
@@ -299,8 +306,8 @@ function createMainExportTools({ dialog, state, deps }) {
   async function convertStlToObj(stlPath, outPath, format) {
     const THREE = require('three');
     const [{ STLLoader }, { OBJExporter }] = await Promise.all([
-      dynamicImport('three/examples/jsm/loaders/STLLoader.js'),
-      dynamicImport('three/examples/jsm/exporters/OBJExporter.js')
+      importThreeExample('loaders/STLLoader.js'),
+      importThreeExample('exporters/OBJExporter.js')
     ]);
 
     const data = fs.readFileSync(stlPath);
@@ -456,7 +463,7 @@ function createMainExportTools({ dialog, state, deps }) {
 
   async function buildAssemblyScene(sourcePath) {
     const THREE = require('three');
-    const { STLLoader } = await dynamicImport('three/examples/jsm/loaders/STLLoader.js');
+    const { STLLoader } = await importThreeExample('loaders/STLLoader.js');
     const document = parseAssemblyDocument(sourcePath);
     const modelName = path.basename(path.dirname(sourcePath));
     const angleScale = compilerAngleScale(document);
@@ -560,7 +567,7 @@ function createMainExportTools({ dialog, state, deps }) {
       deps.sendLog(`[${path.basename(path.dirname(sourcePath))}] Assembly export geometry: ${stats.meshes} meshes, ${stats.triangles} triangles.`);
 
       if (format === 'stl') {
-        const { STLExporter } = await dynamicImport('three/examples/jsm/exporters/STLExporter.js');
+        const { STLExporter } = await importThreeExample('exporters/STLExporter.js');
         const data = new STLExporter().parse(scene, { binary: true });
         const buffer = exportPayloadToBuffer(data, 'STL');
         const expectedBinaryStlSize = 84 + stats.triangles * 50;
@@ -575,7 +582,7 @@ function createMainExportTools({ dialog, state, deps }) {
         return;
       }
       if (format === 'obj') {
-        const { OBJExporter } = await dynamicImport('three/examples/jsm/exporters/OBJExporter.js');
+        const { OBJExporter } = await importThreeExample('exporters/OBJExporter.js');
         const objText = new OBJExporter().parse(scene);
         if (!/\nf\s+/.test(`\n${objText}`)) {
           throw new Error('OBJ export produced no faces.');
@@ -635,7 +642,7 @@ function createMainExportTools({ dialog, state, deps }) {
 
   async function buildSceneFromStl(stlPath) {
     const THREE = require('three');
-    const { STLLoader } = await dynamicImport('three/examples/jsm/loaders/STLLoader.js');
+    const { STLLoader } = await importThreeExample('loaders/STLLoader.js');
     const data = fs.readFileSync(stlPath);
     const geometry = new STLLoader().parse(
       data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
@@ -661,7 +668,7 @@ function createMainExportTools({ dialog, state, deps }) {
 
   async function exportSceneToGlb(scene) {
     ensureGltfExporterGlobals();
-    const { GLTFExporter } = await dynamicImport('three/examples/jsm/exporters/GLTFExporter.js');
+    const { GLTFExporter } = await importThreeExample('exporters/GLTFExporter.js');
     const exporter = new GLTFExporter();
     const data = await new Promise((resolve, reject) => {
       try {

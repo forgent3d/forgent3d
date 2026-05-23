@@ -98,7 +98,14 @@
       "electron/skills/**",
       "dist/**",
       "assets/**",
-      "package.json"
+      "package.json",
+      {
+        "from": "node_modules/three/examples/jsm",
+        "to": "node_modules/three/examples/jsm",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "extraResources": [
       {
