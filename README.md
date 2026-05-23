@@ -5,7 +5,7 @@
 <h1 align="center">Forgent3D</h1>
 
 <p align="center">
-  <strong>Design 3D models with code and AI agents.</strong>
+  <strong>A local AI CAD companion for building, previewing, and iterating parametric 3D models with coding agents.</strong>
 </p>
 
 <p align="center">
@@ -15,29 +15,27 @@
   <img alt="GitHub stars" src="https://img.shields.io/github/stars/forgent3d/forgent3d?style=flat-square&logo=github" />
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green?style=flat-square" />
   <img alt="AI CAD" src="https://img.shields.io/badge/AI%20CAD-local%20agent-6E56CF?style=flat-square" />
-  <img alt="Parametric modeling" src="https://img.shields.io/badge/parametric-modeling-0F766E?style=flat-square" />
-  <br />
-  <img alt="Electron" src="https://img.shields.io/badge/Electron-20232A?style=flat-square&logo=electron&logoColor=9FEAF9" />
-  <img alt="Three.js" src="https://img.shields.io/badge/Three.js-black?style=flat-square&logo=three.js&logoColor=white" />
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white" />
-  <img alt="Python" src="https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white" />
-  <img alt="build123d" src="https://img.shields.io/badge/build123d-CAD%20kernel-455A64?style=flat-square" />
-  <img alt="MuJoCo" src="https://img.shields.io/badge/MuJoCo-simulation-8B5CF6?style=flat-square" />
-  <img alt="MCP" src="https://img.shields.io/badge/MCP-agent%20tools-111827?style=flat-square" />
-  <img alt="pnpm" src="https://img.shields.io/badge/pnpm-F69220?style=flat-square&logo=pnpm&logoColor=white" />
 </p>
 
 <p align="center">
   <a href="README_zh.md">中文</a>
   ·
-  <a href="#-quick-start">Quick Start</a>
+  <a href="#-download">Download</a>
   ·
   <a href="#-ai-agent-workflow">AI Agent Workflow</a>
   ·
-  <a href="https://github.com/forgent3d/forgent3d/releases">Download</a>
+  <a href="#-develop-from-source">Develop From Source</a>
+  ·
+  <a href="https://github.com/forgent3d/forgent3d/releases">Releases</a>
 </p>
 
-Forgent3D is a local AI CAD companion for turning parametric model code into inspectable 3D geometry. Write or generate CAD with an AI coding agent, edit `params.json`, rebuild, and see the result in an interactive desktop previewer.
+Forgent3D is an independent project exploring what CAD workflows look like when coding agents can generate, rebuild, inspect, and revise real geometry locally.
+
+Download the desktop app from Releases. The bundled build includes the CAD runtime, so you can start without setting up Python or build123d manually.
+
+<p align="center">
+  <a href="https://github.com/forgent3d/forgent3d/releases"><strong>Download Forgent3D</strong></a>
+</p>
 
 ### Quadrotor drone
 
@@ -58,19 +56,13 @@ Most AI-generated CAD workflows stop at source code. Forgent3D closes the loop: 
 - **Assemblies and motion**: compose multi-body systems with MJCF, reusable STL meshes, joints, constraints, and optional MuJoCo simulation.
 - **Renderer materials**: use `__viewer.materials` in `params.json` to assign preview material presets and colors without mixing styling into geometry.
 
-## 🚀 Quick Start
+## 🚀 Download
 
 Download the latest release:
 
 <https://github.com/forgent3d/forgent3d/releases/>
 
-Or run from source:
-
-```bash
-pnpm install
-npm run build:runner
-npm run dev
-```
+The release app is the recommended way to try Forgent3D. It is packaged with the local CAD runtime and viewer, so you can create and inspect models without preparing a separate CAD development environment.
 
 The app creates self-contained model packages under `models/`. Each model has a root `asm.xml` and `params.json`, with local editable parts beneath it:
 
@@ -121,22 +113,37 @@ A typical loop:
 
 This keeps the workflow grounded in real geometry instead of text-only reasoning.
 
-## 🛠️ Development
+## 🛠️ Develop From Source
+
+Most users should start with the release app. If you want to work on Forgent3D itself, run it from source with pnpm:
 
 ```bash
 pnpm install
-npm run build:runner
-npm run dev
+pnpm run build:electron
+pnpm run build:runner
+pnpm run dev
 ```
+
+Building the embedded CAD runner currently requires Python 3.13. You can set `AICAD_PYTHON_BIN` if you want to point the build at a specific Python executable.
 
 Useful scripts:
 
 ```bash
-npm run build:renderer
-npm run build
-npm run start
+pnpm run build:renderer
+pnpm run build
+pnpm run start
 ```
+
+## 🔗 Ecosystem
+
+Forgent3D is part of a growing wave of open AI-assisted CAD experiments. Several projects are exploring how language models, code, and CAD geometry can work together.
+
+- [CADAM](https://github.com/Adam-CAD/CADAM) explores browser-based text-to-CAD, with natural language or image input, parametric controls, browser preview, and common export formats.
+- [text-to-cad](https://github.com/earthtojake/text-to-cad) explores CAD skills and workflows for coding agents such as Codex and Claude Code. It is one of the closest projects in spirit to Forgent3D.
+- [ForgeCAD](https://github.com/KoStard/ForgeCAD) explores code-first parametric CAD using JavaScript/TypeScript, with a browser workbench, local CLI, and agent-ready workflows.
+
+Forgent3D focuses on the desktop workflow around agent-generated CAD: packaging the CAD runtime, viewer, agent bridge, rebuild loop, and geometry feedback into one installable app.
 
 ## 📄 License
 
-Forgent3D is open source under the [MIT License](LICENSE).
+The source code in this repository is available under the [MIT License](LICENSE).
