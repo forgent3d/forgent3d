@@ -21,11 +21,20 @@ jobs:
           - os: windows-latest
             electron_builder_args: --win
             python_version: '3.13'
-            artifact_globs: packages/electron/dist/*.exe
+            artifact_globs: >-
+              packages/electron/dist/*.exe
+              packages/electron/dist/latest.yml
+              packages/electron/dist/*.blockmap
+            required_updater_files: packages/electron/dist/latest.yml
           - os: macos-latest
             electron_builder_args: --mac --arm64
             python_version: '3.13'
-            artifact_globs: packages/electron/dist/*.dmg packages/electron/dist/*.zip
+            artifact_globs: >-
+              packages/electron/dist/*.dmg
+              packages/electron/dist/*.zip
+              packages/electron/dist/latest-mac.yml
+              packages/electron/dist/*.blockmap
+            required_updater_files: packages/electron/dist/latest-mac.yml
 
     runs-on: ${{ matrix.os }}
 
@@ -138,7 +147,7 @@ jobs:
           #   WIN_CSC_KEY_PASSWORD - password for the .pfx
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-        run: pnpm --filter forgent3d exec electron-builder ${{ matrix.electron_builder_args }} --publish always
+        run: pnpm --filter forgent3d exec electron-builder ${{ matrix.electron_builder_args }} --publish never
 
       - name: Ensure GitHub Release exists
         env:
@@ -152,6 +161,19 @@ jobs:
               --notes ""
           fi
 
+      - name: Verify updater metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          required=(${{ matrix.required_updater_files }})
+          if [ ${#required[@]} -eq 0 ]; then
+            echo "Missing required updater metadata: ${{ matrix.required_updater_files }}"
+            exit 1
+          fi
+          echo "Found updater metadata:"
+          ls -la "${required[@]}"
+
       - name: Upload artifacts to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -164,4 +186,6 @@ jobs:
             echo "No release files found under dist/"
             exit 1
           fi
+          echo "Uploading release artifacts:"
+          ls -la "${files[@]}"
           gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --clobber
