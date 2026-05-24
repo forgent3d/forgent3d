@@ -79,6 +79,22 @@ function createMainUiTools({
       english: 'English',
       chinese: '中文',
       aboutApp: 'About {appName}',
+      checkForUpdates: 'Check for Updates...',
+      help: 'Help',
+      updateReadyTitle: 'Update ready',
+      updateReadyMessage: 'Forgent3D {version} is ready to install.',
+      updateReadyDetail: 'Restart the app to apply the update. Otherwise it will install on next quit.',
+      updateRestartNow: 'Restart now',
+      updateLater: 'Later',
+      updateNotAvailableTitle: 'No Updates',
+      updateNotAvailableMessage: 'You are running the latest version ({version}).',
+      updateAvailableTitle: 'Update Available',
+      updateAvailableMessage: 'Forgent3D {version} is available. Downloading in the background…',
+      updateCheckFailedTitle: 'Update Check Failed',
+      updateDevUnavailableTitle: 'Updates Unavailable',
+      updateDevUnavailableMessage: 'Automatic updates are only available in the installed app.',
+      updateUnavailableTitle: 'Updates Unavailable',
+      updateUnavailableMessage: 'The update service is not available in this build.',
       services: 'Services',
       hideApp: 'Hide {appName}',
       hideOthers: 'Hide Others',
@@ -121,6 +137,22 @@ function createMainUiTools({
       english: 'English',
       chinese: '中文',
       aboutApp: '关于 {appName}',
+      checkForUpdates: '检查更新...',
+      help: '帮助',
+      updateReadyTitle: '更新就绪',
+      updateReadyMessage: 'Forgent3D {version} 已下载完成，可以安装。',
+      updateReadyDetail: '重启应用以完成更新；也可在下次退出时自动安装。',
+      updateRestartNow: '立即重启',
+      updateLater: '稍后',
+      updateNotAvailableTitle: '暂无更新',
+      updateNotAvailableMessage: '当前已是最新版本（{version}）。',
+      updateAvailableTitle: '发现新版本',
+      updateAvailableMessage: 'Forgent3D {version} 可用，正在后台下载…',
+      updateCheckFailedTitle: '检查更新失败',
+      updateDevUnavailableTitle: '无法检查更新',
+      updateDevUnavailableMessage: '自动更新仅在已安装的正式版应用中可用。',
+      updateUnavailableTitle: '无法检查更新',
+      updateUnavailableMessage: '当前构建未启用更新服务。',
       services: '服务',
       hideApp: '隐藏 {appName}',
       hideOthers: '隐藏其他',
@@ -259,6 +291,30 @@ function createMainUiTools({
     });
   }
 
+  function getUpdateMessages() {
+    return {
+      updateReadyTitle: t('updateReadyTitle'),
+      updateReadyMessage: t('updateReadyMessage'),
+      updateReadyDetail: t('updateReadyDetail'),
+      updateRestartNow: t('updateRestartNow'),
+      updateLater: t('updateLater'),
+      updateNotAvailableTitle: t('updateNotAvailableTitle'),
+      updateNotAvailableMessage: t('updateNotAvailableMessage'),
+      updateAvailableTitle: t('updateAvailableTitle'),
+      updateAvailableMessage: t('updateAvailableMessage'),
+      updateCheckFailedTitle: t('updateCheckFailedTitle'),
+      updateDevUnavailableTitle: t('updateDevUnavailableTitle'),
+      updateDevUnavailableMessage: t('updateDevUnavailableMessage'),
+      updateUnavailableTitle: t('updateUnavailableTitle'),
+      updateUnavailableMessage: t('updateUnavailableMessage'),
+    };
+  }
+
+  async function checkForUpdatesFromMenu() {
+    const { checkForUpdatesFromMenu: runCheck } = require('./auto-updater');
+    await runCheck();
+  }
+
   function rebuildAppMenu() {
     const hasProject = !!state.currentProjectPath();
     const appName = app.getName?.() || 'Forgent3D';
@@ -371,11 +427,26 @@ function createMainUiTools({
         ]
       }
     ];
+    if (process.platform !== 'darwin') {
+      template.push({
+        label: t('help'),
+        submenu: [
+          {
+            label: t('checkForUpdates'),
+            click: () => { checkForUpdatesFromMenu(); }
+          }
+        ]
+      });
+    }
     if (process.platform === 'darwin') {
       template.unshift({
         label: appName,
         submenu: [
           { role: 'about', label: t('aboutApp', { appName }) },
+          {
+            label: t('checkForUpdates'),
+            click: () => { checkForUpdatesFromMenu(); }
+          },
           { type: 'separator' },
           { role: 'services', label: t('services'), submenu: [] },
           { type: 'separator' },
@@ -444,7 +515,9 @@ function createMainUiTools({
     rebuildAppMenu,
     openProjectByDialog,
     restoreLastProjectIfAvailable,
-    handleExportFromMenu
+    handleExportFromMenu,
+    getUpdateMessages,
+    checkForUpdatesFromMenu
   };
 }
 

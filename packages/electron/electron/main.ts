@@ -715,7 +715,11 @@ app.whenReady().then(async () => {
   broadcastMcpStatus();
 
   try {
-    initAutoUpdater({ sendLog });
+    initAutoUpdater({
+      sendLog,
+      getMessages: () => uiTools.getUpdateMessages(),
+      getParentWindow: () => mainWindow,
+    });
   } catch (e) {
     sendLog(`Auto-updater init failed: ${e.message || e}`, 'error');
   }

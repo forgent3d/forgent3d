@@ -391,6 +391,11 @@ export function initUI(viewer) {
     setShareDialogMode('share');
   }
 
+  function captureSharePreviewDataUrl() {
+    if (typeof viewer.hasModel !== 'function' || !viewer.hasModel()) return null;
+    return viewer.snapshot('image/png', { view: 'current', maxEdge: 1280 }) || null;
+  }
+
   async function generateShareLink() {
     if (!activePart) return;
     const modelName = activePart;
@@ -398,7 +403,8 @@ export function initUI(viewer) {
     el.btnModalShareGenerate.disabled = true;
     el.modalShareStatus.textContent = t('sharePublishing');
     try {
-      const result = await api.shareModel(modelName, { isPublic });
+      const previewDataUrl = captureSharePreviewDataUrl();
+      const result = await api.shareModel(modelName, { isPublic, previewDataUrl });
       applyShareDialogState(result);
       el.modalShareStatus.textContent = t('shareLinkReady');
       el.modalShareUrl.focus();

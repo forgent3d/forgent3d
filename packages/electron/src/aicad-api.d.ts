@@ -93,7 +93,7 @@ type AicadApi = {
   getParams(target: string | { model: string; part?: string | null; label?: string }): Promise<AicadParamsPayload>;
   saveParams(target: string | { model: string; part?: string | null; label?: string }, text: string): Promise<AicadParamsPayload>;
 
-  shareModel(name: string, options?: { isPublic?: boolean }): Promise<AicadShareStatus>;
+  shareModel(name: string, options?: { isPublic?: boolean; previewDataUrl?: string | null }): Promise<AicadShareStatus>;
   getShareStatus(name: string): Promise<AicadShareStatus>;
   updateSharePublic(name: string, isPublic: boolean): Promise<AicadShareStatus>;
   unshareModel(name: string): Promise<{ ok: boolean }>;

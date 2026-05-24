@@ -8,20 +8,8 @@ export function createViewerUiController({
   appendLog,
   t = (key) => key
 }) {
-  let autoShowFrame = null;
-  let autoShowModeLastTs = 0;
-  let autoShowModeIndex = 0;
   let autoShowRunning = false;
-  let autoShowStartTs = 0;
-  const AUTO_SHOW_MODES = ['solid', 'xray'];
-  const AUTO_SHOW_MODE_INTERVAL_MS = 4200;
   const AUTO_SHOW_ORBIT_SPEED = 0.32;
-  const AUTO_SHOW_EXPLODE_TARGET = 0.5;
-  const AUTO_SHOW_EXPLODE_IN_START_MS = 6200;
-  const AUTO_SHOW_EXPLODE_IN_DURATION_MS = 2200;
-  const AUTO_SHOW_EXPLODE_HOLD_MS = 2600;
-  const AUTO_SHOW_EXPLODE_OUT_DURATION_MS = 2200;
-  const AUTO_SHOW_CYCLE_MS = 22000;
 
   if (elements.viewCubeHost && typeof viewer.mountViewCube === 'function') {
     viewer.mountViewCube(elements.viewCubeHost);
@@ -85,53 +73,6 @@ export function createViewerUiController({
     });
   }
 
-  function smoothStep(progress) {
-    const t = Math.max(0, Math.min(1, Number(progress) || 0));
-    return t * t * (3 - 2 * t);
-  }
-
-  function getAutoShowExplodeFactor(elapsedMs) {
-    const cycleTs = elapsedMs % AUTO_SHOW_CYCLE_MS;
-    const inStart = AUTO_SHOW_EXPLODE_IN_START_MS;
-    const inEnd = inStart + AUTO_SHOW_EXPLODE_IN_DURATION_MS;
-    const holdEnd = inEnd + AUTO_SHOW_EXPLODE_HOLD_MS;
-    const outEnd = holdEnd + AUTO_SHOW_EXPLODE_OUT_DURATION_MS;
-
-    if (cycleTs < inStart) return 0;
-    if (cycleTs < inEnd) {
-      return AUTO_SHOW_EXPLODE_TARGET * smoothStep((cycleTs - inStart) / AUTO_SHOW_EXPLODE_IN_DURATION_MS);
-    }
-    if (cycleTs < holdEnd) return AUTO_SHOW_EXPLODE_TARGET;
-    if (cycleTs < outEnd) {
-      return AUTO_SHOW_EXPLODE_TARGET * (1 - smoothStep((cycleTs - holdEnd) / AUTO_SHOW_EXPLODE_OUT_DURATION_MS));
-    }
-    return 0;
-  }
-
-  function runAutoShowFrame(ts) {
-    if (!autoShowRunning) return;
-    if (!getHasModel()) {
-      stopAutoShow();
-      return;
-    }
-    if (!autoShowStartTs) autoShowStartTs = ts;
-    if (!autoShowModeLastTs) autoShowModeLastTs = ts;
-    if (ts - autoShowModeLastTs >= AUTO_SHOW_MODE_INTERVAL_MS) {
-      autoShowModeLastTs = ts;
-      autoShowModeIndex = (autoShowModeIndex + 1) % AUTO_SHOW_MODES.length;
-      if (typeof viewer.setPreviewMode === 'function') viewer.setPreviewMode(AUTO_SHOW_MODES[autoShowModeIndex]);
-      renderPreviewToolbar();
-    }
-    const explode = typeof viewer.getExplodeState === 'function'
-      ? viewer.getExplodeState()
-      : { available: false };
-    if (explode.available && typeof viewer.setExplodeFactor === 'function') {
-      viewer.setExplodeFactor(getAutoShowExplodeFactor(ts - autoShowStartTs));
-      renderViewControls();
-    }
-    autoShowFrame = requestAnimationFrame(runAutoShowFrame);
-  }
-
   function startAutoShow() {
     if (autoShowRunning) return;
     if (!getHasModel()) {
@@ -139,29 +80,14 @@ export function createViewerUiController({
       return;
     }
     autoShowRunning = true;
-    autoShowModeLastTs = 0;
-    autoShowModeIndex = 0;
-    autoShowStartTs = 0;
-    if (typeof viewer.setPreviewMode === 'function') viewer.setPreviewMode(AUTO_SHOW_MODES[autoShowModeIndex]);
-    const explode = typeof viewer.getExplodeState === 'function'
-      ? viewer.getExplodeState()
-      : { available: false };
-    if (explode.available && typeof viewer.setExplodeFactor === 'function') viewer.setExplodeFactor(0);
     if (typeof viewer.setAutoOrbitSpeed === 'function') viewer.setAutoOrbitSpeed(AUTO_SHOW_ORBIT_SPEED);
-    autoShowFrame = requestAnimationFrame(runAutoShowFrame);
-    renderPreviewToolbar();
     renderViewControls();
   }
 
   function stopAutoShow() {
-    if (!autoShowRunning && !autoShowFrame) return;
+    if (!autoShowRunning) return;
     autoShowRunning = false;
-    if (autoShowFrame) cancelAnimationFrame(autoShowFrame);
-    autoShowFrame = null;
-    autoShowModeLastTs = 0;
-    autoShowStartTs = 0;
     if (typeof viewer.setAutoOrbitSpeed === 'function') viewer.setAutoOrbitSpeed(0);
-    renderPreviewToolbar();
     renderViewControls();
   }
 

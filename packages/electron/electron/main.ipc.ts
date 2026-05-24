@@ -91,11 +91,25 @@ async function readShareApiError(response, fallbackMsg) {
   throw new Error(errorMsg);
 }
 
+function parsePreviewDataUrl(dataUrl) {
+  if (typeof dataUrl !== 'string') return null;
+  const m = /^data:image\/[a-zA-Z]+;base64,(.*)$/.exec(dataUrl.trim());
+  if (!m) return null;
+  try {
+    return Buffer.from(m[1], 'base64');
+  } catch {
+    return null;
+  }
+}
+
 function resolveShareModelInput(input) {
-  if (typeof input === 'string') return { name: input.trim(), isPublic: false };
+  if (typeof input === 'string') {
+    return { name: input.trim(), isPublic: false, previewDataUrl: null };
+  }
   return {
     name: String(input?.name || '').trim(),
     isPublic: !!input?.isPublic,
+    previewDataUrl: input?.previewDataUrl || null,
   };
 }
 
@@ -727,7 +741,7 @@ function registerIpcHandlers({
   });
 
   ipcMain.handle('models:share', async (_evt, input) => {
-    const { name: modelName, isPublic } = resolveShareModelInput(input);
+    const { name: modelName, isPublic, previewDataUrl } = resolveShareModelInput(input);
     const projectPath = state.currentProjectPath();
     if (!projectPath) throw new Error('Open a project first.');
     if (!modelName) throw new Error('Select a model first.');
@@ -790,11 +804,13 @@ function registerIpcHandlers({
       glb: 'model.glb',
     };
 
-    // Get preview image
-    const previewPng = deps.partPng(projectPath, modelName);
-    let previewBuffer = null;
-    if (fs.existsSync(previewPng)) {
-      previewBuffer = fs.readFileSync(previewPng);
+    // Preview image: prefer live viewer pose from renderer, then cached iso screenshot.
+    let previewBuffer = parsePreviewDataUrl(previewDataUrl);
+    if (!previewBuffer) {
+      const previewPng = deps.partPng(projectPath, modelName);
+      if (fs.existsSync(previewPng)) {
+        previewBuffer = fs.readFileSync(previewPng);
+      }
     }
 
     // Generate GLB (best-effort)

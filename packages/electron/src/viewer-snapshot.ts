@@ -235,6 +235,7 @@ export function createSnapshotRenderer({
       const srcW = Math.max(1, src.width);
       const srcH = Math.max(1, src.height);
       const viewKey = String(opts.view || 'iso').toLowerCase();
+      const useCurrentView = viewKey === 'current';
       const view = SNAPSHOT_VIEWS[viewKey] || SNAPSHOT_VIEWS.iso;
       const mode = ['solid', 'xray', 'wireframe'].includes(String(opts.mode || opts.previewMode || 'solid').toLowerCase())
         ? String(opts.mode || opts.previewMode || 'solid').toLowerCase()
@@ -242,7 +243,8 @@ export function createSnapshotRenderer({
       const maxEdge = opts.maxEdge || opts.maxWidth || Math.max(srcW, srcH);
       const currentRoot = getCurrentRoot?.();
 
-      if (!currentRoot) {
+      // Preset views reframe with an orthographic camera; current view exports the live viewport.
+      if (useCurrentView || !currentRoot) {
         renderer.render(scene, camera);
         return exportCanvasDataUrl(src, mimeType, maxEdge);
       }
