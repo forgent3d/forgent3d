@@ -434,7 +434,7 @@ function createMainLogicTools({ state, deps }) {
   function buildMcpContext() {
     return {
       listParts() {
-        if (!state.currentProjectPath()) return { error: 'No project is open in the preview app.', models: [], active: null };
+        if (!state.currentProjectPath()) return { error: 'No project is open in Forgent3D.', models: [], active: null };
         const meta = deps.kernelMeta(state.currentKernel());
         const list = listParts(state.currentProjectPath(), state.currentKernel()).map((p) => {
           const info = state.partInfoCache().get(p.name);
@@ -458,7 +458,7 @@ function createMainLogicTools({ state, deps }) {
         };
       },
       async getPartInfo(name) {
-        if (!state.currentProjectPath()) return { error: 'No project is open in the preview app.' };
+        if (!state.currentProjectPath()) return { error: 'No project is open in Forgent3D.' };
         if (!deps.resolveModelSource(state.currentProjectPath(), name)) return { error: `Model does not exist: ${name}` };
         const info = state.partInfoCache().get(name);
         const source = deps.resolveModelSource(state.currentProjectPath(), name);

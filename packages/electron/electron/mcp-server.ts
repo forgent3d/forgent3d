@@ -1,7 +1,7 @@
 // @ts-nocheck
 export {};
 /**
- * Built-in MCP server for the AI CAD companion previewer
+ * Built-in MCP server for the Forgent3D desktop app
  * ------------------------------------------
  * - transport: Streamable HTTP on fixed localhost port
  * - 4 tools: list_models / screenshot_model / rebuild_model
@@ -67,7 +67,7 @@ function buildMcpServer(ctx, { McpServer, z }) {
       description: [
         'Purpose: return project kernel, source file type, active model, and model list (including screenshot/geometry cache states).',
         'Prerequisite: none.',
-        'If failed: if error is returned, verify previewer has opened a project and retry.'
+        'If failed: if error is returned, verify Forgent3D has opened a project and retry.'
       ].join('\n'),
       inputSchema: {}
     },

@@ -872,7 +872,7 @@ function createMainRebuildTools({ state, deps }) {
     });
   }
   async function rebuildPartSync(name) {
-    if (!state.currentProjectPath()) return { ok: false, error: 'No project is open in the preview app.' };
+    if (!state.currentProjectPath()) return { ok: false, error: 'No project is open in Forgent3D.' };
     if (!deps.resolveModelSource(state.currentProjectPath(), name)) return { ok: false, error: `Model does not exist: ${name}` };
     markModelDirty(name);
     let result = null;

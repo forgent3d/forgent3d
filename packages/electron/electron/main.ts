@@ -4,6 +4,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, Menu, clipboa
 const path = require('path');
 const fs = require('fs');
 const dotenv = require('dotenv');
+const { initAutoUpdater } = require('./auto-updater');
 
 const APP_NAME = 'Forgent3D';
 app.setName(APP_NAME);
@@ -712,6 +713,12 @@ app.whenReady().then(async () => {
     sendLog(`MCP server failed to start: ${e.message} (usually port ${MCP_PORT} is already in use)`, 'error');
   }
   broadcastMcpStatus();
+
+  try {
+    initAutoUpdater({ sendLog });
+  } catch (e) {
+    sendLog(`Auto-updater init failed: ${e.message || e}`, 'error');
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

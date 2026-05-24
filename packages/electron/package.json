@@ -1,8 +1,8 @@
 {
-  "name": "aicad-preview",
+  "name": "forgent3d",
   "version": "0.1.0",
   "private": true,
-  "description": "Forgent3D companion previewer - watch build123d Python changes and render 3D in real time",
+  "description": "Forgent3D - watch build123d Python changes and render 3D in real time",
   "main": "dist-electron/electron/main.js",
   "type": "commonjs",
   "scripts": {
@@ -58,14 +58,15 @@
     "archiver": "^7.0.0",
     "chokidar": "^3.6.0",
     "dotenv": "^17.4.2",
+    "electron-updater": "^6.3.9",
     "node-pty": "^1.1.0",
     "occt-import-js": "^0.0.23",
     "three": "^0.168.0",
     "zod": "^4.3.6"
   },
   "build": {
-    "appId": "com.aicad.preview",
-    "productName": "Forgent3D Preview",
+    "appId": "com.forgent3d.app",
+    "productName": "Forgent3D",
     "icon": "assets/images/logo.png",
     "win": {
       "icon": "assets/images/logo.png",
@@ -75,11 +76,19 @@
     },
     "mac": {
       "icon": "assets/images/logo.png",
-      "identity": "-",
       "hardenedRuntime": true,
+      "gatekeeperAssess": false,
       "entitlements": "assets/entitlements.mac.plist",
-      "entitlementsInherit": "assets/entitlements.mac.plist"
+      "entitlementsInherit": "assets/entitlements.mac.plist",
+      "notarize": true
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "forgent3d",
+        "repo": "forgent3d"
+      }
+    ],
     "linux": {
       "icon": "assets/images/logo.png"
     },

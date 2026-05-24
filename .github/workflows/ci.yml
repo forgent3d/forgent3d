@@ -71,4 +71,4 @@ jobs:
       - name: Package app artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm --filter aicad-preview exec electron-builder ${{ matrix.electron_builder_args }} --publish never
+        run: pnpm --filter forgent3d exec electron-builder ${{ matrix.electron_builder_args }} --publish never

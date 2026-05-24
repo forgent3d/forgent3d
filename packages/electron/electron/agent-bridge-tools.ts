@@ -66,7 +66,7 @@ function isInside(parent, child) {
 }
 
 function resolveProjectPath(projectRoot, userPath) {
-  if (!projectRoot) throw new Error('No project is open in the previewer.');
+  if (!projectRoot) throw new Error('No project is open in Forgent3D.');
   if (!userPath || typeof userPath !== 'string') throw new Error('path is required');
   if (path.isAbsolute(userPath)) throw new Error(`Use a relative path within the project, not an absolute path: ${userPath}`);
   const resolved = path.resolve(projectRoot, userPath);

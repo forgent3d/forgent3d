@@ -1,4 +1,4 @@
-/** MCP tools exposed by the Forgent3D desktop preview app. */
+/** MCP tools exposed by the Forgent3D desktop app. */
 export const PREVIEW_MCP_TOOL_NAMES = [
   'list_models',
   'screenshot_model',

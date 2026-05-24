@@ -1,7 +1,7 @@
 // @ts-nocheck
 export {};
 /**
- * Forgent3D Forgent3D companion previewer -- embedded terminal manager
+ * Forgent3D desktop app -- embedded terminal manager
  * --------------------------------------------------
  * Create pseudo-terminal (PTY) sessions in main process via node-pty, and communicate with renderer xterm.js through IPC.
  *
