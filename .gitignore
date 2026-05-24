@@ -12,6 +12,7 @@ release
 .DS_Store
 .vscode
 .idea
+.claude/settings.local.json
 build-cache
 packages/electron/vendor/export-runner/*/
 !packages/electron/vendor/export-runner/README.md

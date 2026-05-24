@@ -47,7 +47,12 @@
       "Bash(/opt/anaconda3/bin/python --version)",
       "Bash(/Users/vv/codes/forgent3d/packages/electron/build-cache/embedded-runner/darwin-arm64/venv/bin/python3 --version)",
       "Bash(pnpm --filter aicad-preview exec tsc -p tsconfig.electron.json --noEmit)",
-      "WebFetch(domain:build123d.readthedocs.io)"
+      "WebFetch(domain:build123d.readthedocs.io)",
+      "Bash(xargs cat)",
+      "Bash(grep -rn \"models/\\\\${name}\\\\|models/\\\\${modelName}\\\\|models/\\\\${model}\\\\|args\\\\.model\\\\|args\\\\.modelName\" /Users/vv/codes/forgent3d/packages/cad-agent /Users/vv/codes/forgent3d/packages/cf-sandbox/src)",
+      "Bash(grep -rn \"cloudModelName\\\\|models/\\\\$\\\\|model.*\\\\${\" /Users/vv/codes/forgent3d/packages/cad-agent/app/api/agent /Users/vv/codes/forgent3d/packages/cad-agent/lib/aicad-agent)",
+      "Bash(cat)",
+      "Read(//tmp/**)"
     ]
   }
 }
