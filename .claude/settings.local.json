@@ -46,7 +46,8 @@
       "Read(//opt/anaconda3/bin/**)",
       "Bash(/opt/anaconda3/bin/python --version)",
       "Bash(/Users/vv/codes/forgent3d/packages/electron/build-cache/embedded-runner/darwin-arm64/venv/bin/python3 --version)",
-      "Bash(pnpm --filter aicad-preview exec tsc -p tsconfig.electron.json --noEmit)"
+      "Bash(pnpm --filter aicad-preview exec tsc -p tsconfig.electron.json --noEmit)",
+      "WebFetch(domain:build123d.readthedocs.io)"
     ]
   }
 }

@@ -94,6 +94,18 @@ def _write_stl(shape, path_out):
         raise RuntimeError(f"Unable to export STL: {exc}")
 
 
+def _write_glb(shape, path_out):
+    try:
+        from build123d import export_gltf, Unit  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(f"build123d.export_gltf unavailable: {exc}")
+    try:
+        export_gltf(shape, path_out, unit=Unit.MM, binary=True)
+        return "build123d.export_gltf"
+    except Exception as exc:
+        raise RuntimeError(f"Unable to export GLB: {exc}")
+
+
 def _resolve_model_source(model_name: str, part_name: str, source_override: str = None):
     if source_override:
         candidate = source_override
@@ -259,7 +271,7 @@ def build_one(model_name: str, part_name: str = None, export_format: str = "brep
         return 8
 
     fmt = (export_format or "brep").strip().lower()
-    if fmt not in ("brep", "step", "stl"):
+    if fmt not in ("brep", "step", "stl", "glb"):
         print(f"[export_runner] Unsupported export format: {fmt}", file=sys.stderr)
         return 7
 
@@ -276,6 +288,8 @@ def build_one(model_name: str, part_name: str = None, export_format: str = "brep
             method = _write_brep(result, out)
         elif fmt == "step":
             method = _write_step(result, out)
+        elif fmt == "glb":
+            method = _write_glb(result, out)
         else:
             method = _write_stl(result, out)
         export_elapsed = time.perf_counter() - export_started
@@ -299,7 +313,7 @@ def main() -> int:
     parser.add_argument("--part", default=None, help="Legacy alias for --model")
     parser.add_argument("--part-name", default=None, help="Part directory name inside models/<model>/parts/")
     parser.add_argument("--source", default=None, help="Optional project-relative or absolute source file path (overrides default lookup)")
-    parser.add_argument("--export-format", default="brep", choices=["brep", "step", "stl"])
+    parser.add_argument("--export-format", default="brep", choices=["brep", "step", "stl", "glb"])
     parser.add_argument("--output", default=None, help="Optional absolute path for exported file")
     args = parser.parse_args()
     global PROJECT_ROOT, MODELS_DIR, CACHE_DIR

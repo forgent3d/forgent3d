@@ -461,6 +461,46 @@ function createMainExportTools({ dialog, state, deps }) {
     return abs;
   }
 
+  function parseMjcfMaterials(document) {
+    const materials = new Map();
+    const assets = elementChildren(document.documentElement, 'asset');
+    for (const asset of assets) {
+      for (const matEl of elementChildren(asset, 'material')) {
+        const name = String(matEl.getAttribute('name') || '').trim();
+        if (!name) continue;
+        const rgba = parseNumberList(matEl.getAttribute('rgba'), []);
+        const texture = String(matEl.getAttribute('texture') || '').trim() || null;
+        materials.set(name, { rgba: rgba.length ? rgba : null, texture });
+      }
+    }
+    return materials;
+  }
+
+  function defaultGeomRgba(document) {
+    const defaults = elementChildren(document.documentElement, 'default');
+    for (const def of defaults) {
+      for (const geomEl of elementChildren(def, 'geom')) {
+        const rgba = parseNumberList(geomEl.getAttribute('rgba'), []);
+        if (rgba.length >= 3) return rgba;
+      }
+    }
+    return null;
+  }
+
+  function rgbaToMaterialOptions(rgba) {
+    const r = Math.max(0, Math.min(1, rgba[0] ?? 0));
+    const g = Math.max(0, Math.min(1, rgba[1] ?? 0));
+    const b = Math.max(0, Math.min(1, rgba[2] ?? 0));
+    const a = rgba.length >= 4 ? Math.max(0, Math.min(1, rgba[3])) : 1;
+    const color = (Math.round(r * 255) << 16) | (Math.round(g * 255) << 8) | Math.round(b * 255);
+    const opts = { color };
+    if (a < 1) {
+      opts.transparent = true;
+      opts.opacity = a;
+    }
+    return opts;
+  }
+
   async function buildAssemblyScene(sourcePath) {
     const THREE = require('three');
     const { STLLoader } = await importThreeExample('loaders/STLLoader.js');
@@ -469,6 +509,40 @@ function createMainExportTools({ dialog, state, deps }) {
     const angleScale = compilerAngleScale(document);
     const scene = new THREE.Scene();
     const meshAssets = new Map();
+    const mjcfMaterials = parseMjcfMaterials(document);
+    const fallbackRgba = defaultGeomRgba(document);
+    const materialCache = new Map();
+    let warnedTexture = false;
+
+    function resolveGeomMaterial(geomEl) {
+      const directRgba = parseNumberList(geomEl.getAttribute('rgba'), []);
+      const materialName = String(geomEl.getAttribute('material') || '').trim();
+      let rgba = null;
+      let textureName = null;
+      if (directRgba.length >= 3) {
+        rgba = directRgba;
+      } else if (materialName && mjcfMaterials.has(materialName)) {
+        const mat = mjcfMaterials.get(materialName);
+        rgba = mat.rgba;
+        textureName = mat.texture;
+      }
+      if (!rgba && fallbackRgba) rgba = fallbackRgba;
+      if (textureName && !warnedTexture) {
+        deps.sendLog(`[${modelName}] MJCF texture '${textureName}' referenced but textures are not yet supported in GLB export; using base color only.`, 'warn');
+        warnedTexture = true;
+      }
+      const key = rgba
+        ? `rgba:${rgba.slice(0, 4).map((v) => Number(v).toFixed(4)).join(',')}`
+        : 'default';
+      let material = materialCache.get(key);
+      if (!material) {
+        material = rgba
+          ? new THREE.MeshStandardMaterial(rgbaToMaterialOptions(rgba))
+          : new THREE.MeshStandardMaterial({ color: 0xb0b0b0 });
+        materialCache.set(key, material);
+      }
+      return material;
+    }
 
     for (const meshEl of Array.from(document.getElementsByTagName('mesh'))) {
       const name = String(meshEl.getAttribute('name') || '').trim();
@@ -496,10 +570,7 @@ function createMainExportTools({ dialog, state, deps }) {
       if (!meshName && type !== 'mesh') return;
       const asset = meshAssets.get(meshName);
       if (!asset) throw new Error(`MJCF references unknown mesh asset: ${meshName}`);
-      const mesh = new THREE.Mesh(
-        asset.geometry.clone(),
-        new THREE.MeshStandardMaterial({ color: 0xb0b0b0 })
-      );
+      const mesh = new THREE.Mesh(asset.geometry.clone(), resolveGeomMaterial(geomEl));
       mesh.name = String(geomEl.getAttribute('name') || meshName || 'geom');
       applyMjcfTransform(mesh, geomEl, angleScale, THREE);
       const geomScale = parseNumberList(geomEl.getAttribute('scale'), [1, 1, 1]);
@@ -712,7 +783,25 @@ function createMainExportTools({ dialog, state, deps }) {
         }
       }
 
-      // part or build123d assembly: produce model-level STL then convert.
+      // part or build123d assembly: prefer build123d.export_gltf (preserves per-shape colors);
+      // fall back to STL→three.js GLB conversion if the runtime doesn't support it.
+      const directGlbPath = path.join(
+        os.tmpdir(),
+        `aicad-share-${modelName}-${Date.now()}.glb`
+      );
+      try {
+        try {
+          await runPythonExport(modelName, modelName, 'glb', directGlbPath, resolved.sourcePath);
+          const buffer = fs.readFileSync(directGlbPath);
+          deps.sendLog(`[${modelName}] GLB generated via build123d.export_gltf (${formatDuration(elapsedMs(startedAt))}).`);
+          return buffer;
+        } catch (err) {
+          deps.sendLog(`[${modelName}] Direct GLB export failed, falling back to STL→GLB: ${err?.message || err}`, 'warn');
+        }
+      } finally {
+        try { fs.unlinkSync(directGlbPath); } catch {}
+      }
+
       const stlPath = path.join(
         os.tmpdir(),
         `aicad-share-${modelName}-${Date.now()}.stl`
