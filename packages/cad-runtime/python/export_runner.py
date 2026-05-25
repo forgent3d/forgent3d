@@ -94,12 +94,124 @@ def _write_stl(shape, path_out):
         raise RuntimeError(f"Unable to export STL: {exc}")
 
 
-def _write_glb(shape, path_out):
+# Keep in sync with packages/electron/src/viewer-materials.ts MATERIAL_PRESETS.
+_VIEWER_PRESET_COLORS = {
+    "cad_clay":         (0xc8 / 255, 0xd0 / 255, 0xdc / 255, 1.0),
+    "matte_plastic":    (0xb9 / 255, 0xc2 / 255, 0xd0 / 255, 1.0),
+    "gloss_plastic":    (0xb9 / 255, 0xc2 / 255, 0xd0 / 255, 1.0),
+    "painted_metal":    (0x8f / 255, 0xa3 / 255, 0xb8 / 255, 1.0),
+    "anodized_aluminum":(0x4f / 255, 0x8f / 255, 0xd8 / 255, 1.0),
+    "brushed_steel":    (0xa7 / 255, 0xb0 / 255, 0xba / 255, 1.0),
+    "dark_steel":       (0x4b / 255, 0x55 / 255, 0x63 / 255, 1.0),
+    "polished_metal":   (0xd0 / 255, 0xd6 / 255, 0xdc / 255, 1.0),
+    "rubber":           (0x24 / 255, 0x28 / 255, 0x32 / 255, 1.0),
+    "glass_clear":      (0xd8 / 255, 0xec / 255, 0xff / 255, 0.34),
+}
+
+
+def _parse_hex_color(text):
+    s = str(text or "").strip().lstrip("#")
+    if len(s) == 3:
+        s = "".join(ch * 2 for ch in s)
+    if len(s) not in (6, 8):
+        return None
+    try:
+        r = int(s[0:2], 16) / 255
+        g = int(s[2:4], 16) / 255
+        b = int(s[4:6], 16) / 255
+        a = (int(s[6:8], 16) / 255) if len(s) == 8 else 1.0
+        return (r, g, b, a)
+    except ValueError:
+        return None
+
+
+def _resolve_material_color(spec):
+    """Resolve a __viewer.materials entry to an (r, g, b, a) tuple of floats."""
+    if spec is None:
+        return None
+    if isinstance(spec, bool):
+        return None
+    if isinstance(spec, int):
+        v = spec & 0xffffff
+        return (((v >> 16) & 0xff) / 255, ((v >> 8) & 0xff) / 255, (v & 0xff) / 255, 1.0)
+    if isinstance(spec, str):
+        text = spec.strip()
+        if text in _VIEWER_PRESET_COLORS:
+            return _VIEWER_PRESET_COLORS[text]
+        return _parse_hex_color(text)
+    if isinstance(spec, dict):
+        explicit = spec.get("color")
+        if explicit is not None:
+            resolved = _resolve_material_color(explicit)
+            if resolved is not None:
+                return resolved
+        preset_name = str(spec.get("preset") or spec.get("material") or "").strip()
+        if preset_name in _VIEWER_PRESET_COLORS:
+            return _VIEWER_PRESET_COLORS[preset_name]
+    return None
+
+
+def _load_model_params(model_name: str):
+    path = os.path.join(MODELS_DIR, model_name, "params.json")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _apply_viewer_colors(shape, params):
+    """Stamp build123d .color from params.json __viewer.materials so export_gltf preserves it."""
+    if not isinstance(params, dict):
+        return
+    viewer = params.get("__viewer") or params.get("viewer") or {}
+    materials = viewer.get("materials") if isinstance(viewer, dict) else None
+    if not isinstance(materials, dict):
+        return
+    parts_spec = materials.get("parts") if isinstance(materials.get("parts"), dict) else {}
+    default_rgba = _resolve_material_color(materials.get("default"))
+
+    try:
+        from build123d import Color  # type: ignore
+    except Exception:
+        return
+
+    def _set(node, rgba):
+        if rgba is None:
+            return
+        try:
+            node.color = Color(float(rgba[0]), float(rgba[1]), float(rgba[2]), float(rgba[3]))
+        except Exception:
+            pass
+
+    try:
+        children = list(getattr(shape, "children", []) or [])
+    except TypeError:
+        children = []
+
+    if not children:
+        # Single-shape model: apply default color if configured.
+        _set(shape, default_rgba)
+        return
+
+    for child in children:
+        label = str(getattr(child, "label", "") or "").strip()
+        spec = parts_spec.get(label) if label else None
+        rgba = _resolve_material_color(spec) if spec is not None else None
+        if rgba is None:
+            rgba = default_rgba
+        _set(child, rgba)
+
+
+def _write_glb(shape, path_out, params=None):
     try:
         from build123d import export_gltf, Unit  # type: ignore
     except Exception as exc:
         raise RuntimeError(f"build123d.export_gltf unavailable: {exc}")
     try:
+        _apply_viewer_colors(shape, params)
         export_gltf(shape, path_out, unit=Unit.MM, binary=True)
         return "build123d.export_gltf"
     except Exception as exc:
@@ -289,7 +401,7 @@ def build_one(model_name: str, part_name: str = None, export_format: str = "brep
         elif fmt == "step":
             method = _write_step(result, out)
         elif fmt == "glb":
-            method = _write_glb(result, out)
+            method = _write_glb(result, out, _load_model_params(model_name))
         else:
             method = _write_stl(result, out)
         export_elapsed = time.perf_counter() - export_started
