@@ -37,6 +37,10 @@ Forgent3D 是一个独立项目，探索当编程 Agent 能在本地生成、重
   <a href="https://github.com/forgent3d/forgent3d/releases"><strong>下载 Forgent3D</strong></a>
 </p>
 
+### 行星齿轮组
+
+![Forgent3D 行星齿轮组预览](docs/forgent3d-planetary-gear.gif)
+
 ### 四旋翼无人机
 
 ![Forgent3D 参数化四旋翼无人机预览](docs/forgent3d-preview.gif)

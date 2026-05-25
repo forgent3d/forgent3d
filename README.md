@@ -37,6 +37,10 @@ Download the desktop app from Releases. The bundled build includes the CAD runti
   <a href="https://github.com/forgent3d/forgent3d/releases"><strong>Download Forgent3D</strong></a>
 </p>
 
+### Planetary gear set
+
+![Forgent3D: planetary gear set preview](docs/forgent3d-planetary-gear.gif)
+
 ### Quadrotor drone
 
 ![Forgent3D: parametric quadrotor drone preview](docs/forgent3d-preview.gif)
