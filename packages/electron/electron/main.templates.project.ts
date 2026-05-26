@@ -14,6 +14,7 @@ function sourceFileOptions(kernel) {
   const meta = kernelMeta(kernel);
   const ext = sourceExtension(meta);
   return {
+    assembly: `assembly${ext}`,
     part: `part${ext}`,
     asm: 'asm.xml',
     params: 'params.json'
@@ -49,8 +50,8 @@ function codexConfigToml(MCP_PORT) {
 
 function build123dModelSourceTemplate(kind, name, desc, opts) {
   const options = opts || {};
-  const fileName = kind === 'asm' ? 'asm.xml' : 'part.py';
-  const kindLabel = kind === 'asm' ? 'assembly' : 'part';
+  const fileName = kind === 'asm' ? 'asm.xml' : (kind === 'assembly' ? 'assembly.py' : 'part.py');
+  const kindLabel = kind === 'asm' || kind === 'assembly' ? 'assembly' : 'part';
   if (kind === 'asm') {
     const partNames = Array.isArray(options.partNames) && options.partNames.length
       ? options.partNames.map((partName) => String(partName))
@@ -85,9 +86,9 @@ function build123dModelSourceTemplate(kind, name, desc, opts) {
       `<!-- ${desc}`,
       '',
       'This file is managed by AI CAD Companion Viewer.',
-      `This is the primary ${kindLabel} source: \`${fileName}\`.`,
-      'Assembly-level tunables live in root params.json; local part geometry knobs live beside each part.py.',
-      'Reference exported part meshes here and compose bodies, joints, sites, and constraints as needed.',
+      `This is an optional MJCF motion-preview source: \`${fileName}\`.`,
+      'The primary CAD assembly lives in assembly.py; local part geometry knobs live beside each part.py.',
+      'Reference exported part meshes here only when composing bodies, joints, sites, constraints, or actuators.',
       '-->',
       `<mujoco model="${name}">`,
       '  <asset>',
@@ -97,6 +98,84 @@ function build123dModelSourceTemplate(kind, name, desc, opts) {
       ...bodyLines,
       '  </worldbody>',
       '</mujoco>',
+      ''
+    ].join('\n');
+  }
+  if (kind === 'assembly') {
+    const partNames = Array.isArray(options.partNames) && options.partNames.length
+      ? options.partNames.map((partName) => String(partName))
+      : [String(options.partName || name)];
+    const partNameLines = partNames.map((partName) => `    ${JSON.stringify(partName)},`);
+    return [
+      `"""${desc}`,
+      '',
+      'Build123d assembly source. Local part geometry lives in parts/<part>/part.py.',
+      'Keep a global variable named `result` at the end of the file.',
+      '"""',
+      'from copy import copy',
+      'import importlib.util',
+      'import json',
+      'from pathlib import Path',
+      '',
+      'from build123d import *',
+      '',
+      'MODEL_DIR = Path(__file__).parent',
+      'PARAMS = json.loads((MODEL_DIR / "params.json").read_text(encoding="utf-8"))',
+      'PART_NAMES = [',
+      ...partNameLines,
+      ']',
+      '',
+      '',
+      'def load_part(name):',
+      '    part_path = MODEL_DIR / "parts" / name / "part.py"',
+      '    module_name = "assembly_part_" + "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in name)',
+      '    spec = importlib.util.spec_from_file_location(module_name, part_path)',
+      '    module = importlib.util.module_from_spec(spec)',
+      '    spec.loader.exec_module(module)',
+      '    return module.result',
+      '',
+      '',
+      'def placed(source, label, xyz=(0, 0, 0), rotation=(0, 0, 0)):',
+      '    instance = copy(source).moved(Location(xyz, rotation))',
+      '    instance.label = label',
+      '    return instance',
+      '',
+      '',
+      'loaded_parts = {part_name: load_part(part_name) for part_name in PART_NAMES}',
+      'children = []',
+      '',
+      'if "mounting_plate" in loaded_parts:',
+      '    children.append(placed(loaded_parts["mounting_plate"], "mounting_plate"))',
+      '    if "fastener_stack" in loaded_parts:',
+      '        sx = float(PARAMS.get("fastener_spacing_x", 52.0))',
+      '        sy = float(PARAMS.get("fastener_spacing_y", 28.0))',
+      '        z = float(PARAMS.get("fastener_z", 6.2))',
+      '        for label, x, y in [',
+      '            ("front_left_fastener", -sx / 2, -sy / 2),',
+      '            ("front_right_fastener", sx / 2, -sy / 2),',
+      '            ("back_left_fastener", -sx / 2, sy / 2),',
+      '            ("back_right_fastener", sx / 2, sy / 2),',
+      '        ]:',
+      '            children.append(placed(loaded_parts["fastener_stack"], label, (x, y, z)))',
+      '    for part_name in PART_NAMES:',
+      '        if part_name not in ("mounting_plate", "fastener_stack"):',
+      '            children.append(placed(loaded_parts[part_name], part_name))',
+      'else:',
+      '    spacing = float(PARAMS.get("assembly_spacing_x", 48.0))',
+      '    start_x = -spacing * (len(PART_NAMES) - 1) / 2',
+      '    for index, part_name in enumerate(PART_NAMES):',
+      '        children.append(placed(loaded_parts[part_name], part_name, (start_x + index * spacing, 0, 0)))',
+      '',
+      'if not children:',
+      '    raise RuntimeError("assembly.py did not place any parts")',
+      '',
+      'result = Compound(children=children)',
+      `result.label = ${JSON.stringify(name)}`,
+      'metadata = {',
+      '    "schema": "aicad.assembly.metadata.v1",',
+      '    "units": "mm",',
+      '    "assembly_parts": [child.label for child in children],',
+      '}',
       ''
     ].join('\n');
   }
@@ -434,13 +513,40 @@ function build123dModelSourceTemplate(kind, name, desc, opts) {
 
 function modelSourceTemplate(kernel, kind, name, description, opts) {
   assertKernel(kernel);
-  const kindLabel = kind === 'asm' ? 'assembly' : 'part';
+  const kindLabel = kind === 'asm' || kind === 'assembly' ? 'assembly' : 'part';
   const desc = description || `${name} ${kindLabel}`;
   return build123dModelSourceTemplate(kind, name, desc, opts);
 }
 
 function modelParamsTemplate(kind, name, description, opts) {
   const options = opts || {};
+  if (kind === 'assembly') {
+    return JSON.stringify({
+      description: description || `${name} assembly parameters`,
+      assembly_spacing_x: 48.0,
+      fastener_spacing_x: 52.0,
+      fastener_spacing_y: 28.0,
+      fastener_z: 6.2,
+      __viewer: {
+        materials: {
+          default: {
+            preset: 'painted_metal',
+            color: '#9fb3c8'
+          },
+          parts: {
+            mounting_plate: {
+              preset: 'anodized_aluminum',
+              color: '#5f9ed1'
+            },
+            fastener_stack: {
+              preset: 'brushed_steel',
+              color: '#c7d0d8'
+            }
+          }
+        }
+      }
+    }, null, 2) + '\n';
+  }
   if (kind === 'asm') {
     return JSON.stringify({
       description: description || `${name} model parameters`,
@@ -550,16 +656,17 @@ function modelParamsTemplate(kind, name, description, opts) {
 function modelReadmeTemplate(kernel, kind, name, description) {
   const meta = kernelMeta(kernel);
   const fileNames = sourceFileOptions(kernel);
-  const activeSource = kind === 'asm' ? fileNames.asm : fileNames.part;
-  const kindLabel = kind === 'asm' ? 'assembly' : 'part';
+  const activeSource = kind === 'asm' ? fileNames.asm : (kind === 'assembly' ? fileNames.assembly : fileNames.part);
+  const kindLabel = kind === 'asm' ? 'motion preview' : (kind === 'assembly' ? 'assembly' : 'part');
   const desc = description || `TODO: add one sentence describing ${name}.`;
+  const previewLabel = kind === 'asm' ? 'MJCF' : meta.previewFormat;
 
   return [
     `# ${name}`,
     '',
     desc,
     '',
-    `> Kernel: **${meta.label}** | Model type: **${kindLabel}** | Source: \`${activeSource}\` + \`params.json\` | Preview: \`${kind === 'asm' ? 'MJCF' : meta.previewFormat}\``,
+    `> Kernel: **${meta.label}** | Model type: **${kindLabel}** | Source: \`${activeSource}\` + \`params.json\` | Preview: \`${previewLabel}\``,
     '> This file is scaffold-first: keep the summary, parameter table, and validation notes aligned with the source file before large geometry changes.',
     '',
     '## Parameters',
@@ -573,6 +680,12 @@ function modelReadmeTemplate(kernel, kind, name, description) {
       '| fastener_z | mm | 6.2 | Placement height for standard fastener stacks. |',
       '| site_radius | mm | 0.9 | Visual size for MJCF reference sites. |',
       '| site_lift | mm | 14 | Z offset for the clearance-axis site in `asm.xml`. |',
+      '| part geometry | - | - | Edit in `parts/<part>/params.json`, not root `params.json`. |'
+    ] : kind === 'assembly' ? [
+      '| assembly_spacing_x | mm | 48 | Default X spacing when placing generic part instances. |',
+      '| fastener_spacing_x | mm | 52 | X spacing for starter mount fastener instances. |',
+      '| fastener_spacing_y | mm | 28 | Y spacing for starter mount fastener instances. |',
+      '| fastener_z | mm | 6.2 | Placement height for starter mount fastener stacks. |',
       '| part geometry | - | - | Edit in `parts/<part>/params.json`, not root `params.json`. |'
     ] : [
       '| length | mm | 72 | Part length. |',

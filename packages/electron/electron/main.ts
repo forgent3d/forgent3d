@@ -111,7 +111,7 @@ let appLanguage = 'en';
 const buildingParts = new Set();   // Models currently being built.
 const pendingParts = new Set();    // Models queued for another build pass.
 
-const MODEL_KINDS = ['asm'];
+const MODEL_KINDS = ['assembly', 'part'];
 const MODELS_DIR = 'models';
 const MODEL_PARAMS_FILE = 'params.json';
 const CACHE_DIR = '.cache';
@@ -153,7 +153,6 @@ function resolveModelSource(projectPath, name, kernel = currentKernel, opts = {}
   const dir = modelDir(projectPath, name);
   const candidates = [
     { kind: 'assembly', fileName: modelSourceFilename(k, 'assembly') },
-    { kind: 'asm', fileName: modelSourceFilename(k, 'asm') },
     { kind: 'part', fileName: modelSourceFilename(k, 'part') }
   ];
   for (const { kind, fileName } of candidates) {
@@ -161,6 +160,12 @@ function resolveModelSource(projectPath, name, kernel = currentKernel, opts = {}
     if (fs.existsSync(sourcePath)) return { kind, fileName, sourcePath };
   }
   return null;
+}
+function resolveMotionSource(projectPath, name) {
+  if (!projectPath || !name) return null;
+  const fileName = 'asm.xml';
+  const sourcePath = path.join(modelDir(projectPath, name), fileName);
+  return fs.existsSync(sourcePath) ? { kind: 'motion', fileName, sourcePath } : null;
 }
 function partSource(projectPath, name, kernel = currentKernel, kind = null) {
   if (kind === 'asm') return path.join(modelDir(projectPath, name), modelSourceFilename(kernel, 'asm'));
@@ -187,11 +192,9 @@ function partCache(projectPath, modelName, partName = modelName, kernel = curren
 function modelCacheFile(projectPath, name, source = null, kernel = currentKernel) {
   const s = source || resolveModelSource(projectPath, name, kernel);
   if (!s) return null;
-  if (s.kind === 'asm') return s.sourcePath;
   return path.join(projectPath, CACHE_DIR, `${name}${kernelMeta(kernel).cacheExt}`);
 }
 function modelPreviewFormat(source = null, kernel = currentKernel) {
-  if (source && source.kind === 'asm') return 'MJCF';
   return kernelMeta(kernel).previewFormat;
 }
 function toProjectRelativeAsset(relPath) {
@@ -575,6 +578,7 @@ function registerIpc() {
       modelPartSource,
       modelPartParamsPath,
       resolveModelSource,
+      resolveMotionSource,
       ensurePartStlArtifact,
       exportPartByRequest,
       buildModelGlbBuffer,
@@ -670,6 +674,7 @@ function initModuleTools() {
       sourceExt,
       modelSourceFilename,
       resolveModelSource,
+      resolveMotionSource,
       partSource,
       partReadme,
       modelPartDir,

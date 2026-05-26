@@ -862,8 +862,9 @@ function registerIpcHandlers({
 
     // Resolve model kind from source files
     let kind = 'part';
-    if (fs.existsSync(path.join(modelDir, 'asm.xml'))) kind = 'mjcf';
-    else if (fs.existsSync(path.join(modelDir, 'assembly.py'))) kind = 'assembly';
+    if (fs.existsSync(path.join(modelDir, 'assembly.py'))) kind = 'assembly';
+    else if (fs.existsSync(path.join(modelDir, 'part.py'))) kind = 'part';
+    else if (fs.existsSync(path.join(modelDir, 'asm.xml'))) kind = 'mjcf';
 
     // Read params
     let params = {};
@@ -900,8 +901,8 @@ function registerIpcHandlers({
 
     // Build entry path
     let entry = `models/${modelName}/part.py`;
-    if (kind === 'mjcf') entry = `models/${modelName}/asm.xml`;
-    else if (kind === 'assembly') entry = `models/${modelName}/assembly.py`;
+    if (kind === 'assembly') entry = `models/${modelName}/assembly.py`;
+    else if (kind === 'mjcf') entry = `models/${modelName}/asm.xml`;
 
     const manifest = {
       title: modelName.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),

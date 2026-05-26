@@ -321,7 +321,7 @@ function createMainUiTools({
   function canExportActiveModelFromMenu() {
     if (!state.currentProjectPath() || !state.activePart()) return false;
     const source = deps.resolveModelSource?.(state.currentProjectPath(), state.activePart(), state.currentKernel?.());
-    return !!source && source.kind !== 'asm';
+    return !!source;
   }
 
   async function checkForUpdatesFromMenu() {

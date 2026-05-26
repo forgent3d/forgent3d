@@ -4,7 +4,7 @@ export_runner.py - Auto-managed by AI CAD Companion Viewer (do not edit manually
 Responsibilities:
   * Accept --model <name> (and legacy --part <name>);
   * Optionally support on-demand exports via --export-format/--output (step/stl/obj/brep/glb/3mf);
-  * Load models/<model>/parts/<part-name>/part.py and read a geometry object named result;
+  * Load models/<model>/assembly.py, part.py, or parts/<part-name>/part.py and read result;
   * Export build123d geometry to .cache/<name>.brep and requested exchange/mesh formats;
   * Let the frontend parse BREP via occt-import-js for geometry inspection.
 """

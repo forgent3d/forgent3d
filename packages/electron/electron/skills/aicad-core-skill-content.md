@@ -3,7 +3,7 @@
 - CAD requests must produce editable source, not images.
 - A single-part model is flat: `models/<model_name>/part.py` plus `models/<model_name>/params.json`. No `parts/` folder, no `asm.xml`.
 - A multi-part assembly uses `models/<model_name>/assembly.py` (build123d) by default; each rigid body lives at `models/<model_name>/parts/<part_name>/part.py`.
-- Add `models/<model_name>/asm.xml` (MJCF) only when the model needs MuJoCo features: joints, actuators, equality constraints, or simulation. Otherwise use the build123d assembly form.
+- Add `models/<model_name>/asm.xml` (MJCF) only as an optional motion preview when the model needs MuJoCo features: joints, actuators, equality constraints, or simulation. The CAD source and export target remains `assembly.py`.
 - Each part source assigns the final build123d object to global `result`. An `assembly.py` assigns the final build123d `Compound` to global `result` (or global `assembly`).
 - The bundled build runtime includes `bd_warehouse`; use it for standard hardware and mechanical catalog parts, while keeping custom structural geometry in build123d source.
 - Store only assembly-level values in root `params.json`: placement, motion, constraints, anchors, and `__viewer` appearance. Do not put local part geometry knobs in root params.
@@ -53,7 +53,7 @@ build123d multi-part assembly:
 |- .cache/
 ```
 
-Add `models/<model_name>/asm.xml` alongside `parts/` only when the model needs MuJoCo features.
+Add `models/<model_name>/asm.xml` alongside `assembly.py` and `parts/` only when the model needs MuJoCo motion-preview features.
 
 ## Viewer Materials
 

@@ -653,10 +653,6 @@ function createMainExportTools({ dialog, state, deps }) {
     const resolved = source || deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
     if (!resolved) throw new Error(`Model does not exist: ${partName}`);
 
-    if (resolved.kind === 'asm') {
-      throw new Error('MJCF assemblies are not CAD export targets. Select an individual generated part to export STEP/STL/OBJ/3MF.');
-    }
-
     if (format === 'step' || format === 'stl' || format === 'obj' || format === '3mf') {
       await runPythonExport(partName, partName, format, outFile, resolved.sourcePath);
       return;
@@ -731,8 +727,13 @@ function createMainExportTools({ dialog, state, deps }) {
         return null;
       }
 
-      if (kind === 'mjcf' || resolved.kind === 'asm') {
-        const scene = await buildAssemblyScene(resolved.sourcePath);
+      if (kind === 'mjcf') {
+        const motionSource = deps.resolveMotionSource?.(state.currentProjectPath(), modelName, state.currentKernel());
+        if (!motionSource?.sourcePath) {
+          deps.sendLog(`[${modelName}] MJCF GLB skipped: motion source not found.`, 'warn');
+          return null;
+        }
+        const scene = await buildAssemblyScene(motionSource.sourcePath);
         try {
           const buffer = await exportSceneToGlb(scene);
           deps.sendLog(`[${modelName}] GLB generated (${formatDuration(elapsedMs(startedAt))}).`);
@@ -795,9 +796,6 @@ function createMainExportTools({ dialog, state, deps }) {
     const fmt = ensureExportFormat(format);
     const ext = exportExt(fmt);
     const childPart = String(opts.partName || '').trim();
-    if (source.kind === 'asm' && !childPart) {
-      throw new Error('MJCF assemblies are not CAD export targets. Select an individual generated part to export.');
-    }
     const exportName = childPart || cleanPart;
     const saveRes = await dialog.showSaveDialog(state.mainWindow(), {
       title: `Export ${exportName} as ${fmt.toUpperCase()}`,
@@ -859,6 +857,7 @@ function initMainExportTools(mainContext) {
       partCache: model.partCache,
       modelCacheFile: model.modelCacheFile,
       resolveModelSource: model.resolveModelSource,
+      resolveMotionSource: model.resolveMotionSource,
       sendLog: logging.sendLog
     }
   });

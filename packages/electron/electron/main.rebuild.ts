@@ -193,6 +193,8 @@ function createMainRebuildTools({ state, deps }) {
       if (watcher) {
         const paths = [
           modelRoot,
+          path.join(modelRoot, deps.modelSourceFilename(state.currentKernel(), 'assembly')),
+          path.join(modelRoot, deps.modelSourceFilename(state.currentKernel(), 'part')),
           path.join(modelRoot, deps.modelSourceFilename(state.currentKernel(), 'asm')),
           path.join(modelRoot, 'params.json'),
           path.join(modelRoot, 'parts')
@@ -289,7 +291,7 @@ function createMainRebuildTools({ state, deps }) {
     const source = deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
     const cache = deps.modelCacheFile(state.currentProjectPath(), partName, source, state.currentKernel());
     const freshness = refreshModelDirtyState(partName, source);
-    if (cache && fs.existsSync(cache) && !freshness.buildDirty && assemblyMeshesReady(partName, source)) {
+    if (cache && fs.existsSync(cache) && !freshness.buildDirty) {
       sendModelUpdated(partName);
     }
   }
@@ -381,7 +383,12 @@ function createMainRebuildTools({ state, deps }) {
     runningBuildInputs.set(partName, freshness.inputMtime);
     if (source.kind === 'assembly') return runBuildAssembly(partName, source);
     if (source.kind === 'part') return runBuildFlatPart(partName, source);
-    return runBuildMjcf(partName, source);
+    const message = `Unsupported CAD source kind "${source.kind}" for model "${partName}".`;
+    state.buildingParts().delete(partName);
+    finishBuildPass(partName, runningBuildInputs.get(partName) || 0);
+    deps.sendToRenderer('BUILD_FAILED', { part: partName, message });
+    resolveBuildWaiters(partName, { ok: false, part: partName, error: message });
+    deps.broadcastPartsList();
   }
 
   async function runBuildAssembly(partName, source) {
@@ -418,6 +425,7 @@ function createMainRebuildTools({ state, deps }) {
     const size = fs.existsSync(cacheFile) ? fs.statSync(cacheFile).size : 0;
     deps.sendLog(`[${partName}] ${sourceLabel} built (${(size / 1024).toFixed(1)} KB)`);
     deps.sendToRenderer('PART_BUILT', { part: partName, size });
+    await prepareMotionPreview(partName);
     if (partName === state.activePart()) sendModelUpdated(partName);
     resolveBuildWaiters(partName, {
       ok: true, part: partName, kernel: state.currentKernel(), cacheFile: path.basename(cacheFile), cacheSize: size, faceCount: null
@@ -752,41 +760,27 @@ function createMainRebuildTools({ state, deps }) {
     return { ok: true, meshCount: meshRefs.length, referencedParts: referencedPartEntries.map((part) => part.name), partTimings };
   }
 
-  async function runBuildMjcf(partName, source) {
-    const sourcePath = source?.sourcePath || deps.partSource(state.currentProjectPath(), partName, state.currentKernel(), 'asm');
-    if (!fs.existsSync(sourcePath)) {
-      const message = `asm.xml was not generated for model "${partName}"`;
-      state.buildingParts().delete(partName);
-      finishBuildPass(partName, runningBuildInputs.get(partName) || 0);
-      deps.sendToRenderer('BUILD_FAILED', { part: partName, message });
-      resolveBuildWaiters(partName, { ok: false, part: partName, error: message });
-      deps.broadcastPartsList();
-      if (state.pendingParts().has(partName)) runBuild(partName);
-      return;
+  async function prepareMotionPreview(partName, source = null) {
+    if (!state.currentProjectPath() || !partName) return { ok: true, skipped: true, reason: 'no-project' };
+    const motionSource = source || deps.resolveMotionSource?.(state.currentProjectPath(), partName, state.currentKernel());
+    if (!motionSource?.sourcePath || !fs.existsSync(motionSource.sourcePath)) {
+      return { ok: true, skipped: true, reason: 'no-motion-preview' };
     }
-    const mjcfValidation = await validateMjcfAssemblyReferences(sourcePath, partName);
+    const mjcfValidation = await validateMjcfAssemblyReferences(motionSource.sourcePath, partName);
     if (!mjcfValidation.ok) {
-      state.buildingParts().delete(partName);
-      finishBuildPass(partName, runningBuildInputs.get(partName) || 0);
-      deps.sendToRenderer('BUILD_FAILED', { part: partName, message: mjcfValidation.error });
-      resolveBuildWaiters(partName, { ok: false, part: partName, error: mjcfValidation.error });
-      deps.broadcastPartsList();
-      if (state.pendingParts().has(partName)) runBuild(partName);
-      return;
+      deps.sendLog(`[${partName}] Motion preview disabled: ${mjcfValidation.error}`, 'warn');
+      return { ...mjcfValidation, motionPreview: false, sourceFile: path.basename(motionSource.sourcePath) };
     }
-    const size = fs.statSync(sourcePath).size;
-    const sourceLabel = path.basename(sourcePath);
-    deps.sendLog(`[${partName}] ${sourceLabel} assembly updated (${(size / 1024).toFixed(1)} KB, ${mjcfValidation.meshCount} meshes from parts: ${mjcfValidation.referencedParts.join(', ')})`);
-    deps.sendToRenderer('PART_BUILT', { part: partName, size });
-    if (partName === state.activePart()) sendModelUpdated(partName);
-    resolveBuildWaiters(partName, {
-      ok: true, part: partName, kernel: state.currentKernel(), cacheFile: path.basename(sourcePath), cacheSize: size, faceCount: null
-    });
-    clearModelDirtyUpTo(partName, runningBuildInputs.get(partName) || 0);
-    state.buildingParts().delete(partName);
-    finishBuildPass(partName, runningBuildInputs.get(partName) || 0);
-    deps.broadcastPartsList();
-    if (state.pendingParts().has(partName)) runBuild(partName);
+    const size = fs.statSync(motionSource.sourcePath).size;
+    deps.sendLog(
+      `[${partName}] Motion preview ready (${(size / 1024).toFixed(1)} KB, ${mjcfValidation.meshCount} meshes from parts: ${mjcfValidation.referencedParts.join(', ')})`
+    );
+    return {
+      ...mjcfValidation,
+      motionPreview: true,
+      sourceFile: path.basename(motionSource.sourcePath),
+      cacheSize: size
+    };
   }
 
   function resolveBuildWaiters(name, payload) {
@@ -845,7 +839,6 @@ function createMainRebuildTools({ state, deps }) {
     const source = deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
     const cache = deps.modelCacheFile(state.currentProjectPath(), partName, source, state.currentKernel());
     if (!cache || !fs.existsSync(cache)) return;
-    if (source.kind === 'asm' && !assemblyMeshesReady(partName, source)) return;
     const ts = Date.now();
     const size = fs.statSync(cache).size;
     const ext = path.extname(cache).replace(/^\./, '');
@@ -859,6 +852,8 @@ function createMainRebuildTools({ state, deps }) {
     const paramsUrl = fs.existsSync(paramsPath)
       ? assetUrl(paramsPath)
       : null;
+    const motionSource = deps.resolveMotionSource?.(state.currentProjectPath(), partName, state.currentKernel());
+    const motionReady = !!motionSource && assemblyMeshesReady(partName, motionSource);
     deps.sendToRenderer('MODEL_UPDATED', {
       part: partName,
       url,
@@ -867,6 +862,13 @@ function createMainRebuildTools({ state, deps }) {
       extension: ext,
       kernel: state.currentKernel(),
       kind: 'model',
+      sourceKind: source?.kind || null,
+      hasMotionPreview: !!motionSource,
+      motionReady,
+      motionUrl: motionReady ? assetUrl(motionSource.sourcePath) : null,
+      motionParamsUrl: motionReady ? paramsUrl : null,
+      motionFormat: 'MJCF',
+      motionSourceFile: motionSource?.fileName || null,
       size,
       ts
     });
@@ -905,7 +907,7 @@ function createMainRebuildTools({ state, deps }) {
     runBuild,
     runBuildPython,
     validateMjcfAssemblyReferences,
-    runBuildMjcf,
+    prepareMotionPreview,
     resolveBuildWaiters,
     prepareModelDeletion,
     resolvePartLoadedWaiters,
@@ -936,6 +938,7 @@ function initMainRebuildTools(mainContext) {
       sourceExt: model.sourceExt,
       modelSourceFilename: model.modelSourceFilename,
       resolveModelSource: model.resolveModelSource,
+      resolveMotionSource: model.resolveMotionSource,
       partSource: model.partSource,
       modelDir: model.modelDir,
       modelParamsPath: model.modelParamsPath,

@@ -1,20 +1,20 @@
-## When To Use MJCF
+## MJCF Motion Preview
 
-- Use `models/<model_name>/asm.xml` only when the model needs MuJoCo features: joints, actuators, equality constraints, or simulated motion. For a static multi-part model use a build123d `assembly.py`; for a single-body model use the flat `part.py` layout.
+- Use `models/<model_name>/asm.xml` only as an optional motion preview when the model needs MuJoCo features: joints, actuators, equality constraints, or simulated motion. The CAD source and export target remains build123d `assembly.py`; for a single-body CAD model use the flat `part.py` layout.
 - When MJCF is in use, each rigid body lives at its own local `models/<model_name>/parts/<part_name>/part.py`; do not fuse a separable model into one monolithic `part.py`.
-- Assembly-level tunables live in `models/<model_name>/params.json`. Do not create or duplicate local part geometry parameters in the root assembly params; put those in the matching `parts/<part_name>/params.json` read by `part.py`.
+- Motion-preview tunables live in `models/<model_name>/params.json`. Do not create or duplicate local part geometry parameters in the root params; put those in the matching `parts/<part_name>/params.json` read by `part.py`.
 
-## Assembly Rules
+## Motion Preview Rules
 
 - Visual geometry must reference existing part meshes through `<asset><mesh ... file="..."/></asset>` and `<geom type="mesh" mesh="..."/>`.
 - Mesh files must point at local package assets like `parts/<part>/<part>.stl`; the viewer can generate missing/stale STL assets from fresh BREP caches during rebuild.
 - Use `${...}` substitutions for mesh filenames and user-facing tunable positions, axes, ranges, and limits. Do not scale part meshes from `asm.xml` as a substitute for part parameters; rebuild the part geometry from `parts/<part_name>/params.json` instead. Keep derived placements, repeated mechanical offsets, and one-off constants in `asm.xml` unless the user needs to tune them.
 - Body origins should be meaningful anchors. If the body origin is an anchor, move the visual mesh with `geom pos`, not the joint/site.
-- Keep `__viewer.materials` renderer-only. Material keys for assemblies should match MJCF body, geom, or mesh names. Presets must be objects like `{ "preset": "rubber" }`, not bare strings.
+- Keep `__viewer.materials` renderer-only. Material keys for motion preview should match MJCF body, geom, or mesh names. Presets must be objects like `{ "preset": "rubber" }`, not bare strings.
 
 ## Anchors And Constraints
 
-- Define connection anchors in assembly `params.json` or directly in `asm.xml` as named `<site>` elements, for example `origin`, `pin`, `hinge`, `link_end`, or `slide_axis`.
+- Define connection anchors in root `params.json` or directly in `asm.xml` as named `<site>` elements, for example `origin`, `pin`, `hinge`, `link_end`, or `slide_axis`.
 - Anchors must be in the same local coordinate frame as the exported mesh.
 - Expose connection points with named `<site>` elements.
 - Add `hinge` or `slide` joints only for intended degrees of freedom.

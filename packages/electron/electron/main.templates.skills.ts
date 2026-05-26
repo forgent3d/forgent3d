@@ -45,7 +45,7 @@ const SKILL_BUILD123D = {
 
 const SKILL_MJCF = {
   filename: 'skill-mjcf.mdc',
-  description: 'MJCF assembly rules for AI CAD, multi-body kinematics, and joint logic',
+  description: 'MJCF motion-preview rules for AI CAD, multi-body kinematics, and joint logic',
   globs: '*.xml',
   content: readSkillContent('./skills/aicad-mjcf-skill-content.md')
 };

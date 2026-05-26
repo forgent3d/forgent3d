@@ -386,6 +386,12 @@ html, body, #app {
   opacity: 0.45;
   cursor: not-allowed;
 }
+.preview-toolbar-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: #2a3143;
+}
 
 .viewcube-host {
   position: absolute;

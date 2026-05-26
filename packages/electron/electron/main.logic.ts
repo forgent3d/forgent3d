@@ -129,17 +129,23 @@ function createMainLogicTools({ state, deps }) {
     const partParams = opts.partParams || {};
 
     writeIfChanged(
-      deps.partSource(projectPath, modelName, k, 'asm'),
-      deps.modelSourceTemplate(k, 'asm', modelName, desc, { partNames })
+      deps.partSource(projectPath, modelName, k, 'assembly'),
+      deps.modelSourceTemplate(k, 'assembly', modelName, desc, { partNames })
     );
     writeIfChanged(
       deps.modelParamsPath(projectPath, modelName),
-      modelParamsWithOverrides('asm', modelName, desc, { partNames, params: opts.rootParams })
+      modelParamsWithOverrides('assembly', modelName, desc, { partNames, params: opts.rootParams })
     );
     writeIfChanged(
       deps.partReadme(projectPath, modelName),
-      deps.modelReadmeTemplate(k, 'asm', modelName, desc)
+      deps.modelReadmeTemplate(k, 'assembly', modelName, desc)
     );
+    if (opts.motionPreview === true) {
+      writeIfChanged(
+        deps.partSource(projectPath, modelName, k, 'asm'),
+        deps.modelSourceTemplate(k, 'asm', modelName, desc, { partNames })
+      );
+    }
 
     for (const partName of partNames) {
       const partDesc = String(partDescriptions[partName] || '').trim() || `${partName} part`;
@@ -217,6 +223,7 @@ function createMainLogicTools({ state, deps }) {
       .map(({ name, source }) => ({
         name,
         kind: 'model',
+        sourceKind: source.kind,
         sourceFile: source.fileName,
         description: readPartDescription(projectPath, name, k)
       }));
@@ -282,6 +289,7 @@ function createMainLogicTools({ state, deps }) {
     const k = deps.assertKernel(kernel);
     return listPartsRaw(projectPath, k).map((p) => {
       const source = deps.resolveModelSource(projectPath, p.name, k);
+      const motionSource = deps.resolveMotionSource(projectPath, p.name, k);
       const cache = deps.modelCacheFile(projectPath, p.name, source, k);
       let size = 0; let mtime = 0;
       if (cache && fs.existsSync(cache)) {
@@ -292,8 +300,11 @@ function createMainLogicTools({ state, deps }) {
       return {
         name: p.name,
         kind: p.kind,
+        sourceKind: source?.kind || p.sourceKind || null,
         sourceFile: p.sourceFile,
         description: p.description,
+        hasMotionPreview: !!motionSource,
+        motionSourceFile: motionSource?.fileName || null,
         hasCache: size > 0,
         cacheSize: size,
         cacheMtime: mtime,
@@ -316,7 +327,7 @@ function createMainLogicTools({ state, deps }) {
     const rel = path.relative(state.currentProjectPath() || '', filePath).replace(/\\/g, '/');
     const ext = deps.sourceExt(state.currentKernel()).replace(/^\./, '');
     const asmMatch = /^models\/([^/]+)\/asm\.xml$/i.exec(rel);
-    if (asmMatch) return { name: asmMatch[1], kind: 'model', fileName: 'asm.xml' };
+    if (asmMatch) return { name: asmMatch[1], kind: 'motion', fileName: 'asm.xml' };
     const assemblyRe = new RegExp(`^models/([^/]+)/assembly\\.${ext}$`, 'i');
     const assemblyMatch = assemblyRe.exec(rel);
     if (assemblyMatch) return { name: assemblyMatch[1], kind: 'model', fileName: `assembly${deps.sourceExt(state.currentKernel())}` };
@@ -387,16 +398,38 @@ function createMainLogicTools({ state, deps }) {
     });
     state.setWatcher(watcher);
 
+    const refreshMotionPreview = (entry, deleted = false) => {
+      const finish = () => {
+        deps.maybeSendModelUpdated(entry.name);
+        broadcastPartsList();
+      };
+      if (deleted || typeof deps.prepareMotionPreview !== 'function') {
+        finish();
+        return;
+      }
+      deps.prepareMotionPreview(entry.name)
+        .catch((err) => deps.sendLog(`Motion preview refresh failed: ${err?.message || err}`, 'warn'))
+        .finally(finish);
+    };
+
     watcher.on('change', (filePath) => {
       const entry = partNameFromPath(filePath);
       if (!entry) return;
       deps.sendLog(`Model changed: models/${entry.name}/${entry.fileName}`);
+      if (entry.kind === 'motion') {
+        refreshMotionPreview(entry);
+        return;
+      }
       deps.markModelDirty(entry.name);
       deps.scheduleBuild(entry.name);
     });
     watcher.on('add', (filePath) => {
       const entry = partNameFromPath(filePath);
       if (entry) {
+        if (entry.kind === 'motion') {
+          refreshMotionPreview(entry);
+          return;
+        }
         deps.markModelDirty(entry.name);
         broadcastPartsList();
         deps.scheduleBuild(entry.name);
@@ -405,6 +438,10 @@ function createMainLogicTools({ state, deps }) {
     watcher.on('unlink', (filePath) => {
       const entry = partNameFromPath(filePath);
       if (entry) {
+        if (entry.kind === 'motion') {
+          refreshMotionPreview(entry, true);
+          return;
+        }
         deps.markModelDirty(entry.name);
         deps.scheduleBuild(entry.name);
       }
@@ -451,7 +488,8 @@ function createMainLogicTools({ state, deps }) {
           kernelLabel: meta.label,
           sourceFile: meta.sourceFile,
           sourceFiles: Object.values(deps.sourceFileOptions(state.currentKernel())),
-          previewFormat: 'MJCF',
+          previewFormat: meta.previewFormat,
+          supportsMotionPreview: true,
           supportsFaceIndex: false,
           active: state.activePart(),
           models: list
@@ -575,6 +613,7 @@ function initMainLogicTools(mainContext) {
     sourceExt: model.sourceExt,
     modelSourceFilename: model.modelSourceFilename,
     resolveModelSource: model.resolveModelSource,
+    resolveMotionSource: model.resolveMotionSource,
     partSource: model.partSource,
     partReadme: model.partReadme,
     modelPartDir: model.modelPartDir,
@@ -613,6 +652,7 @@ function initMainLogicTools(mainContext) {
       sourceExt: sharedDeps.sourceExt,
       modelSourceFilename: sharedDeps.modelSourceFilename,
       resolveModelSource: sharedDeps.resolveModelSource,
+      resolveMotionSource: sharedDeps.resolveMotionSource,
       partSource: sharedDeps.partSource,
       modelDir: sharedDeps.modelDir,
       modelParamsPath: sharedDeps.modelParamsPath,
@@ -641,6 +681,7 @@ function initMainLogicTools(mainContext) {
       isModelBuildDirty: rebuildApi.isModelBuildDirty,
       markModelDirty: rebuildApi.markModelDirty,
       scheduleBuild: rebuildApi.scheduleBuild,
+      prepareMotionPreview: rebuildApi.prepareMotionPreview,
       maybeSendModelUpdated: rebuildApi.maybeSendModelUpdated,
       prepareModelDeletion: rebuildApi.prepareModelDeletion,
       rebuildPartSync: rebuildApi.rebuildPartSync,
@@ -654,7 +695,7 @@ function initMainLogicTools(mainContext) {
     runBuild: rebuildApi.runBuild,
     runBuildPython: rebuildApi.runBuildPython,
     validateMjcfAssemblyReferences: rebuildApi.validateMjcfAssemblyReferences,
-    runBuildMjcf: rebuildApi.runBuildMjcf,
+    prepareMotionPreview: rebuildApi.prepareMotionPreview,
     resolveBuildWaiters: rebuildApi.resolveBuildWaiters,
     prepareModelDeletion: rebuildApi.prepareModelDeletion,
     resolvePartLoadedWaiters: rebuildApi.resolvePartLoadedWaiters,

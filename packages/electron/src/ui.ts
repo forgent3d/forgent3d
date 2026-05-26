@@ -18,6 +18,9 @@ export function initUI(viewer) {
     previewToolbar: document.getElementById('preview-toolbar'),
     viewCubeHost: document.getElementById('viewcube-host'),
     viewControlPanel: document.getElementById('view-control-panel'),
+    sourcePreviewBtns: document.querySelectorAll('[data-source-preview]'),
+    previewCadBtn: document.getElementById('preview-cad'),
+    previewMotionBtn: document.getElementById('preview-motion'),
     viewModeBtns: document.querySelectorAll('[data-preview-mode]'),
     viewShowcaseBtn: document.getElementById('view-showcase'),
     viewExplodeBtn: document.getElementById('view-explode'),
@@ -125,6 +128,7 @@ export function initUI(viewer) {
   const assemblyPayloads = new Map();
   const buildingModels = new Set();
   const expandedModels = new Set();
+  let activeSourcePreviewMode = 'cad';
   const LEFT_SIDEBAR_PREF_KEY = 'forgent3d.leftSidebarVisible';
   let leftSidebarVisible = false;
   let openFirstModelWizardAfterProjectOpen = false;
@@ -169,11 +173,7 @@ export function initUI(viewer) {
 
   function activeExportTargetState() {
     if (!activePart) return { exportable: false };
-    const model = partsCache.find((p) => p.name === activePart);
-    if (!model) return { exportable: true };
-    const isAsm = String(model.sourceFile || '').toLowerCase() === 'asm.xml';
-    if (!isAsm) return { exportable: true };
-    return { exportable: selectedModelPartModel === activePart && !!selectedModelPart };
+    return { exportable: true };
   }
 
   function syncExportControls() {
@@ -526,6 +526,7 @@ export function initUI(viewer) {
     applyLayoutVisibility();
     renderModelNameBadge();
     syncShareButton();
+    syncSourcePreviewControls();
     renderPartsList();
     viewerUi.renderAll();
     if (!currentProject) {
@@ -548,6 +549,7 @@ export function initUI(viewer) {
       selectedModelPart = null;
       selectedModelPartModel = null;
       displayedModelPart = null;
+      activeSourcePreviewMode = 'cad';
       assemblyPayloads.clear();
       expandedModels.clear();
       if (typeof viewer.setSelectedPart === 'function') viewer.setSelectedPart(null);
@@ -565,6 +567,7 @@ export function initUI(viewer) {
     renderModelNameBadge();
     syncShareButton();
     syncExportControls();
+    syncSourcePreviewControls();
     viewerUi.renderAll();
     if (!p) paramsEditor.setIdle(t('selectModelParams'));
   }
@@ -620,6 +623,35 @@ export function initUI(viewer) {
     }
   }
 
+  function syncSourcePreviewControls(payload = assemblyPayloads.get(activePart)) {
+    const motionReady = !!payload?.motionReady && !!payload?.motionUrl;
+    if (activeSourcePreviewMode === 'motion' && !motionReady) activeSourcePreviewMode = 'cad';
+    el.sourcePreviewBtns?.forEach((btn) => {
+      const mode = btn.dataset.sourcePreview || 'cad';
+      const active = mode === activeSourcePreviewMode;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      btn.disabled = mode === 'motion' && !motionReady;
+      if (mode === 'motion') {
+        btn.title = payload?.hasMotionPreview
+          ? (motionReady ? t('motionPreview') : t('buildingPart', { part: activePart || '' }))
+          : t('motionPreview');
+      }
+    });
+  }
+
+  function previewPayloadForMode(payload) {
+    const motionReady = !!payload?.motionReady && !!payload?.motionUrl;
+    const mode = activeSourcePreviewMode === 'motion' && motionReady ? 'motion' : 'cad';
+    if (mode !== activeSourcePreviewMode) activeSourcePreviewMode = mode;
+    return {
+      mode,
+      url: mode === 'motion' ? payload.motionUrl : payload.url,
+      paramsUrl: mode === 'motion' ? (payload.motionParamsUrl || payload.paramsUrl) : payload.paramsUrl,
+      format: mode === 'motion' ? (payload.motionFormat || 'MJCF') : (payload.format || 'BREP')
+    };
+  }
+
   async function showAssembly(modelName = activePart, { preserveView = true } = {}) {
     selectedModelPart = null;
     selectedModelPartModel = null;
@@ -636,16 +668,18 @@ export function initUI(viewer) {
     }
     if (typeof viewer.setSelectedPart === 'function') viewer.setSelectedPart(null);
     viewerUi.stopExplodedView();
-    const fmt = String(payload.format || 'BREP').toUpperCase();
+    syncSourcePreviewControls(payload);
+    const preview = previewPayloadForMode(payload);
+    const fmt = String(preview.format || 'BREP').toUpperCase();
     const partLabel = payload.part ? `[${payload.part}] ` : '';
     const loadingLabel = fmt === 'MJCF'
-      ? t('loadingMjcf')
+      ? t('loadingMotion')
       : (fmt === 'STL' ? t('parsingStl') : t('parsingBrep'));
     setStatus(`${partLabel}${loadingLabel} ...`, true);
     try {
-      const partInfo = await viewer.loadModel(payload.url, (msg) => appendLog(msg), {
+      const partInfo = await viewer.loadModel(preview.url, (msg) => appendLog(msg), {
         format: fmt,
-        paramsUrl: payload.paramsUrl,
+        paramsUrl: preview.paramsUrl,
         preserveView
       });
       if (payload?.part) loadedPart = payload.part;
@@ -861,6 +895,7 @@ export function initUI(viewer) {
       renderModelNameBadge();
       syncShareButton();
       syncExportControls();
+      syncSourcePreviewControls();
       paramsEditor.refresh();
     } catch (e) {
       appendLog(t('failedReadModels', { message: e.message }), 'error');
@@ -916,6 +951,16 @@ export function initUI(viewer) {
   el.modelKindBtns?.forEach((btn) => {
     btn.addEventListener('click', () => {
       setModelListKind(btn.dataset.kindFilter);
+    });
+  });
+
+  el.sourcePreviewBtns?.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.sourcePreview || 'cad';
+      if (mode === 'motion' && btn.disabled) return;
+      activeSourcePreviewMode = mode === 'motion' ? 'motion' : 'cad';
+      syncSourcePreviewControls();
+      if (activePart) showAssembly(activePart, { preserveView: true }).catch(() => {});
     });
   });
 
@@ -1432,6 +1477,7 @@ export function initUI(viewer) {
         renderModelNameBadge();
         syncShareButton();
         syncExportControls();
+        syncSourcePreviewControls();
         viewerUi.renderAll();
         paramsEditor.refresh();
         break;
@@ -1446,6 +1492,7 @@ export function initUI(viewer) {
         renderModelNameBadge();
         syncShareButton();
         syncExportControls();
+        syncSourcePreviewControls();
         viewerUi.renderAll();
         paramsEditor.refresh({ force: true });
         break;
@@ -1487,7 +1534,6 @@ export function initUI(viewer) {
           renderModelNameBadge();
           syncShareButton();
         }
-        const fmt = (payload.format || 'BREP').toUpperCase();
         const url = payload.url;
         if (!url) {
           appendLog(t('missingModelUrl'), 'warn');
@@ -1495,9 +1541,8 @@ export function initUI(viewer) {
         }
         if (payload.part) {
           assemblyPayloads.set(payload.part, { ...payload });
-        }
-        if (fmt === 'MJCF' && payload.part) {
           buildingModels.delete(payload.part);
+          syncSourcePreviewControls(payload);
         }
         const preserveView = !!payload.part && payload.part === loadedPart && typeof viewer.hasModel === 'function' && viewer.hasModel();
         const partLabel = payload.part ? `[${payload.part}] ` : '';
@@ -1508,12 +1553,7 @@ export function initUI(viewer) {
           showModelPart(payload.part, selectedPart).catch(() => {});
           break;
         }
-        if (fmt === 'MJCF' && payload.part && selectedModelPartModel === payload.part && selectedModelPart) {
-          const selectedPart = findModelPart(payload.part, selectedModelPart) || { name: selectedModelPart };
-          showModelPart(payload.part, selectedPart).catch(() => {});
-          break;
-        }
-        if (fmt === 'MJCF') {
+        if (payload.part) {
           showAssembly(payload.part, { preserveView }).then(async (partInfo) => {
             const explodeState = typeof viewer.getExplodeState === 'function' ? viewer.getExplodeState() : { enabled: false, available: false };
             if (explodeState.enabled && !explodeState.available) viewerUi.stopExplodedView();
@@ -1543,6 +1583,7 @@ export function initUI(viewer) {
           }).catch(() => {});
           break;
         }
+        const fmt = (payload.format || 'BREP').toUpperCase();
         setStatus(`${partLabel}${fmt === 'STL' ? t('parsingStl') : t('parsingBrep')} ...`, true);
         const sizeKB = payload.size ? (payload.size / 1024).toFixed(1) + ' KB' : '';
         viewer.loadModel(url, (msg) => appendLog(msg), {

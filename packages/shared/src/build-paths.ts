@@ -6,10 +6,17 @@ export const CACHE_DIR = '.cache';
 export const PROJECT_META_DIR = '.aicad';
 export const PROJECT_META_FILE = 'project.json';
 
-export type ModelSourceKind = 'assembly' | 'asm' | 'part';
+export type ModelSourceKind = 'assembly' | 'part';
 
 export type ResolvedModelSource = {
   kind: ModelSourceKind;
+  fileName: string;
+  /** Project-relative path with forward slashes */
+  relPath: string;
+};
+
+export type ResolvedMotionSource = {
+  kind: 'motion';
   fileName: string;
   /** Project-relative path with forward slashes */
   relPath: string;
@@ -61,11 +68,10 @@ export function modelCacheRel(
   kernel: CadKernel = 'build123d'
 ): string | null {
   if (!source) return null;
-  if (source.kind === 'asm') return source.relPath;
   return joinPosix(CACHE_DIR, `${name}${kernelMeta(kernel).cacheExt}`);
 }
 
-/** Pick the primary model source file when multiple exist (assembly > asm > flat part). */
+/** Pick the primary CAD model source file when multiple exist (assembly > flat part). */
 export function resolveModelSourceRel(
   existingRelPaths: Iterable<string>,
   modelName: string,
@@ -75,7 +81,6 @@ export function resolveModelSourceRel(
   const dir = modelDirRel(modelName);
   const candidates: Array<{ kind: ModelSourceKind; fileName: string }> = [
     { kind: 'assembly', fileName: modelSourceFilename(k, 'assembly') },
-    { kind: 'asm', fileName: modelSourceFilename(k, 'asm') },
     { kind: 'part', fileName: modelSourceFilename(k, 'part') }
   ];
   const set = new Set(existingRelPaths);
@@ -84,6 +89,17 @@ export function resolveModelSourceRel(
     if (set.has(relPath)) return { kind, fileName, relPath };
   }
   return null;
+}
+
+/** Optional MJCF motion-preview source; never selected as the CAD export/build target. */
+export function resolveMotionSourceRel(
+  existingRelPaths: Iterable<string>,
+  modelName: string
+): ResolvedMotionSource | null {
+  const relPath = joinPosix(modelDirRel(modelName), 'asm.xml');
+  return new Set(existingRelPaths).has(relPath)
+    ? { kind: 'motion', fileName: 'asm.xml', relPath }
+    : null;
 }
 
 export function projectMetaRel(): string {

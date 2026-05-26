@@ -31,11 +31,13 @@ export {
   partCacheRel,
   modelCacheRel,
   resolveModelSourceRel,
+  resolveMotionSourceRel,
   projectMetaRel,
   modelSourceFilename,
   sourceExt,
   type ModelSourceKind,
-  type ResolvedModelSource
+  type ResolvedModelSource,
+  type ResolvedMotionSource
 } from './build-paths.js';
 
 export {
