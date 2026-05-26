@@ -29,8 +29,7 @@ if (isAllowedOrigin()) {
     capabilities: {
       desktop: true,
       tools: true,
-      desktopPython: true,
-      cloudCodeImport: true
+      desktopPython: true
     },
     getEnvironment: async () => {
       const startedAt = Date.now();
@@ -51,31 +50,9 @@ if (isAllowedOrigin()) {
           desktop: true,
           tools: true,
           desktopPython: true,
-          cloudCodeImport: true,
           ...(info?.capabilities || {})
         }
       };
-    },
-    importCloudCodePackage: async (opts) => {
-      const startedAt = Date.now();
-      bridgeDebug('importCloudCodePackage -> ipc invoke', {
-        modelId: opts?.modelId || '',
-        modelName: opts?.modelName || ''
-      });
-      try {
-        const result = await ipcRenderer.invoke('agent:importCloudCodePackage', opts || {});
-        bridgeDebug('importCloudCodePackage <- ipc result', {
-          elapsedMs: Date.now() - startedAt,
-          projectPath: result?.projectPath || ''
-        });
-        return result;
-      } catch (e) {
-        bridgeDebug('importCloudCodePackage <- ipc error', {
-          elapsedMs: Date.now() - startedAt,
-          error: e?.message || String(e)
-        });
-        throw e;
-      }
     },
     callTool: async (name, args) => {
       const callId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;

@@ -3,9 +3,9 @@ export_runner.py - Auto-managed by AI CAD Companion Viewer (do not edit manually
 ----------------------------------------------------------------------------
 Responsibilities:
   * Accept --model <name> (and legacy --part <name>);
-  * Optionally support on-demand exports via --export-format/--output (step/stl/brep);
+  * Optionally support on-demand exports via --export-format/--output (step/stl/obj/brep/glb/3mf);
   * Load models/<model>/parts/<part-name>/part.py and read a geometry object named result;
-  * Export build123d geometry to .cache/<name>.brep (and STEP/STL) via OCCT APIs;
+  * Export build123d geometry to .cache/<name>.brep and requested exchange/mesh formats;
   * Let the frontend parse BREP via occt-import-js for geometry inspection.
 """
 import os
@@ -18,8 +18,11 @@ if sys.platform == "win32":
 
 import argparse
 import json
+import struct
+import tempfile
 import time
 import traceback
+import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = HERE
@@ -92,6 +95,159 @@ def _write_stl(shape, path_out):
         return "OCP.StlAPI_Writer"
     except Exception as exc:
         raise RuntimeError(f"Unable to export STL: {exc}")
+
+
+def _xml_escape_text(value):
+    return (
+        str(value if value is not None else "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _xml_escape_attr(value):
+    return _xml_escape_text(value).replace('"', "&quot;").replace("'", "&apos;")
+
+
+def _format_3mf_number(value):
+    num = float(value)
+    if abs(num) < 1e-9:
+        num = 0.0
+    if num.is_integer():
+        return str(int(num))
+    return f"{num:.6f}".rstrip("0").rstrip(".") or "0"
+
+
+def _rgba_to_3mf_color(rgba):
+    if not rgba:
+        rgba = (0xb0 / 255, 0xb0 / 255, 0xb0 / 255, 1.0)
+    values = []
+    for i, fallback in enumerate((0.69, 0.69, 0.69, 1.0)):
+        try:
+            v = float(rgba[i])
+        except Exception:
+            v = fallback
+        values.append(max(0, min(255, round(max(0.0, min(1.0, v)) * 255))))
+    return "#" + "".join(f"{v:02X}" for v in values)
+
+
+def _read_stl_triangles(path_in):
+    with open(path_in, "rb") as f:
+        data = f.read()
+    if len(data) >= 84:
+        tri_count = struct.unpack("<I", data[80:84])[0]
+        expected = 84 + tri_count * 50
+        if expected == len(data):
+            triangles = []
+            offset = 84
+            for _ in range(tri_count):
+                values = struct.unpack("<12fH", data[offset:offset + 50])
+                triangles.append((
+                    (values[3], values[4], values[5]),
+                    (values[6], values[7], values[8]),
+                    (values[9], values[10], values[11]),
+                ))
+                offset += 50
+            return triangles
+
+    text = data.decode("utf-8", errors="ignore")
+    vertices = []
+    for line in text.splitlines():
+        parts = line.strip().split()
+        if len(parts) >= 4 and parts[0].lower() == "vertex":
+            try:
+                vertices.append((float(parts[1]), float(parts[2]), float(parts[3])))
+            except ValueError:
+                pass
+    if len(vertices) < 3 or len(vertices) % 3 != 0:
+        raise RuntimeError("Unable to parse STL triangles for mesh export")
+    return [(vertices[i], vertices[i + 1], vertices[i + 2]) for i in range(0, len(vertices), 3)]
+
+
+def _write_obj_mesh(triangles, path_out, title="Forgent3D model"):
+    if not triangles:
+        raise RuntimeError("OBJ export found no triangles")
+    with open(path_out, "w", encoding="utf-8", newline="\n") as f:
+        f.write("# Forgent3D OBJ export\n")
+        f.write(f"o {_xml_escape_text(title or 'model')}\n")
+        for tri in triangles:
+            for vertex in tri:
+                f.write(
+                    f"v {_format_3mf_number(vertex[0])} "
+                    f"{_format_3mf_number(vertex[1])} "
+                    f"{_format_3mf_number(vertex[2])}\n"
+                )
+        for i in range(0, len(triangles) * 3, 3):
+            f.write(f"f {i + 1} {i + 2} {i + 3}\n")
+
+
+def _write_3mf_archive(triangles, path_out, title="Forgent3D model", color=None):
+    if not triangles:
+        raise RuntimeError("3MF export found no triangles")
+    display_color = _rgba_to_3mf_color(color)
+    vertices_xml = []
+    triangles_xml = []
+    vertex_index = 0
+    for tri in triangles:
+        indices = []
+        for vertex in tri:
+            indices.append(vertex_index)
+            vertices_xml.append(
+                f'          <vertex x="{_format_3mf_number(vertex[0])}" '
+                f'y="{_format_3mf_number(vertex[1])}" '
+                f'z="{_format_3mf_number(vertex[2])}" />'
+            )
+            vertex_index += 1
+        triangles_xml.append(
+            f'          <triangle v1="{indices[0]}" v2="{indices[1]}" v3="{indices[2]}" />'
+        )
+
+    safe_title = _xml_escape_text(str(title or "Forgent3D model")[:128])
+    model_xml = "\n".join([
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">',
+        f'  <metadata name="Title">{safe_title}</metadata>',
+        '  <resources>',
+        '    <basematerials id="1">',
+        f'      <base name="Default" displaycolor="{display_color}" />',
+        '    </basematerials>',
+        f'    <object id="2" type="model" name="{_xml_escape_attr(title or "model")}" pid="1" pindex="0">',
+        '      <mesh>',
+        '        <vertices>',
+        *vertices_xml,
+        '        </vertices>',
+        '        <triangles>',
+        *triangles_xml,
+        '        </triangles>',
+        '      </mesh>',
+        '    </object>',
+        '  </resources>',
+        '  <build>',
+        '    <item objectid="2" />',
+        '  </build>',
+        '</model>',
+        '',
+    ])
+    content_types_xml = "\n".join([
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">',
+        '  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml" />',
+        '  <Override PartName="/3D/3dmodel.model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml" />',
+        '</Types>',
+        '',
+    ])
+    rels_xml = "\n".join([
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+        '  <Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" />',
+        '</Relationships>',
+        '',
+    ])
+    with zipfile.ZipFile(path_out, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", content_types_xml)
+        z.writestr("_rels/.rels", rels_xml)
+        z.writestr("3D/3dmodel.model", model_xml)
 
 
 # Keep in sync with packages/electron/src/viewer-materials.ts MATERIAL_PRESETS.
@@ -216,6 +372,44 @@ def _write_glb(shape, path_out, params=None):
         return "build123d.export_gltf"
     except Exception as exc:
         raise RuntimeError(f"Unable to export GLB: {exc}")
+
+
+def _write_3mf(shape, path_out, params=None, title="Forgent3D model"):
+    fd, tmp_stl = tempfile.mkstemp(suffix=".stl")
+    os.close(fd)
+    try:
+        _write_stl(shape, tmp_stl)
+        triangles = _read_stl_triangles(tmp_stl)
+    finally:
+        try:
+            os.unlink(tmp_stl)
+        except OSError:
+            pass
+
+    color = None
+    if isinstance(params, dict):
+        viewer = params.get("__viewer") or params.get("viewer") or {}
+        materials = viewer.get("materials") if isinstance(viewer, dict) else None
+        if isinstance(materials, dict):
+            color = _resolve_material_color(materials.get("default"))
+    _write_3mf_archive(triangles, path_out, title=title, color=color)
+    return "export_runner.3mf_from_stl_mesh"
+
+
+def _write_obj(shape, path_out, title="Forgent3D model"):
+    fd, tmp_stl = tempfile.mkstemp(suffix=".stl")
+    os.close(fd)
+    try:
+        _write_stl(shape, tmp_stl)
+        triangles = _read_stl_triangles(tmp_stl)
+    finally:
+        try:
+            os.unlink(tmp_stl)
+        except OSError:
+            pass
+
+    _write_obj_mesh(triangles, path_out, title=title)
+    return "export_runner.obj_from_stl_mesh"
 
 
 def _resolve_model_source(model_name: str, part_name: str, source_override: str = None):
@@ -383,7 +577,7 @@ def build_one(model_name: str, part_name: str = None, export_format: str = "brep
         return 8
 
     fmt = (export_format or "brep").strip().lower()
-    if fmt not in ("brep", "step", "stl", "glb"):
+    if fmt not in ("brep", "step", "stl", "obj", "glb", "3mf"):
         print(f"[export_runner] Unsupported export format: {fmt}", file=sys.stderr)
         return 7
 
@@ -402,6 +596,10 @@ def build_one(model_name: str, part_name: str = None, export_format: str = "brep
             method = _write_step(result, out)
         elif fmt == "glb":
             method = _write_glb(result, out, _load_model_params(model_name))
+        elif fmt == "obj":
+            method = _write_obj(result, out, model_name)
+        elif fmt == "3mf":
+            method = _write_3mf(result, out, _load_model_params(model_name), model_name)
         else:
             method = _write_stl(result, out)
         export_elapsed = time.perf_counter() - export_started
@@ -425,7 +623,7 @@ def main() -> int:
     parser.add_argument("--part", default=None, help="Legacy alias for --model")
     parser.add_argument("--part-name", default=None, help="Part directory name inside models/<model>/parts/")
     parser.add_argument("--source", default=None, help="Optional project-relative or absolute source file path (overrides default lookup)")
-    parser.add_argument("--export-format", default="brep", choices=["brep", "step", "stl", "glb"])
+    parser.add_argument("--export-format", default="brep", choices=["brep", "step", "stl", "obj", "glb", "3mf"])
     parser.add_argument("--output", default=None, help="Optional absolute path for exported file")
     args = parser.parse_args()
     global PROJECT_ROOT, MODELS_DIR, CACHE_DIR

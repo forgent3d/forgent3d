@@ -82,6 +82,7 @@ function createMainExportTools({ dialog, state, deps }) {
       case 'step': return '.step';
       case 'stl': return '.stl';
       case 'obj': return '.obj';
+      case '3mf': return '.3mf';
       default: return null;
     }
   }
@@ -301,29 +302,6 @@ function createMainExportTools({ dialog, state, deps }) {
     });
     stlExportPromises.set(key, promise);
     return promise;
-  }
-
-  async function convertStlToObj(stlPath, outPath, format) {
-    const THREE = require('three');
-    const [{ STLLoader }, { OBJExporter }] = await Promise.all([
-      importThreeExample('loaders/STLLoader.js'),
-      importThreeExample('exporters/OBJExporter.js')
-    ]);
-
-    const data = fs.readFileSync(stlPath);
-    const loader = new STLLoader();
-    const geometry = loader.parse(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
-    geometry.computeVertexNormals();
-    const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0xb0b0b0 }));
-    const scene = new THREE.Scene();
-    scene.add(mesh);
-
-    if (format === 'obj') {
-      const objText = new OBJExporter().parse(scene);
-      fs.writeFileSync(outPath, objText, 'utf-8');
-      return;
-    }
-    throw new Error(`Unsupported conversion format: ${format}`);
   }
 
   function parseNumberList(value, fallback = []) {
@@ -676,30 +654,11 @@ function createMainExportTools({ dialog, state, deps }) {
     if (!resolved) throw new Error(`Model does not exist: ${partName}`);
 
     if (resolved.kind === 'asm') {
-      if (format === 'step') {
-        throw new Error('MJCF assemblies can be exported as STL or OBJ only.');
-      }
-      if (format === 'stl' || format === 'obj') {
-        await exportAssemblyScene(resolved.sourcePath, outFile, format);
-        return;
-      }
-      throw new Error(`Unsupported export format: ${format}`);
+      throw new Error('MJCF assemblies are not CAD export targets. Select an individual generated part to export STEP/STL/OBJ/3MF.');
     }
 
-    if (format === 'step' || format === 'stl') {
+    if (format === 'step' || format === 'stl' || format === 'obj' || format === '3mf') {
       await runPythonExport(partName, partName, format, outFile, resolved.sourcePath);
-      return;
-    }
-    if (format === 'obj') {
-      const tmpStl = path.join(os.tmpdir(), `aicad-export-${partName}-${Date.now()}.stl`);
-      try {
-        await runPythonExport(partName, partName, 'stl', tmpStl, resolved.sourcePath);
-        await convertStlToObj(tmpStl, outFile, 'obj');
-      } finally {
-        try {
-          fs.unlinkSync(tmpStl);
-        } catch {}
-      }
       return;
     }
     throw new Error(`Unsupported export format: ${format}`);
@@ -836,7 +795,9 @@ function createMainExportTools({ dialog, state, deps }) {
     const fmt = ensureExportFormat(format);
     const ext = exportExt(fmt);
     const childPart = String(opts.partName || '').trim();
-    if (fmt === 'step' && source.kind === 'asm' && !childPart) throw new Error('MJCF assemblies can be exported as STL or OBJ only.');
+    if (source.kind === 'asm' && !childPart) {
+      throw new Error('MJCF assemblies are not CAD export targets. Select an individual generated part to export.');
+    }
     const exportName = childPart || cleanPart;
     const saveRes = await dialog.showSaveDialog(state.mainWindow(), {
       title: `Export ${exportName} as ${fmt.toUpperCase()}`,
@@ -847,12 +808,7 @@ function createMainExportTools({ dialog, state, deps }) {
 
     deps.sendLog(`[${childPart ? `${cleanPart}/${childPart}` : cleanPart}] Exporting ${fmt.toUpperCase()}...`);
     if (childPart) {
-      if (fmt === 'obj') {
-        const stlPath = await ensurePartStlArtifact(cleanPart, childPart);
-        await convertStlToObj(stlPath, saveRes.filePath, fmt);
-      } else {
-        await runPythonExport(cleanPart, childPart, fmt, saveRes.filePath);
-      }
+      await runPythonExport(cleanPart, childPart, fmt, saveRes.filePath);
     } else {
       await generateExportFile(cleanPart, fmt, saveRes.filePath, source);
     }
@@ -864,7 +820,6 @@ function createMainExportTools({ dialog, state, deps }) {
     ensureExportFormat,
     runCommandCollect,
     runPythonExport,
-    convertStlToObj,
     generateExportFile,
     ensurePartStlArtifact,
     exportPartByRequest,

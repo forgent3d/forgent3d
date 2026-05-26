@@ -85,6 +85,8 @@ protocol.registerSchemesAsPrivileged([
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 let rendererReadyForDesktopAuth = false;
 const pendingDesktopAuthCallbacks = [];
+const pendingCloudImports = [];
+let importCloudCodePackageFromCloud = null;
 
 app.on('open-url', (event, url) => {
   event.preventDefault();
@@ -116,7 +118,7 @@ const CACHE_DIR = '.cache';
 const PROJECT_META_DIR = '.aicad';
 const PROJECT_META_FILE = 'project.json';
 let cachedElectronExportRunnerPath = null;
-const EXPORT_FORMATS = ['step', 'stl', 'obj'];
+const EXPORT_FORMATS = ['step', 'stl', 'obj', '3mf'];
 const SCREENSHOT_VIEWS = ['iso', 'front', 'side', 'top'];
 const PLATFORM_TAG = `${process.platform}-${process.arch}`;
 const BUNDLED_RUNNER_NAME = process.platform === 'win32'
@@ -349,15 +351,51 @@ function handleDeepLink(rawUrl) {
   } catch {
     return false;
   }
-  if (parsed.protocol !== 'aicad:' || parsed.hostname !== 'auth') return false;
+  if (parsed.protocol !== 'aicad:') return false;
 
-  const token = parsed.searchParams.get('token') || '';
-  const baseUrl = parsed.searchParams.get('baseUrl') || '';
-  const projectPath = parsed.searchParams.get('projectPath') || currentProjectPath || '';
-  const language = normalizeLanguage(parsed.searchParams.get('lang') || parsed.searchParams.get('language') || getLanguage());
-  if (!token || !baseUrl) return false;
+  if (parsed.hostname === 'auth') {
+    const token = parsed.searchParams.get('token') || '';
+    const baseUrl = parsed.searchParams.get('baseUrl') || '';
+    const projectPath = parsed.searchParams.get('projectPath') || currentProjectPath || '';
+    const language = normalizeLanguage(parsed.searchParams.get('lang') || parsed.searchParams.get('language') || getLanguage());
+    if (!token || !baseUrl) return false;
+    return handleDesktopAuthCallback({ token, baseUrl, projectPath, language });
+  }
 
-  return handleDesktopAuthCallback({ token, baseUrl, projectPath, language });
+  if (parsed.hostname === 'import') {
+    const modelId = parsed.searchParams.get('modelId') || '';
+    const modelName = parsed.searchParams.get('modelName') || '';
+    return handleCloudImportRequest({ modelId, modelName });
+  }
+
+  return false;
+}
+
+function handleCloudImportRequest({ modelId, modelName }) {
+  const id = String(modelId || '').trim();
+  if (!id) return false;
+  pendingCloudImports.push({ modelId: id, modelName: String(modelName || '') });
+  ensureMainWindowForDeepLink();
+  flushPendingCloudImports();
+  return true;
+}
+
+function flushPendingCloudImports() {
+  if (!importCloudCodePackageFromCloud || !uiTools || !mainWindow || mainWindow.isDestroyed()) return;
+  if (!pendingCloudImports.length) return;
+  const items = pendingCloudImports.splice(0);
+  for (const { modelId, modelName } of items) {
+    importCloudCodePackageFromCloud(modelId, modelName)
+      .then((result) => {
+        sendToRenderer('CLOUD_IMPORT_RESULT', { ok: true, modelId, modelName, ...(result || {}) });
+      })
+      .catch((err) => {
+        const message = String(err?.message || err);
+        sendLog(`Cloud import failed${modelName ? ` for "${modelName}"` : ''}: ${message}`, 'warn');
+        sendToRenderer('CLOUD_IMPORT_RESULT', { ok: false, modelId, modelName, error: message });
+      });
+  }
+  focusMainWindow();
 }
 
 function handlePossibleDeepLinks(argv) {
@@ -497,7 +535,7 @@ function createWindow() {
 }
 
 function registerIpc() {
-  registerIpcHandlers({
+  const handles = registerIpcHandlers({
     ipcMain,
     clipboard,
     dialog,
@@ -552,6 +590,8 @@ function registerIpc() {
       refreshAgentWorkspace
     }
   });
+  importCloudCodePackageFromCloud = handles?.importCloudCodePackageInto || null;
+  flushPendingCloudImports();
 }
 
 function rebuildAppMenu() {
@@ -677,8 +717,12 @@ function initModuleTools() {
         sendLog: (...args) => sendLog(...args),
         refreshAgentWorkspace: (...args) => refreshAgentWorkspace(...args),
         flushPendingDesktopAuthCallbacks: (...args) => flushPendingDesktopAuthCallbacks(...args),
-        markRendererDesktopAuthReady: (ready) => { rendererReadyForDesktopAuth = !!ready; },
-        handleDesktopAuthCallback: (...args) => handleDesktopAuthCallback(...args)
+        markRendererDesktopAuthReady: (ready) => {
+          rendererReadyForDesktopAuth = !!ready;
+          if (ready) flushPendingCloudImports();
+        },
+        handleDesktopAuthCallback: (...args) => handleDesktopAuthCallback(...args),
+        handleCloudImportRequest: (...args) => handleCloudImportRequest(...args)
     }
   };
 

@@ -52,7 +52,12 @@
       "Bash(grep -rn \"models/\\\\${name}\\\\|models/\\\\${modelName}\\\\|models/\\\\${model}\\\\|args\\\\.model\\\\|args\\\\.modelName\" /Users/vv/codes/forgent3d/packages/cad-agent /Users/vv/codes/forgent3d/packages/cf-sandbox/src)",
       "Bash(grep -rn \"cloudModelName\\\\|models/\\\\$\\\\|model.*\\\\${\" /Users/vv/codes/forgent3d/packages/cad-agent/app/api/agent /Users/vv/codes/forgent3d/packages/cad-agent/lib/aicad-agent)",
       "Bash(cat)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(cp /Users/vv/codes/forgent3d/packages/cad-agent/components/agent/cloud-code-package-button.tsx /tmp/btn-check.tsx)",
+      "Bash(npx --no-install tsc --noEmit --jsx preserve --target es2020 --module esnext --moduleResolution bundler --esModuleInterop --skipLibCheck --strict false /tmp/btn-check.tsx)",
+      "Bash(npx --no-install tsc --noEmit)",
+      "Bash(npx --no-install tsc --noEmit -p .)",
+      "Bash(npx --no-install tsc --noEmit -p tsconfig.electron.json)"
     ]
   }
 }

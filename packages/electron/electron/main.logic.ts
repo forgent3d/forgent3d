@@ -488,6 +488,9 @@ function createMainLogicTools({ state, deps }) {
       handleDesktopAuthCallback(payload) {
         return deps.handleDesktopAuthCallback?.(payload) === true;
       },
+      handleCloudImportRequest(payload) {
+        return deps.handleCloudImportRequest?.(payload) === true;
+      },
       async getPartScreenshot(name, view = 'iso', mode = 'solid') {
         if (!state.currentProjectPath()) return null;
         if (!deps.resolveModelSource(state.currentProjectPath(), name)) return null;
@@ -592,7 +595,8 @@ function initMainLogicTools(mainContext) {
     rebuildAppMenu: ui.rebuildAppMenu,
     sendToRenderer: ui.sendToRenderer,
     sendLog: ui.sendLog,
-    handleDesktopAuthCallback: ui.handleDesktopAuthCallback
+    handleDesktopAuthCallback: ui.handleDesktopAuthCallback,
+    handleCloudImportRequest: ui.handleCloudImportRequest
   };
 
   let logicApi;

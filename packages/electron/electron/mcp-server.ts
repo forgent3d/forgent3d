@@ -41,8 +41,7 @@ function sessionIdFromReq(req) {
   return String(req.headers['mcp-session-id'] || '').trim();
 }
 
-function writeDesktopAuthResponse(res, ok, message) {
-  const title = ok ? 'Forgent3D login complete' : 'Forgent3D login failed';
+function writeStatusHtml(res, ok, title, message) {
   res.writeHead(ok ? 200 : 400, { 'Content-Type': 'text/html; charset=utf-8' });
   res.end(`<!doctype html>
 <meta charset="utf-8">
@@ -52,6 +51,14 @@ function writeDesktopAuthResponse(res, ok, message) {
   <p>${message}</p>
   <script>setTimeout(() => window.close(), 800);</script>
 </body>`);
+}
+
+function writeDesktopAuthResponse(res, ok, message) {
+  writeStatusHtml(res, ok, ok ? 'Forgent3D login complete' : 'Forgent3D login failed', message);
+}
+
+function writeDesktopImportResponse(res, ok, message) {
+  writeStatusHtml(res, ok, ok ? 'Forgent3D import started' : 'Forgent3D import failed', message);
 }
 
 function buildMcpServer(ctx, { McpServer, z }) {
@@ -192,6 +199,32 @@ async function start(ctx, { port = 41234 } = {}) {
           ok
             ? 'You can return to the Forgent3D desktop app.'
             : 'The desktop app did not accept this login callback. Make sure the dev app is still running.'
+        );
+        return;
+      }
+
+      if (u.pathname === '/desktop-import/probe') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      if (u.pathname === '/desktop-import/callback') {
+        if (req.method !== 'GET') {
+          res.writeHead(405, { 'Content-Type': 'text/plain', Allow: 'GET, OPTIONS' });
+          res.end('Method Not Allowed');
+          return;
+        }
+        const ok = ctx.handleCloudImportRequest?.({
+          modelId: u.searchParams.get('modelId') || '',
+          modelName: u.searchParams.get('modelName') || ''
+        }) === true;
+        writeDesktopImportResponse(
+          res,
+          ok,
+          ok
+            ? 'You can return to the Forgent3D desktop app to see the imported model.'
+            : 'The desktop app did not accept this import. Make sure a project is open in Forgent3D and try again.'
         );
         return;
       }

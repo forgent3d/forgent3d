@@ -167,13 +167,13 @@ export function initUI(viewer) {
     if (el.btnToggleLeftHandle) el.btnToggleLeftHandle.classList.toggle('hidden', leftSidebarVisible || !hasProject);
   }
 
-  function activeModelSupportsStepExport() {
-    if (!activePart) return false;
+  function activeExportTargetState() {
+    if (!activePart) return { exportable: false };
     const model = partsCache.find((p) => p.name === activePart);
-    if (!model) return true;
+    if (!model) return { exportable: true };
     const isAsm = String(model.sourceFile || '').toLowerCase() === 'asm.xml';
-    if (!isAsm) return true;
-    return selectedModelPartModel === activePart && !!selectedModelPart;
+    if (!isAsm) return { exportable: true };
+    return { exportable: selectedModelPartModel === activePart && !!selectedModelPart };
   }
 
   function syncExportControls() {
@@ -181,15 +181,13 @@ export function initUI(viewer) {
     const hasActivePart = !!activePart;
     if (!el.selectExportFormat || !el.btnExportActive) return;
 
-    const stepEnabled = activeModelSupportsStepExport();
+    const exportState = activeExportTargetState();
+    const exportEnabled = hasProject && hasActivePart && exportState.exportable;
     for (const option of Array.from(el.selectExportFormat.options || [])) {
-      option.disabled = option.value === 'step' && !stepEnabled;
+      option.disabled = !exportEnabled;
     }
-    if (!stepEnabled && el.selectExportFormat.value === 'step') {
-      el.selectExportFormat.value = 'stl';
-    }
-    el.selectExportFormat.disabled = !hasProject || !hasActivePart;
-    el.btnExportActive.disabled = !hasProject || !hasActivePart;
+    el.selectExportFormat.disabled = !exportEnabled;
+    el.btnExportActive.disabled = !exportEnabled;
   }
 
   const viewerUi = createViewerUiController({

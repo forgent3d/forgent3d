@@ -59,6 +59,7 @@ function createMainUiTools({
       exportStep: 'Export STEP...',
       exportStl: 'Export STL...',
       exportObj: 'Export OBJ...',
+      export3mf: 'Export 3MF...',
       quit: 'Quit',
       edit: 'Edit',
       undo: 'Undo',
@@ -119,6 +120,7 @@ function createMainUiTools({
       exportStep: '导出 STEP...',
       exportStl: '导出 STL...',
       exportObj: '导出 OBJ...',
+      export3mf: '导出 3MF...',
       quit: '退出',
       edit: '编辑',
       undo: '撤销',
@@ -316,6 +318,12 @@ function createMainUiTools({
     };
   }
 
+  function canExportActiveModelFromMenu() {
+    if (!state.currentProjectPath() || !state.activePart()) return false;
+    const source = deps.resolveModelSource?.(state.currentProjectPath(), state.activePart(), state.currentKernel?.());
+    return !!source && source.kind !== 'asm';
+  }
+
   async function checkForUpdatesFromMenu() {
     const { checkForUpdatesFromMenu: runCheck } = require('./auto-updater');
     await runCheck();
@@ -323,6 +331,7 @@ function createMainUiTools({
 
   function rebuildAppMenu() {
     const hasProject = !!state.currentProjectPath();
+    const canExportActiveModel = canExportActiveModelFromMenu();
     const appName = app.getName?.() || 'Forgent3D';
     const template = [
       {
@@ -371,11 +380,12 @@ function createMainUiTools({
           },
           {
             label: t('exportCurrentModel'),
-            enabled: hasProject && !!state.activePart(),
+            enabled: canExportActiveModel,
             submenu: [
-              { label: t('exportStep'), enabled: hasProject && !!state.activePart(), click: () => deps.handleExportFromMenu('step') },
-              { label: t('exportStl'), enabled: hasProject && !!state.activePart(), click: () => deps.handleExportFromMenu('stl') },
-              { label: t('exportObj'), enabled: hasProject && !!state.activePart(), click: () => deps.handleExportFromMenu('obj') }
+              { label: t('exportStep'), enabled: canExportActiveModel, click: () => deps.handleExportFromMenu('step') },
+              { label: t('exportStl'), enabled: canExportActiveModel, click: () => deps.handleExportFromMenu('stl') },
+              { label: t('exportObj'), enabled: canExportActiveModel, click: () => deps.handleExportFromMenu('obj') },
+              { label: t('export3mf'), enabled: canExportActiveModel, click: () => deps.handleExportFromMenu('3mf') }
             ]
           },
           { type: 'separator' },

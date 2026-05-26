@@ -44,14 +44,6 @@ function safeTrashSegment(name) {
     .slice(0, 80) || 'model';
 }
 
-function safeImportSegment(name) {
-  return String(name || 'cloud-model')
-    .trim()
-    .replace(/[^a-zA-Z0-9._-]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 80) || 'cloud-model';
-}
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -89,6 +81,16 @@ function runProcess(command, args, opts = {}) {
   });
 }
 
+function uniqueModelName(modelsDir, baseName) {
+  let suffix = 2;
+  let candidate = `${baseName}-${suffix}`;
+  while (fs.existsSync(path.join(modelsDir, candidate))) {
+    suffix += 1;
+    candidate = `${baseName}-${suffix}`;
+  }
+  return candidate;
+}
+
 function validateTarEntries(listText) {
   const entries = String(listText || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   if (!entries.length) throw new Error('Cloud code package is empty.');
@@ -98,15 +100,6 @@ function validateTarEntries(listText) {
       throw new Error(`Cloud code package contains an unsafe path: ${entry}`);
     }
   }
-}
-
-function uniqueImportProjectDir(modelName, modelId) {
-  const baseRoot = path.join(electronApp.getPath('documents') || electronApp.getPath('userData'), 'Forgent3D Cloud Imports');
-  const baseName = safeImportSegment(modelName || modelId || 'cloud-model');
-  let target = path.join(baseRoot, baseName);
-  let suffix = 2;
-  while (fs.existsSync(target)) target = path.join(baseRoot, `${baseName}-${suffix++}`);
-  return target;
 }
 
 function getAgentApiBase() {
@@ -1035,16 +1028,20 @@ function registerIpcHandlers({
       capabilities: {
         desktop: true,
         tools: true,
-        desktopPython: true,
-        cloudCodeImport: true
+        desktopPython: true
       }
     };
   });
 
-  ipcMain.handle('agent:importCloudCodePackage', async (_evt, payload) => {
-    const modelId = String(payload?.modelId || '').trim();
-    const modelName = String(payload?.modelName || '').trim();
+  async function importCloudCodePackageInto(rawModelId, rawModelName) {
+    const modelId = String(rawModelId || '').trim();
+    const modelName = String(rawModelName || '').trim();
     if (!modelId) throw new Error('modelId is required.');
+
+    const currentProject = state.currentProjectPath?.();
+    if (!currentProject) {
+      throw new Error('Open a project in Forgent3D first, then retry the cloud import.');
+    }
 
     const { rawBase, cookieHeader } = await getAgentAuthHeaders();
     const url = new URL(rawBase + '/api/agent/code-package');
@@ -1057,11 +1054,10 @@ function registerIpcHandlers({
       await readShareApiError(response, `Download code package failed: ${response.status}`);
     }
 
-    const targetDir = uniqueImportProjectDir(modelName, modelId);
     const tmpDir = path.join(electronApp.getPath('temp'), `forgent3d-cloud-import-${process.pid}-${Date.now()}`);
+    const extractDir = path.join(tmpDir, 'extract');
     const archivePath = path.join(tmpDir, 'workspace-snapshot.tar.gz');
-    fs.mkdirSync(tmpDir, { recursive: true });
-    fs.mkdirSync(targetDir, { recursive: true });
+    fs.mkdirSync(extractDir, { recursive: true });
     try {
       const bytes = Buffer.from(await response.arrayBuffer());
       if (!bytes.length) throw new Error('Cloud code package is empty.');
@@ -1069,28 +1065,88 @@ function registerIpcHandlers({
 
       const list = await runProcess('tar', ['-tzf', archivePath]);
       validateTarEntries(list.stdout);
-      await runProcess('tar', ['-xzf', archivePath, '-C', targetDir]);
+      await runProcess('tar', ['-xzf', archivePath, '-C', extractDir]);
 
-      const projectMeta = path.join(targetDir, '.aicad', 'project.json');
-      if (!fs.existsSync(projectMeta)) {
-        throw new Error('Imported code package is missing .aicad/project.json.');
+      const sourceModelsDir = path.join(extractDir, 'models');
+      if (!fs.existsSync(sourceModelsDir) || !fs.statSync(sourceModelsDir).isDirectory()) {
+        throw new Error('Imported code package does not contain a models/ directory.');
       }
-      await deps.openProject(targetDir, { runImmediately: true });
-      deps.sendLog?.(`Imported cloud model${modelName ? ` "${modelName}"` : ''} to ${targetDir}.`);
+
+      const sourceModelNames = fs.readdirSync(sourceModelsDir).filter((entry) => {
+        try { return fs.statSync(path.join(sourceModelsDir, entry)).isDirectory(); } catch { return false; }
+      });
+      if (!sourceModelNames.length) {
+        throw new Error('Imported code package contains no models.');
+      }
+
+      const targetModelsDir = path.join(currentProject, 'models');
+      fs.mkdirSync(targetModelsDir, { recursive: true });
+
+      const colliding = sourceModelNames.filter((name) =>
+        fs.existsSync(path.join(targetModelsDir, name))
+      );
+
+      const renameMap = new Map();
+      if (colliding.length) {
+        const parentWindow = state.mainWindow?.() || null;
+        const choice = await dialog.showMessageBox(parentWindow, {
+          type: 'question',
+          title: 'Import cloud model',
+          message: colliding.length === 1
+            ? `Model "${colliding[0]}" already exists in the current project.`
+            : `${colliding.length} models already exist in the current project: ${colliding.join(', ')}`,
+          detail: '"Add as new" keeps the existing model and imports a copy with a numeric suffix. "Overwrite" replaces the existing model with the cloud version.',
+          buttons: ['Add as new', 'Overwrite', 'Cancel'],
+          defaultId: 0,
+          cancelId: 2,
+          noLink: true
+        });
+        if (choice.response === 2) {
+          return { ok: false, cancelled: true, modelId, modelName, projectPath: currentProject };
+        }
+        if (choice.response === 0) {
+          for (const name of colliding) {
+            renameMap.set(name, uniqueModelName(targetModelsDir, name));
+          }
+        }
+      }
+
+      const importedNames = [];
+      for (const name of sourceModelNames) {
+        const sourceDir = path.join(sourceModelsDir, name);
+        const finalName = renameMap.get(name) || name;
+        const targetDir = path.join(targetModelsDir, finalName);
+        if (fs.existsSync(targetDir)) removeDirRecursive(targetDir);
+        await fs.promises.cp(sourceDir, targetDir, { recursive: true });
+        importedNames.push(finalName);
+      }
+
+      const primaryRequested =
+        modelName && renameMap.has(modelName) ? renameMap.get(modelName) : modelName;
+      const primaryName =
+        primaryRequested && importedNames.includes(primaryRequested)
+          ? primaryRequested
+          : importedNames[0];
+
+      try { deps.broadcastPartsList?.(); } catch {}
+      if (primaryName) {
+        try { deps.selectPart?.(primaryName); } catch {}
+        try { deps.scheduleBuild?.(primaryName); } catch {}
+      }
+
+      deps.sendLog?.(`Imported cloud model${primaryName ? ` "${primaryName}"` : ''} into ${currentProject}.`);
       return {
         ok: true,
-        projectPath: targetDir,
+        projectPath: currentProject,
         modelId,
-        modelName,
+        modelName: primaryName || '',
+        importedModels: importedNames,
         codeKey: response.headers.get('X-Code-Key') || ''
       };
-    } catch (error) {
-      try { removeDirRecursive(targetDir); } catch {}
-      throw error;
     } finally {
       try { removeDirRecursive(tmpDir); } catch {}
     }
-  });
+  }
 
   ipcMain.handle('agent:callTool', async (_evt, payload) => {
     const name = String(payload?.name || '').trim();
@@ -1179,6 +1235,8 @@ function registerIpcHandlers({
       desktopCallbackUrl: callbackUrl
     };
   });
+
+  return { importCloudCodePackageInto };
 }
 
 module.exports = {
