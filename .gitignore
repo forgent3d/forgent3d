@@ -21,3 +21,4 @@ packages/electron/vendor/export-runner/*/
 output.glb
 __pycache__
 *.pyc
+*.npmrc

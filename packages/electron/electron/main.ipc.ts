@@ -5,6 +5,7 @@ export {};
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { spawn } = require('child_process');
 const { app: electronApp } = require('electron');
 const bridgeTools = require('./agent-bridge-tools');
 const { MODEL_EXAMPLES } = require('./model-examples');
@@ -43,6 +44,14 @@ function safeTrashSegment(name) {
     .slice(0, 80) || 'model';
 }
 
+function safeImportSegment(name) {
+  return String(name || 'cloud-model')
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80) || 'cloud-model';
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -54,6 +63,50 @@ function isRetryableFsError(error) {
 
 function removeDirRecursive(target) {
   fs.rmSync(target, { recursive: true, force: true, maxRetries: 8, retryDelay: 200 });
+}
+
+function runProcess(command, args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: opts.cwd || undefined,
+      windowsHide: true,
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (chunk) => {
+      stdout += String(chunk || '');
+      if (stdout.length > 20000) stdout = stdout.slice(-20000);
+    });
+    child.stderr?.on('data', (chunk) => {
+      stderr += String(chunk || '');
+      if (stderr.length > 20000) stderr = stderr.slice(-20000);
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve({ stdout, stderr });
+      else reject(new Error(String(stderr || stdout || `${command} exited with code ${code}`)));
+    });
+  });
+}
+
+function validateTarEntries(listText) {
+  const entries = String(listText || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (!entries.length) throw new Error('Cloud code package is empty.');
+  for (const entry of entries) {
+    const normalized = entry.replace(/\\/g, '/').replace(/^\.\//, '');
+    if (!normalized || normalized.startsWith('/') || normalized.includes('/../') || normalized === '..' || normalized.startsWith('../')) {
+      throw new Error(`Cloud code package contains an unsafe path: ${entry}`);
+    }
+  }
+}
+
+function uniqueImportProjectDir(modelName, modelId) {
+  const baseRoot = path.join(electronApp.getPath('documents') || electronApp.getPath('userData'), 'Forgent3D Cloud Imports');
+  const baseName = safeImportSegment(modelName || modelId || 'cloud-model');
+  let target = path.join(baseRoot, baseName);
+  let suffix = 2;
+  while (fs.existsSync(target)) target = path.join(baseRoot, `${baseName}-${suffix++}`);
+  return target;
 }
 
 function getAgentApiBase() {
@@ -91,6 +144,35 @@ async function readShareApiError(response, fallbackMsg) {
   throw new Error(errorMsg);
 }
 
+async function resolveShareCloudModel(rawBase, cookieHeader, modelName, { create = false } = {}) {
+  const name = String(modelName || '').trim();
+  if (!name) throw new Error('Select a model first.');
+
+  const lookupUrl = new URL(rawBase + '/api/models');
+  lookupUrl.searchParams.set('name', name);
+  const lookupResponse = await fetch(lookupUrl, {
+    headers: { cookie: cookieHeader },
+  });
+  if (!lookupResponse.ok) {
+    await readShareApiError(lookupResponse, "Load model failed: " + lookupResponse.status);
+  }
+  const lookupData = await lookupResponse.json();
+  if (lookupData?.model?.id) return lookupData.model;
+  if (!create) return null;
+
+  const response = await fetch(rawBase + '/api/models', {
+    method: 'POST',
+    headers: { cookie: cookieHeader, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) {
+    await readShareApiError(response, "Create cloud model failed: " + response.status);
+  }
+  const data = await response.json();
+  if (!data?.model?.id) throw new Error('Cloud model was created without an id.');
+  return data.model;
+}
+
 function parsePreviewDataUrl(dataUrl) {
   if (typeof dataUrl !== 'string') return null;
   const m = /^data:image\/[a-zA-Z]+;base64,(.*)$/.exec(dataUrl.trim());
@@ -120,6 +202,35 @@ function appendShareUpload(formData, fieldName, buffer, filename, mimeType) {
     return;
   }
   formData.append(fieldName, new Blob([bytes], { type: mimeType }), filename);
+}
+
+const SHARE_CODE_EXTENSIONS = new Set(['.py', '.xml', '.json']);
+const SHARE_CODE_EXCLUDED_FILENAMES = new Set(['metadata.json']);
+
+function shouldIncludeShareCodeFile(filePath) {
+  const name = path.basename(filePath).toLowerCase();
+  if (SHARE_CODE_EXCLUDED_FILENAMES.has(name)) return false;
+  return SHARE_CODE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+}
+
+function addShareCodeDirectoryToArchive(archive, rootDir, archiveRoot) {
+  if (!fs.existsSync(rootDir)) return 0;
+  let count = 0;
+  function walk(currentDir) {
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        continue;
+      }
+      if (!entry.isFile() || !shouldIncludeShareCodeFile(fullPath)) continue;
+      const rel = path.relative(rootDir, fullPath).replace(/\\/g, '/');
+      archive.file(fullPath, { name: `${archiveRoot}/${rel}` });
+      count++;
+    }
+  }
+  walk(rootDir);
+  return count;
 }
 
 function registerIpcHandlers({
@@ -690,9 +801,11 @@ function registerIpcHandlers({
     if (!modelName) throw new Error('Select a model first.');
 
     const { rawBase, cookieHeader } = await getAgentAuthHeaders();
+    const cloudModel = await resolveShareCloudModel(rawBase, cookieHeader, modelName, { create: false });
+    if (!cloudModel?.id) return { published: false };
+
     const url = new URL(`${rawBase}/api/published-models/mine`);
-    url.searchParams.set('sourceProjectPath', projectPath);
-    url.searchParams.set('sourceModelName', modelName);
+    url.searchParams.set('modelId', cloudModel.id);
     const response = await fetch(url, { headers: { cookie: cookieHeader } });
     if (!response.ok) {
       await readShareApiError(response, `Share status failed: ${response.status}`);
@@ -707,12 +820,14 @@ function registerIpcHandlers({
     if (!modelName) throw new Error('Select a model first.');
 
     const { rawBase, cookieHeader } = await getAgentAuthHeaders();
+    const cloudModel = await resolveShareCloudModel(rawBase, cookieHeader, modelName, { create: false });
+    if (!cloudModel?.id) throw new Error('Share this model first.');
+
     const response = await fetch(`${rawBase}/api/published-models/mine`, {
       method: 'PATCH',
       headers: { cookie: cookieHeader, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        sourceProjectPath: projectPath,
-        sourceModelName: modelName,
+        modelId: cloudModel.id,
         isPublic: !!payload?.isPublic,
       }),
     });
@@ -729,10 +844,13 @@ function registerIpcHandlers({
     if (!modelName) throw new Error('Select a model first.');
 
     const { rawBase, cookieHeader } = await getAgentAuthHeaders();
+    const cloudModel = await resolveShareCloudModel(rawBase, cookieHeader, modelName, { create: false });
+    if (!cloudModel?.id) return { ok: true };
+
     const response = await fetch(`${rawBase}/api/published-models/mine`, {
       method: 'DELETE',
       headers: { cookie: cookieHeader, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sourceProjectPath: projectPath, sourceModelName: modelName }),
+      body: JSON.stringify({ modelId: cloudModel.id }),
     });
     if (!response.ok) {
       await readShareApiError(response, `Unshare failed: ${response.status}`);
@@ -760,6 +878,7 @@ function registerIpcHandlers({
     if (fs.existsSync(paramsPath)) {
       try { params = JSON.parse(fs.readFileSync(paramsPath, 'utf-8')); } catch {}
     }
+    const description = String(params?.description || '').trim();
 
     // Read project metadata for kernel info
     let kernel = 'build123d';
@@ -793,6 +912,7 @@ function registerIpcHandlers({
 
     const manifest = {
       title: modelName.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+      description,
       kind,
       sourceModelName: modelName,
       kernel,
@@ -838,17 +958,7 @@ function registerIpcHandlers({
         archive.on('error', (err) => reject(err));
         archive.pipe(output);
 
-        archive.directory(modelDir, `models/${modelName}`);
-
-        const cacheDir = path.join(projectPath, '.cache');
-        if (fs.existsSync(cacheDir)) {
-          for (const entry of fs.readdirSync(cacheDir)) {
-            if (entry === '_share_tmp') continue;
-            if (entry.startsWith(modelName)) {
-              archive.file(path.join(cacheDir, entry), { name: `.cache/${entry}` });
-            }
-          }
-        }
+        addShareCodeDirectoryToArchive(archive, modelDir, `models/${modelName}`);
 
         if (fs.existsSync(projectMetaPath)) {
           archive.file(projectMetaPath, { name: '.aicad/project.json' });
@@ -865,6 +975,7 @@ function registerIpcHandlers({
     // Build multipart form
     const formData = new FormData();
     formData.append('title', manifest.title);
+    formData.append('description', description);
     formData.append('sourceProjectPath', projectPath);
     formData.append('sourceModelName', modelName);
     formData.append('kind', kind);
@@ -883,6 +994,9 @@ function registerIpcHandlers({
     if (glbBuffer) {
       appendShareUpload(formData, 'glb', glbBuffer, 'model.glb', 'model/gltf-binary');
     }
+
+    const cloudModel = await resolveShareCloudModel(rawBase, cookieHeader, modelName, { create: true });
+    formData.append('modelId', cloudModel.id);
 
     const publishUrl = `${rawBase}/api/published-models/publish`;
     const response = await fetch(publishUrl, {
@@ -921,9 +1035,61 @@ function registerIpcHandlers({
       capabilities: {
         desktop: true,
         tools: true,
-        desktopPython: true
+        desktopPython: true,
+        cloudCodeImport: true
       }
     };
+  });
+
+  ipcMain.handle('agent:importCloudCodePackage', async (_evt, payload) => {
+    const modelId = String(payload?.modelId || '').trim();
+    const modelName = String(payload?.modelName || '').trim();
+    if (!modelId) throw new Error('modelId is required.');
+
+    const { rawBase, cookieHeader } = await getAgentAuthHeaders();
+    const url = new URL(rawBase + '/api/agent/code-package');
+    url.searchParams.set('modelId', modelId);
+    const response = await fetch(url, {
+      headers: { cookie: cookieHeader },
+      cache: 'no-store'
+    });
+    if (!response.ok) {
+      await readShareApiError(response, `Download code package failed: ${response.status}`);
+    }
+
+    const targetDir = uniqueImportProjectDir(modelName, modelId);
+    const tmpDir = path.join(electronApp.getPath('temp'), `forgent3d-cloud-import-${process.pid}-${Date.now()}`);
+    const archivePath = path.join(tmpDir, 'workspace-snapshot.tar.gz');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    fs.mkdirSync(targetDir, { recursive: true });
+    try {
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (!bytes.length) throw new Error('Cloud code package is empty.');
+      fs.writeFileSync(archivePath, bytes);
+
+      const list = await runProcess('tar', ['-tzf', archivePath]);
+      validateTarEntries(list.stdout);
+      await runProcess('tar', ['-xzf', archivePath, '-C', targetDir]);
+
+      const projectMeta = path.join(targetDir, '.aicad', 'project.json');
+      if (!fs.existsSync(projectMeta)) {
+        throw new Error('Imported code package is missing .aicad/project.json.');
+      }
+      await deps.openProject(targetDir, { runImmediately: true });
+      deps.sendLog?.(`Imported cloud model${modelName ? ` "${modelName}"` : ''} to ${targetDir}.`);
+      return {
+        ok: true,
+        projectPath: targetDir,
+        modelId,
+        modelName,
+        codeKey: response.headers.get('X-Code-Key') || ''
+      };
+    } catch (error) {
+      try { removeDirRecursive(targetDir); } catch {}
+      throw error;
+    } finally {
+      try { removeDirRecursive(tmpDir); } catch {}
+    }
   });
 
   ipcMain.handle('agent:callTool', async (_evt, payload) => {

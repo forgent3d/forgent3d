@@ -147,31 +147,6 @@ importers:
         specifier: ^5.8.2
         version: 5.9.3
 
-  packages/cf-sandbox:
-    dependencies:
-      '@cloudflare/sandbox':
-        specifier: ^0.10.1
-        version: 0.10.2(@xterm/xterm@6.0.0)
-      '@forgent3d/cad-runtime':
-        specifier: workspace:*
-        version: link:../cad-runtime
-    devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^4.20250506.0
-        version: 4.20260521.1
-      '@types/node':
-        specifier: ^20
-        version: 20.19.41
-      tsup:
-        specifier: ^8.4.0
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.15)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
-      typescript:
-        specifier: ^5.8.2
-        version: 5.9.3
-      wrangler:
-        specifier: ^4.86.0
-        version: 4.93.1(@cloudflare/workers-types@4.20260521.1)
-
   packages/electron:
     dependencies:
       '@forgent3d/cad-runtime':
@@ -594,26 +569,9 @@ packages:
     resolution: {integrity: sha512-iY8yvjE0y651BixKNPgmv1WrQc+GZ142sb0z4gYnChDDY2YqI4P/jsSopBWrKfAt7LOJAkOXt7rC/hms+WclQQ==}
     engines: {node: '>=18.0.0'}
 
-  '@cloudflare/containers@0.3.4':
-    resolution: {integrity: sha512-6kWodmgBSug/rr9fjcWrZcKhxmWTEc1BTKC6nVv7yvYaRRvV3rZPZjq9R17eN0l9cl2LNc03wp/Z6OV+0uDwXA==}
-
   '@cloudflare/kv-asset-handler@0.5.0':
     resolution: {integrity: sha512-jxQYkj8dSIzc0cD6cMMNdOc1UVjqSqu8BZdor5s8cGjW2I8BjODt/kWPVdY+u9zj3ms75Q5qaZgnxUad83+eAg==}
     engines: {node: '>=22.0.0'}
-
-  '@cloudflare/sandbox@0.10.2':
-    resolution: {integrity: sha512-gZXcUaVMaVc/aBYFdgvyJGyibx0K16j+wWH/XDET63nWRpQKBlWM0dijhZb17OMRw/FWb+7utOdpNGMKyNMyCg==}
-    peerDependencies:
-      '@openai/agents': ^0.3.3
-      '@opencode-ai/sdk': ^1.1.40
-      '@xterm/xterm': '>=5.0.0'
-    peerDependenciesMeta:
-      '@openai/agents':
-        optional: true
-      '@opencode-ai/sdk':
-        optional: true
-      '@xterm/xterm':
-        optional: true
 
   '@cloudflare/unenv-preset@2.16.1':
     resolution: {integrity: sha512-ECxObrMfyTl5bhQf/lZCXwo5G6xX9IAUo+nDMKK4SZ8m4Jvvxp52vilxyySSWh2YTZz8+HQ07qGH/2rEom1vDw==}
@@ -3602,9 +3560,6 @@ packages:
 
   caniuse-lite@1.0.30001793:
     resolution: {integrity: sha512-iwSsYWaCOoh26cV8NwNRViHlrfUvYsHDfRVcbtmw0Kg6PJIZZXwMkj1442FYLBGkeUf1juAsU3DTfxW579mrPA==}
-
-  capnweb@0.6.1:
-    resolution: {integrity: sha512-fmhV26QPd1ewf5R74h55oVZnGwIcSaRMzbfLQUy8+zOBjuTmT3KXoT8wxHvnp1m9Ht9BoUUS5ZwNLoVLfQTyBg==}
 
   chai@5.3.3:
     resolution: {integrity: sha512-4zNhdJD/iOjSH0A05ea+Ke6MU5mmpQcbQsSOkgdaUMJ9zTlDTD/GYlwohmIE2u0gaxHYiVHEn1Fw9mZ/ktJWgw==}
@@ -7619,18 +7574,7 @@ snapshots:
 
   '@aws/lambda-invoke-store@0.2.4': {}
 
-  '@cloudflare/containers@0.3.4': {}
-
   '@cloudflare/kv-asset-handler@0.5.0': {}
-
-  '@cloudflare/sandbox@0.10.2(@xterm/xterm@6.0.0)':
-    dependencies:
-      '@cloudflare/containers': 0.3.4
-      aws4fetch: 1.0.20
-      capnweb: 0.6.1
-      hono: 4.12.21
-    optionalDependencies:
-      '@xterm/xterm': 6.0.0
 
   '@cloudflare/unenv-preset@2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260520.1)':
     dependencies:
@@ -7653,7 +7597,8 @@ snapshots:
   '@cloudflare/workerd-windows-64@1.20260520.1':
     optional: true
 
-  '@cloudflare/workers-types@4.20260521.1': {}
+  '@cloudflare/workers-types@4.20260521.1':
+    optional: true
 
   '@cspotcode/source-map-support@0.8.1':
     dependencies:
@@ -10221,8 +10166,6 @@ snapshots:
   camelcase-css@2.0.1: {}
 
   caniuse-lite@1.0.30001793: {}
-
-  capnweb@0.6.1: {}
 
   chai@5.3.3:
     dependencies:

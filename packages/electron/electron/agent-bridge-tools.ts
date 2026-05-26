@@ -9,7 +9,7 @@ const { spawn } = require('child_process');
 const { detectRunnerPython, pythonChildProcessEnv } = require('./python-env');
 
 const TEXT_FILE_EXTENSIONS = new Set([
-  '.py', '.xml', '.json', '.md', '.txt', '.toml', '.yaml', '.yml', '.js', '.ts', '.tsx',
+  '.py', '.xml', '.json',
 ]);
 const IGNORED_DIRS = new Set([
   '.git', 'node_modules', 'dist', 'dist-electron', 'build-cache', '.cache', '__pycache__', 'vendor',
