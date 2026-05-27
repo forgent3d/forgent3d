@@ -450,8 +450,8 @@ function createMainLogicTools({ state, deps }) {
     watcher.on('error', (err) => deps.sendLog(`watcher error: ${err.message}`, 'error'));
 
     if (runImmediately && state.activePart()) {
-      deps.scheduleBuild(state.activePart(), { force: true });
       deps.maybeSendModelUpdated(state.activePart());
+      deps.scheduleBuild(state.activePart(), { notifyCached: false });
     }
   }
 
@@ -465,8 +465,8 @@ function createMainLogicTools({ state, deps }) {
     broadcastPartsList();
 
     deps.scheduleBuild(name, { notifyCached: false });
-    const sentGlb = await Promise.resolve(deps.maybeSendCachedModelGlbUpdated?.(name));
-    if (!sentGlb) deps.maybeSendModelUpdated(name);
+    deps.maybeSendModelUpdated(name);
+    await Promise.resolve(deps.maybeSendCachedModelGlbUpdated?.(name));
   }
 
   function buildMcpContext() {

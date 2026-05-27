@@ -84,15 +84,17 @@ function createMainRebuildTools({ state, deps }) {
   }
 
   function refreshModelDirtyState(name, source = null) {
-    if (!state.currentProjectPath() || !name) return { inputMtime: 0, buildDirty: false };
+    if (!state.currentProjectPath() || !name) return { inputMtime: 0, buildDirty: false, cacheFresh: false, cacheFile: null };
     const resolved = source || deps.resolveModelSource(state.currentProjectPath(), name, state.currentKernel());
-    if (!resolved) return { inputMtime: 0, buildDirty: false };
+    if (!resolved) return { inputMtime: 0, buildDirty: false, cacheFresh: false, cacheFile: null };
     const inputMtime = modelInputMtime(name, resolved);
     const cacheFile = deps.modelCacheFile(state.currentProjectPath(), name, resolved, state.currentKernel());
-    const cacheFresh = true;
+    const cacheFresh = isFileFreshForInput(cacheFile, inputMtime);
     const markedDirtyAt = dirtyBuildInputs.get(name) || 0;
     if (markedDirtyAt > 0) {
       dirtyBuildInputs.set(name, Math.max(inputMtime, markedDirtyAt));
+    } else if (!cacheFresh) {
+      dirtyBuildInputs.set(name, inputMtime || Date.now());
     } else {
       dirtyBuildInputs.delete(name);
     }
@@ -281,8 +283,8 @@ function createMainRebuildTools({ state, deps }) {
     watcher.on('error', (err) => deps.sendLog(`watcher error: ${err.message}`, 'error'));
 
     if (runImmediately && state.activePart()) {
-      scheduleBuild(state.activePart(), { force: true });
       maybeSendModelUpdated(state.activePart());
+      scheduleBuild(state.activePart(), { notifyCached: false });
     }
   }
 
@@ -314,7 +316,7 @@ function createMainRebuildTools({ state, deps }) {
     const ts = result.ts || Date.now();
     const assetUrl = (filePath) => projectAssetUrl(filePath, ts);
     const paramsUrl = modelParamsAssetUrl(partName, ts);
-    deps.sendToRenderer('MODEL_UPDATED', {
+    deps.sendToRenderer('MODEL_GLB_READY', {
       part: partName,
       url: result.url,
       paramsUrl,
@@ -392,8 +394,8 @@ function createMainRebuildTools({ state, deps }) {
     deps.broadcastPartsList();
 
     scheduleBuild(name, { notifyCached: false });
-    const sentGlb = await maybeSendCachedModelGlbUpdated(name);
-    if (!sentGlb) maybeSendModelUpdated(name);
+    maybeSendModelUpdated(name);
+    await maybeSendCachedModelGlbUpdated(name);
   }
 
   function scheduleBuild(partName, { force = false, notifyCached = true } = {}) {

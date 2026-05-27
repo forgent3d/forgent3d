@@ -129,6 +129,7 @@ export function initUI(viewer) {
   const buildingModels = new Set();
   const expandedModels = new Set();
   let activeSourcePreviewMode = 'cad';
+  let cadPreviewFormatPriority = 'glb';
   const LEFT_SIDEBAR_PREF_KEY = 'forgent3d.leftSidebarVisible';
   let leftSidebarVisible = false;
   let openFirstModelWizardAfterProjectOpen = false;
@@ -493,7 +494,6 @@ export function initUI(viewer) {
       }
     });
   }
-
   function renderModelNameBadge() {
     if (!el.modelNameBadge) return;
     if (!currentProject || !activePart) {
@@ -598,6 +598,83 @@ export function initUI(viewer) {
     }) || null;
   }
 
+  function cadPreviewFromPayload(payload, preferred = cadPreviewFormatPriority) {
+    if (!payload) return null;
+    const glb = payload.previewGlb;
+    const brep = payload.previewBrep;
+    const primary = {
+      url: payload.url,
+      paramsUrl: payload.paramsUrl,
+      format: payload.format || 'BREP',
+      unitScale: payload.unitScale,
+      coordinateSystem: payload.coordinateSystem,
+      size: payload.size,
+      ts: payload.ts
+    };
+    if (preferred === 'glb') {
+      if (glb?.url) return glb;
+      if (String(primary.format || '').toUpperCase() === 'GLB' && primary.url) return primary;
+      if (brep?.url) return brep;
+      return primary.url ? primary : null;
+    }
+    if (brep?.url) return brep;
+    if (String(primary.format || '').toUpperCase() !== 'GLB' && primary.url) return primary;
+    if (glb?.url) return glb;
+    return primary.url ? primary : null;
+  }
+
+  function mergeCadPreviewPayload(existing, payload, formatOverride = null) {
+    const next = { ...(existing || {}), ...(payload || {}) };
+    const format = String(formatOverride || payload?.format || next.format || '').toUpperCase();
+    const preview = {
+      url: payload?.url,
+      paramsUrl: payload?.paramsUrl ?? next.paramsUrl,
+      format: format || payload?.format,
+      unitScale: payload?.unitScale,
+      coordinateSystem: payload?.coordinateSystem,
+      size: payload?.size,
+      ts: payload?.ts
+    };
+    if (format === 'GLB' && payload?.url) {
+      next.previewGlb = preview;
+    } else if (payload?.url) {
+      next.previewBrep = preview;
+      if (next.previewGlb?.ts && preview.ts && next.previewGlb.ts < preview.ts) {
+        delete next.previewGlb;
+      }
+    }
+    return applyCadPreviewSelection(next);
+  }
+
+  function applyCadPreviewSelection(payload) {
+    const next = { ...(payload || {}) };
+    const selected = cadPreviewFromPayload(next);
+    if (selected?.url) {
+      next.url = selected.url;
+      next.paramsUrl = selected.paramsUrl;
+      next.format = selected.format;
+      next.unitScale = selected.unitScale;
+      next.coordinateSystem = selected.coordinateSystem;
+      next.size = selected.size;
+      next.ts = selected.ts;
+    }
+    return next;
+  }
+
+  function setCadPreviewFormatPriority(priority, { reload = true } = {}) {
+    const normalized = String(priority || '').toLowerCase() === 'brep' ? 'brep' : 'glb';
+    const changed = cadPreviewFormatPriority !== normalized;
+    cadPreviewFormatPriority = normalized;
+    if (activePart && assemblyPayloads.has(activePart)) {
+      assemblyPayloads.set(activePart, applyCadPreviewSelection(assemblyPayloads.get(activePart)));
+    }
+    syncSourcePreviewControls();
+    viewerUi.renderAll();
+    if (reload && changed && activePart && activeSourcePreviewMode === 'cad' && !displayedModelPart) {
+      showAssembly(activePart, { preserveView: true }).catch(() => {});
+    }
+  }
+
   function syncSelectionFromViewer(partKey) {
     if (!activePart) return;
     if (partKey == null || partKey === '') {
@@ -644,13 +721,15 @@ export function initUI(viewer) {
     const motionReady = !!payload?.motionReady && !!payload?.motionUrl;
     const mode = activeSourcePreviewMode === 'motion' && motionReady ? 'motion' : 'cad';
     if (mode !== activeSourcePreviewMode) activeSourcePreviewMode = mode;
+    const cadPreview = cadPreviewFromPayload(payload) || {};
     return {
       mode,
-      url: mode === 'motion' ? payload.motionUrl : payload.url,
-      paramsUrl: mode === 'motion' ? (payload.motionParamsUrl || payload.paramsUrl) : payload.paramsUrl,
-      format: mode === 'motion' ? (payload.motionFormat || 'MJCF') : (payload.format || 'BREP'),
-      unitScale: mode === 'motion' ? payload.motionUnitScale : payload.unitScale,
-      coordinateSystem: mode === 'motion' ? payload.motionCoordinateSystem : payload.coordinateSystem
+      url: mode === 'motion' ? payload.motionUrl : cadPreview.url,
+      paramsUrl: mode === 'motion' ? (payload.motionParamsUrl || payload.paramsUrl) : cadPreview.paramsUrl,
+      format: mode === 'motion' ? (payload.motionFormat || 'MJCF') : (cadPreview.format || 'BREP'),
+      unitScale: mode === 'motion' ? payload.motionUnitScale : cadPreview.unitScale,
+      coordinateSystem: mode === 'motion' ? payload.motionCoordinateSystem : cadPreview.coordinateSystem,
+      size: mode === 'motion' ? payload.motionSize : cadPreview.size
     };
   }
 
@@ -661,7 +740,7 @@ export function initUI(viewer) {
     syncExportControls();
     paramsEditor.refresh({ force: true });
     const payload = assemblyPayloads.get(modelName);
-    if (!payload?.url) {
+    if (!cadPreviewFromPayload(payload)?.url && !(payload?.motionReady && payload?.motionUrl)) {
       if (modelName) {
         setStatus(t('buildingPart', { part: modelName }), true);
         api.rebuildModel(modelName).catch((e) => appendLog(t('buildFailed') + `: ${e.message || e}`, 'error'));
@@ -690,7 +769,7 @@ export function initUI(viewer) {
       const modelParts = modelPartsFor(payload.part);
       if (payload?.part && modelParts.length >= 2) expandedModels.add(payload.part);
       renderPartsList();
-      const sizeKB = payload.size ? (payload.size / 1024).toFixed(1) + ' KB' : '';
+      const sizeKB = preview.size ? (preview.size / 1024).toFixed(1) + ' KB' : '';
       const tail = fmt === 'MJCF'
         ? (preview.mode === 'motion' ? t('motionPreviewReady') : t('mjcfAssembly'))
         : (fmt === 'GLB' ? t('glbModel') : (fmt === 'STL' ? t('stlMesh') : t('brepFaces', { count: partInfo?.faceCount ?? 0 })));
@@ -1544,9 +1623,10 @@ export function initUI(viewer) {
           break;
         }
         if (payload.part) {
-          assemblyPayloads.set(payload.part, { ...payload });
+          const mergedPayload = mergeCadPreviewPayload(assemblyPayloads.get(payload.part), payload);
+          assemblyPayloads.set(payload.part, mergedPayload);
           buildingModels.delete(payload.part);
-          syncSourcePreviewControls(payload);
+          syncSourcePreviewControls(mergedPayload);
         }
         const preserveView = !!payload.part && payload.part === loadedPart && typeof viewer.hasModel === 'function' && viewer.hasModel();
         const partLabel = payload.part ? `[${payload.part}] ` : '';
@@ -1651,12 +1731,15 @@ export function initUI(viewer) {
       case 'MODEL_GLB_READY':
         if (!payload?.part || payload.part !== activePart) break;
         if (displayedModelPart || selectedModelPartModel === payload.part) break;
-        assemblyPayloads.set(payload.part, {
-          ...(assemblyPayloads.get(payload.part) || {}),
-          ...payload,
-          format: 'GLB'
-        });
-        showAssembly(payload.part, { preserveView: true }).catch(() => {});
+        {
+          const mergedPayload = mergeCadPreviewPayload(assemblyPayloads.get(payload.part), payload, 'GLB');
+          assemblyPayloads.set(payload.part, mergedPayload);
+          syncSourcePreviewControls(mergedPayload);
+          viewerUi.renderAll();
+          if (cadPreviewFormatPriority === 'glb' || !mergedPayload.previewBrep?.url) {
+            showAssembly(payload.part, { preserveView: true }).catch(() => {});
+          }
+        }
         break;
       case 'LOG':
         appendLog(payload.message, payload.level || 'info');
@@ -1669,6 +1752,9 @@ export function initUI(viewer) {
         break;
       case 'MENU_TOGGLE_DEBUG_TOOLS':
         setDebugToolsVisible(!!payload?.visible);
+        break;
+      case 'MENU_SET_CAD_PREVIEW_FORMAT_PRIORITY':
+        setCadPreviewFormatPriority(payload?.priority, { reload: true });
         break;
       case 'LANGUAGE_CHANGED':
         setLanguage(payload?.language || 'en');

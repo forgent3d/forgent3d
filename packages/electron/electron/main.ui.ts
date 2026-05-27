@@ -28,6 +28,8 @@ function createMainUiTools({
     sendToRenderer('LOG', { message, level, ts: Date.now() });
   }
 
+  let cadPreviewFormatPriority = 'glb';
+
   function toggleDevToolsFor(contents, label = 'window') {
     if (!contents || contents.isDestroyed?.()) return;
     try {
@@ -72,6 +74,9 @@ function createMainUiTools({
       reload: 'Reload',
       toggleDeveloperTools: 'Developer Tools',
       debugTools: 'Debug Tools',
+      cadPreviewFormat: 'CAD Preview Format',
+      preferGlbPreview: 'Prefer GLB',
+      preferBrepPreview: 'Prefer BREP',
       actualSize: 'Actual Size',
       zoomIn: 'Zoom In',
       zoomOut: 'Zoom Out',
@@ -133,6 +138,9 @@ function createMainUiTools({
       reload: '重新加载',
       toggleDeveloperTools: '开发者工具',
       debugTools: '调试工具',
+      cadPreviewFormat: 'CAD 预览格式',
+      preferGlbPreview: '优先 GLB',
+      preferBrepPreview: '优先 BREP',
       actualSize: '实际大小',
       zoomIn: '放大',
       zoomOut: '缩小',
@@ -282,6 +290,7 @@ function createMainUiTools({
       broadcastMcpStatus();
       sendToRenderer('LANGUAGE_CHANGED', { language: state.appLanguage?.() || 'en' });
       sendToRenderer('MENU_TOGGLE_DEBUG_TOOLS', { visible: state.debugToolsVisible() });
+      sendToRenderer('MENU_SET_CAD_PREVIEW_FORMAT_PRIORITY', { priority: cadPreviewFormatPriority });
       try {
         await deps.restoreLastProjectIfAvailable();
       } catch (e) {
@@ -425,6 +434,31 @@ function createMainUiTools({
               state.setDebugToolsVisible(!!menuItem.checked);
               sendToRenderer('MENU_TOGGLE_DEBUG_TOOLS', { visible: state.debugToolsVisible() });
             }
+          },
+          {
+            label: t('cadPreviewFormat'),
+            submenu: [
+              {
+                type: 'radio',
+                label: t('preferGlbPreview'),
+                checked: cadPreviewFormatPriority === 'glb',
+                click: () => {
+                  cadPreviewFormatPriority = 'glb';
+                  sendToRenderer('MENU_SET_CAD_PREVIEW_FORMAT_PRIORITY', { priority: cadPreviewFormatPriority });
+                  rebuildAppMenu();
+                }
+              },
+              {
+                type: 'radio',
+                label: t('preferBrepPreview'),
+                checked: cadPreviewFormatPriority === 'brep',
+                click: () => {
+                  cadPreviewFormatPriority = 'brep';
+                  sendToRenderer('MENU_SET_CAD_PREVIEW_FORMAT_PRIORITY', { priority: cadPreviewFormatPriority });
+                  rebuildAppMenu();
+                }
+              }
+            ]
           },
           { type: 'separator' },
           {

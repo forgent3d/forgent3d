@@ -245,3 +245,51 @@ export function tagSceneAsMaterialPart(group: THREE.Group, partName: string): vo
     index++;
   });
 }
+
+function addAlias(aliases: Array<string | number>, value: unknown): void {
+  const text = String(value ?? '').trim();
+  if (!text) return;
+  if (!aliases.some((alias) => String(alias) === text)) aliases.push(text);
+}
+
+function materialList(material: THREE.Material | THREE.Material[] | null | undefined): THREE.Material[] {
+  if (!material) return [];
+  return Array.isArray(material) ? material : [material];
+}
+
+export function tagGlbSceneMaterialParts(root: THREE.Object3D, assemblyPartLabels: string[] = []): void {
+  let meshIndex = 0;
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+
+    const fallbackLabel = String(assemblyPartLabels[meshIndex] || '').trim();
+    const aliases: Array<string | number> = [];
+    addAlias(aliases, fallbackLabel);
+    addAlias(aliases, child.name);
+    addAlias(aliases, child.userData?.name);
+    addAlias(aliases, child.geometry?.name);
+
+    for (const material of materialList(child.material)) {
+      addAlias(aliases, material.name);
+    }
+
+    let cursor: THREE.Object3D | null = child.parent;
+    while (cursor) {
+      addAlias(aliases, cursor.name);
+      if (cursor === root) break;
+      cursor = cursor.parent;
+    }
+
+    aliases.push(meshIndex);
+    const partName = fallbackLabel || String(aliases.find((alias) => typeof alias === 'string') || `part_${meshIndex}`);
+    child.name = child.name || partName;
+    child.userData.materialPart = {
+      id: partName,
+      name: partName,
+      aliases,
+      index: meshIndex,
+      materialIndex: 0
+    };
+    meshIndex++;
+  });
+}

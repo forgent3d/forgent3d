@@ -10,6 +10,7 @@ import {
   buildSceneFromOcctResult,
   buildSceneFromStlBuffer,
   inferMaterialPartNameFromUrl,
+  tagGlbSceneMaterialParts,
   tagSceneAsMaterialPart
 } from './viewer-loaders.js';
 import { disposeMjcfSimulation, loadMjcfScene, stepMjcfSimulation } from './viewer-mjcf.js';
@@ -480,6 +481,7 @@ export function createViewer(host: HTMLElement): Viewer {
     const root = new THREE.Group();
     root.name = contentRoot.name || 'glb-model';
     root.add(contentRoot);
+    tagGlbSceneMaterialParts(root, opts.assemblyPartLabels || []);
     const unitScale = typeof opts.unitScale === 'number' && Number.isFinite(opts.unitScale) && opts.unitScale > 0
       ? opts.unitScale
       : 1;
