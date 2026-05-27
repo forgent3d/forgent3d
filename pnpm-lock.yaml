@@ -11,7 +11,16 @@ importers:
 
   .: {}
 
-  packages/cad-agent:
+  packages/cad-runtime:
+    devDependencies:
+      tsup:
+        specifier: ^8.4.0
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.15)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+
+  packages/cloud:
     dependencies:
       '@ai-sdk/anthropic':
         specifier: 3.0.77
@@ -136,15 +145,6 @@ importers:
         version: 3.4.19(tsx@4.22.3)(yaml@2.9.0)
       typescript:
         specifier: ^5
-        version: 5.9.3
-
-  packages/cad-runtime:
-    devDependencies:
-      tsup:
-        specifier: ^8.4.0
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.15)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
-      typescript:
-        specifier: ^5.8.2
         version: 5.9.3
 
   packages/electron:

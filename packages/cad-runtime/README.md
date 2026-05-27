@@ -9,7 +9,7 @@ This package is intentionally runtime-light:
 - no React
 - no database clients
 
-`cad-agent` and `cf-sandbox` can both depend on this package without coupling their deploy targets together.
+`@forgent3d/cloud` and `cf-sandbox` can both depend on this package without coupling their deploy targets together.
 
 ## Python Runtime Assets
 

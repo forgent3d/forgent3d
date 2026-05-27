@@ -324,9 +324,9 @@ async function replaceInFile(projectRoot, userPath, oldText, newText, replaceAll
 
 function archetypesDir() {
   const candidates = [
-    path.resolve(__dirname, '..', '..', '..', 'cad-agent', 'lib', 'aicad-agent', 'skills', 'archetypes'),
-    path.resolve(__dirname, '..', '..', '..', '..', 'packages', 'cad-agent', 'lib', 'aicad-agent', 'skills', 'archetypes'),
-    process.resourcesPath ? path.join(process.resourcesPath, 'cad-agent-skills', 'archetypes') : null,
+    path.resolve(__dirname, '..', '..', '..', 'cloud', 'lib', 'aicad-agent', 'skills', 'archetypes'),
+    path.resolve(__dirname, '..', '..', '..', '..', 'packages', 'cloud', 'lib', 'aicad-agent', 'skills', 'archetypes'),
+    process.resourcesPath ? path.join(process.resourcesPath, 'cloud-agent-skills', 'archetypes') : null,
   ].filter(Boolean);
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) return candidate;
@@ -336,7 +336,7 @@ function archetypesDir() {
 
 function readArchetype(name) {
   const dir = archetypesDir();
-  if (!dir) return { ok: false, text: 'Archetypes directory not found. Looked under cad-agent/lib/aicad-agent/skills/archetypes/.' };
+  if (!dir) return { ok: false, text: 'Archetypes directory not found. Looked under packages/cloud/lib/aicad-agent/skills/archetypes/.' };
   if (!name) {
     let entries;
     try {
@@ -470,7 +470,7 @@ async function writeRunnerSource(projectRoot, runnerId, source) {
   if (source.length > 2_000_000) throw new Error('runnerSource is too large.');
   if (!/def\s+main\s*\(/m.test(source) || !/command_build/.test(source)) {
     throw new Error(
-      'Invalid aicad-script runner source. Ensure cad-agent is logged in and /api/agent/runner returns script.py, not an HTML/JSON error page.'
+      'Invalid aicad-script runner source. Ensure Forgent3D Cloud is logged in and /api/agent/runner returns script.py, not an HTML/JSON error page.'
     );
   }
   const filePath = runnerCachePath(projectRoot, runnerId);

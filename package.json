@@ -5,7 +5,7 @@
   "description": "Forgent3D monorepo",
   "scripts": {
     "dev": "pnpm --filter forgent3d dev",
-    "dev:agent": "pnpm --filter @forgent3d/agent dev",
+    "dev:cloud": "pnpm --filter @forgent3d/cloud dev",
     "dev:renderer": "pnpm --filter forgent3d dev:renderer",
     "dev:electron": "pnpm --filter forgent3d dev:electron",
     "dev:electron:watch": "pnpm --filter forgent3d dev:electron:watch",

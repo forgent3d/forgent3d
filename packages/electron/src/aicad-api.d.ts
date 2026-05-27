@@ -114,7 +114,7 @@ type AicadApi = {
   clipboardWriteText(text: string): Promise<boolean>;
   clipboardHasImage(): Promise<boolean>;
 
-  /** Forgent3D agent UI (cad-agent); `baseUrl` defaults from `AICAD_FORGENT3D_URL` or legacy `AICAD_NEXT_AGENT_URL`. */
+  /** Forgent3D Cloud agent UI; `baseUrl` defaults from `AICAD_FORGENT3D_URL` or legacy `AICAD_NEXT_AGENT_URL`. */
   agentOpenNext(projectPath: string, baseUrl?: string, openExternal?: boolean): Promise<{ url: string; preloadUrl?: string }>;
   agentBridgeInfo(): Promise<{
     version: string;

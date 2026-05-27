@@ -131,6 +131,13 @@
         "filter": [
           "*.py"
         ]
+      },
+      {
+        "from": "../cloud/lib/aicad-agent/skills/archetypes",
+        "to": "cloud-agent-skills/archetypes",
+        "filter": [
+          "**/*"
+        ]
       }
     ]
   },

@@ -10,8 +10,8 @@ const { app: electronApp } = require('electron');
 const bridgeTools = require('./agent-bridge-tools');
 const { MODEL_EXAMPLES } = require('./model-examples');
 
-/** Default Forgent3D agent (cad-agent) base URL when the desktop build is packaged. */
-const PACKAGED_DEFAULT_FORGENT3D_AGENT_URL = 'https://agent.forgent3d.com';
+/** Default Forgent3D Cloud base URL when the desktop build is packaged. */
+const PACKAGED_DEFAULT_FORGENT3D_CLOUD_URL = 'https://app.forgent3d.com';
 const AGENT_DESKTOP_BRIDGE_VERSION = (() => {
   try { return electronApp.getVersion(); } catch { return '0.0.0'; }
 })();
@@ -107,7 +107,7 @@ function getAgentApiBase() {
     process.env.AICAD_FORGENT3D_URL ||
     process.env.AICAD_NEXT_AGENT_URL ||
     process.env.CAD_AGENT_URL ||
-    (require('electron').app?.isPackaged ? PACKAGED_DEFAULT_FORGENT3D_AGENT_URL : 'http://localhost:3000')
+    (require('electron').app?.isPackaged ? PACKAGED_DEFAULT_FORGENT3D_CLOUD_URL : 'http://localhost:3000')
   ).replace(/\/+$/, '');
 }
 
@@ -1213,7 +1213,7 @@ function registerIpcHandlers({
         process.env.AICAD_FORGENT3D_URL ||
         process.env.AICAD_NEXT_AGENT_URL ||
         process.env.CAD_AGENT_URL ||
-        (electronApp?.isPackaged ? PACKAGED_DEFAULT_FORGENT3D_AGENT_URL : 'http://localhost:3000')
+        (electronApp?.isPackaged ? PACKAGED_DEFAULT_FORGENT3D_CLOUD_URL : 'http://localhost:3000')
     ).trim();
     const base = new URL(rawBase.replace(/\/+$/, '') + '/');
     // Prefer localhost for the embedded Forgent3D webview. In dev the Electron
