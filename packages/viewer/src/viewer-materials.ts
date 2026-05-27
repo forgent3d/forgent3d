@@ -119,6 +119,12 @@ export function applyMaterialSpec(
     for (const item of material) applyMaterialSpec(item, spec);
     return;
   }
+  // Caller passed no explicit overrides — leave the material alone so GLB-baked
+  // colors and PBR settings survive. BREP materials are already clay from
+  // createCadClayMaterial, so this is a no-op for them.
+  if (typeof spec === 'object' && spec !== null && !(spec instanceof THREE.Color) && Object.keys(spec).length === 0) {
+    return;
+  }
   const normalized = normalizeMaterialSpec(spec);
   const materialWithColor = material as THREE.Material & { color?: THREE.Color };
   if (materialWithColor.color && normalized.color != null) materialWithColor.color.set(normalized.color);

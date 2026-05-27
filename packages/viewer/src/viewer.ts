@@ -7,6 +7,7 @@ import occtImportJs from 'occt-import-js';
 import loadMujoco from '@mujoco/mujoco';
 import { createViewCubeOverlay } from './viewer-viewcube.js';
 import {
+  applyCadStyleToGlbScene,
   buildSceneFromOcctResult,
   buildSceneFromStlBuffer,
   inferMaterialPartNameFromUrl,
@@ -482,6 +483,7 @@ export function createViewer(host: HTMLElement): Viewer {
     root.name = contentRoot.name || 'glb-model';
     root.add(contentRoot);
     tagGlbSceneMaterialParts(root, opts.assemblyPartLabels || []);
+    applyCadStyleToGlbScene(root);
     const unitScale = typeof opts.unitScale === 'number' && Number.isFinite(opts.unitScale) && opts.unitScale > 0
       ? opts.unitScale
       : 1;

@@ -257,6 +257,24 @@ function materialList(material: THREE.Material | THREE.Material[] | null | undef
   return Array.isArray(material) ? material : [material];
 }
 
+export function applyCadStyleToGlbScene(root: THREE.Object3D): void {
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    for (const material of materialList(child.material)) {
+      material.side = THREE.DoubleSide;
+      material.needsUpdate = true;
+    }
+    const geometry = child.geometry as THREE.BufferGeometry | undefined;
+    if (!geometry?.isBufferGeometry) return;
+    if (child.children.some((c) => c instanceof THREE.LineSegments && c.userData.isWireframe)) return;
+    const edges = new THREE.EdgesGeometry(geometry, 20);
+    const lines = new THREE.LineSegments(edges, createCadEdgeMaterial());
+    lines.name = `${child.name || 'glb-mesh'}_edges`;
+    lines.userData.isWireframe = true;
+    child.add(lines);
+  });
+}
+
 export function tagGlbSceneMaterialParts(root: THREE.Object3D, assemblyPartLabels: string[] = []): void {
   let meshIndex = 0;
   root.traverse((child) => {
