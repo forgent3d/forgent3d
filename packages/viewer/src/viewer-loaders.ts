@@ -264,6 +264,12 @@ export function applyCadStyleToGlbScene(root: THREE.Object3D): void {
       material.side = THREE.DoubleSide;
       material.needsUpdate = true;
     }
+    // Mark so the appearance controller knows this mesh carries colors baked
+    // into the GLB (via build123d's _apply_viewer_colors). Without this flag,
+    // a params.json __viewer.materials.default would overwrite every GLB
+    // material whose name doesn't match a `parts.*` key — collapsing distinct
+    // materials into one.
+    child.userData.glbMaterialBaked = true;
     const geometry = child.geometry as THREE.BufferGeometry | undefined;
     if (!geometry?.isBufferGeometry) return;
     if (child.children.some((c) => c instanceof THREE.LineSegments && c.userData.isWireframe)) return;

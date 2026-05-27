@@ -103,17 +103,25 @@ export function createAppearanceController({ getCurrentRoot }: { getCurrentRoot:
     if (!root) return;
     root.traverse((child) => {
       if (!(child instanceof THREE.Mesh)) return;
+      // Meshes from GLB carry colors baked by build123d. Don't let an unmatched
+      // params.json default overwrite them — leave the GLB material alone unless
+      // an explicit per-part override matches.
+      const hasBakedMaterial = !!child.userData?.glbMaterialBaked;
       const parts = getMeshMaterialParts(child);
       if (!parts.length) {
-        for (const material of materialList(child.material)) {
-          applyMaterialSpec(material, defaultMaterial);
+        if (!hasBakedMaterial) {
+          for (const material of materialList(child.material)) {
+            applyMaterialSpec(material, defaultMaterial);
+          }
         }
         return;
       }
       for (const part of parts) {
         const material = getPartMaterial(child, part);
         const partMaterial = resolvePartMaterialSpec(part, configuredParts, partMaterials);
-        applyMaterialSpec(material, { ...defaultMaterial, ...(partMaterial || {}) });
+        if (partMaterial || !hasBakedMaterial) {
+          applyMaterialSpec(material, { ...defaultMaterial, ...(partMaterial || {}) });
+        }
         if (selectedPartKey != null) {
           applySelectionMaterial(material, matchesPart(part, selectedPartKey));
         } else {

@@ -10,6 +10,11 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./glb": {
+      "types": "./src/viewer-glb.ts",
+      "import": "./src/viewer-glb.ts",
+      "default": "./src/viewer-glb.ts"
     }
   },
   "scripts": {

@@ -57,7 +57,9 @@
       "Bash(npx --no-install tsc --noEmit --jsx preserve --target es2020 --module esnext --moduleResolution bundler --esModuleInterop --skipLibCheck --strict false /tmp/btn-check.tsx)",
       "Bash(npx --no-install tsc --noEmit)",
       "Bash(npx --no-install tsc --noEmit -p .)",
-      "Bash(npx --no-install tsc --noEmit -p tsconfig.electron.json)"
+      "Bash(npx --no-install tsc --noEmit -p tsconfig.electron.json)",
+      "Bash(timeout 90 npx next build --no-lint)",
+      "Bash(npx next *)"
     ]
   }
 }
