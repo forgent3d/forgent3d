@@ -65,6 +65,7 @@ function ensureGltfExporterGlobals() {
 
 function createMainExportTools({ dialog, state, deps }) {
   const stlExportPromises = new Map();
+  const glbExportPromises = new Map();
   let occtPromise = null;
 
   function elapsedMs(startMs) {
@@ -178,6 +179,63 @@ function createMainExportTools({ dialog, state, deps }) {
     if (!resolved) return 0;
     const paramsPath = path.join(path.dirname(resolved.sourcePath), 'params.json');
     return Math.max(statMtimeMs(resolved.sourcePath), statMtimeMs(paramsPath));
+  }
+
+  function modelGlbPath(modelName) {
+    if (!state.currentProjectPath() || !modelName) return null;
+    if (typeof deps.modelGlbPath === 'function') {
+      return deps.modelGlbPath(state.currentProjectPath(), modelName);
+    }
+    return path.join(state.currentProjectPath(), '.cache', `${modelName}.glb`);
+  }
+
+  function modelGlbMetadataPath(glbPath) {
+    return glbPath ? `${glbPath}.json` : null;
+  }
+
+  function normalizeGlbUnitScale(value, fallback = 1) {
+    const scale = Number(value);
+    return Number.isFinite(scale) && scale > 0 ? scale : fallback;
+  }
+
+  function defaultGlbUnitScaleForSource(source) {
+    // build123d.export_gltf writes glTF/glb coordinates in meters; the CAD viewer uses millimeters.
+    return source?.kind === 'asm' ? 1 : 1000;
+  }
+
+  function defaultGlbCoordinateSystemForSource(source) {
+    // Generated part GLBs follow glTF's Y-up convention; MJCF scene exports are already in viewer coordinates.
+    return source?.kind === 'asm' ? 'cad-z-up' : 'gltf-y-up';
+  }
+
+  function normalizeGlbCoordinateSystem(value, fallback = 'cad-z-up') {
+    const key = String(value || '').trim().toLowerCase();
+    return key === 'gltf-y-up' || key === 'cad-z-up' ? key : fallback;
+  }
+
+  function readModelGlbMetadata(glbPath) {
+    const metaPath = modelGlbMetadataPath(glbPath);
+    if (!metaPath || !fs.existsSync(metaPath)) return {};
+    try {
+      return JSON.parse(fs.readFileSync(metaPath, 'utf-8')) || {};
+    } catch {
+      return {};
+    }
+  }
+
+  function writeModelGlbMetadata(glbPath, metadata) {
+    const metaPath = modelGlbMetadataPath(glbPath);
+    if (!metaPath) return;
+    try {
+      fs.writeFileSync(metaPath, JSON.stringify(metadata, null, 2), 'utf-8');
+    } catch (err) {
+      deps.sendLog(`[${metadata?.part || 'model'}] GLB metadata write failed: ${err?.message || err}`, 'warn');
+    }
+  }
+
+  function projectAssetUrl(filePath, ts = Date.now()) {
+    const rel = path.relative(state.currentProjectPath(), filePath).replace(/\\/g, '/');
+    return `aicad://asset/${rel.split('/').map((segment) => encodeURIComponent(segment)).join('/')}?t=${ts}`;
   }
 
   function modelPartInputMtime(modelName, partName) {
@@ -393,6 +451,50 @@ function createMainExportTools({ dialog, state, deps }) {
     if (errors.length || !root) throw new Error(`MJCF XML parse failed: ${errors[0] || 'missing root element'}`);
     if (root.nodeName !== 'mujoco') throw new Error('MJCF must contain a <mujoco> root element');
     return document;
+  }
+
+  function assemblyAssetMtime(sourcePath) {
+    if (!sourcePath || !fs.existsSync(sourcePath)) return 0;
+    let maxMtime = 0;
+    try {
+      const document = parseAssemblyDocument(sourcePath);
+      for (const meshEl of Array.from(document.getElementsByTagName('mesh'))) {
+        const file = String(meshEl.getAttribute('file') || '').trim();
+        if (!file) continue;
+        const meshPath = resolveAssemblyMeshPath(sourcePath, file);
+        maxMtime = Math.max(maxMtime, statMtimeMs(meshPath));
+      }
+    } catch {
+      return 0;
+    }
+    return maxMtime;
+  }
+
+  function modelGlbDependencyMtime(modelName, source = null) {
+    const resolved = source || deps.resolveModelSource(state.currentProjectPath(), modelName, state.currentKernel());
+    if (!resolved) return 0;
+    const cacheFile = deps.modelCacheFile(state.currentProjectPath(), modelName, resolved, state.currentKernel());
+    return Math.max(
+      modelInputMtime(modelName, resolved),
+      statMtimeMs(cacheFile),
+      resolved.kind === 'asm' ? assemblyAssetMtime(resolved.sourcePath) : 0
+    );
+  }
+
+  function hasFreshPreviewInput(modelName, source = null) {
+    const resolved = source || deps.resolveModelSource(state.currentProjectPath(), modelName, state.currentKernel());
+    if (!resolved) return false;
+    if (resolved.kind === 'asm') {
+      return statMtimeMs(resolved.sourcePath) > 0 && assemblyAssetMtime(resolved.sourcePath) > 0;
+    }
+    const cacheFile = deps.modelCacheFile(state.currentProjectPath(), modelName, resolved, state.currentKernel());
+    const cacheMtime = statMtimeMs(cacheFile);
+    return cacheMtime > 0 && cacheMtime >= modelInputMtime(modelName, resolved);
+  }
+
+  function isModelGlbFresh(outFile, modelName, source = null) {
+    const outMtime = statMtimeMs(outFile);
+    return outMtime > 0 && outMtime >= modelGlbDependencyMtime(modelName, source);
   }
 
   function elementChildren(node, tagName = null) {
@@ -692,14 +794,29 @@ function createMainExportTools({ dialog, state, deps }) {
     });
   }
 
-  async function exportSceneToGlb(scene) {
+  async function exportSceneToGlb(scene, opts = {}) {
     ensureGltfExporterGlobals();
+    const exportScale = normalizeGlbUnitScale(opts.scale, 1);
+    const cadToGltf = !!opts.cadToGltf;
+    let sceneToExport = scene;
+    if (exportScale !== 1 || cadToGltf) {
+      const THREE = require('three');
+      const scaledScene = new THREE.Scene();
+      const scaledRoot = new THREE.Group();
+      scaledRoot.name = 'glb-unit-scale';
+      scaledRoot.scale.setScalar(exportScale);
+      if (cadToGltf) scaledRoot.rotation.x = -Math.PI / 2;
+      for (const child of scene.children) scaledRoot.add(child.clone(true));
+      scaledScene.add(scaledRoot);
+      scaledScene.updateMatrixWorld(true);
+      sceneToExport = scaledScene;
+    }
     const { GLTFExporter } = await importThreeExample('exporters/GLTFExporter.js');
     const exporter = new GLTFExporter();
     const data = await new Promise((resolve, reject) => {
       try {
         exporter.parse(
-          scene,
+          sceneToExport,
           (result) => resolve(result),
           (err) => reject(err),
           { binary: true }
@@ -712,11 +829,10 @@ function createMainExportTools({ dialog, state, deps }) {
   }
 
   /**
-   * Best-effort GLB generation for the share flow. Returns null on any failure.
-   * - part / assembly (python): build the model-level STL, load it, export GLB.
-   * - mjcf: rebuild the assembly scene (transforms applied), export GLB.
+   * Best-effort GLB generation. Returns null on any failure.
+   * unitScale is for the Electron viewer only; the GLB bytes remain untouched.
    */
-  async function buildModelGlbBuffer(modelName, kind, source = null) {
+  async function buildModelGlbPayload(modelName, kind, source = null) {
     if (!state.currentProjectPath() || !modelName) return null;
     try {
       const startedAt = Date.now();
@@ -737,7 +853,7 @@ function createMainExportTools({ dialog, state, deps }) {
         try {
           const buffer = await exportSceneToGlb(scene);
           deps.sendLog(`[${modelName}] GLB generated (${formatDuration(elapsedMs(startedAt))}).`);
-          return buffer;
+          return { buffer, unitScale: 1, coordinateSystem: 'cad-z-up', generator: 'mjcf-scene' };
         } finally {
           disposeScene(scene);
         }
@@ -754,7 +870,7 @@ function createMainExportTools({ dialog, state, deps }) {
           await runPythonExport(modelName, modelName, 'glb', directGlbPath, resolved.sourcePath);
           const buffer = fs.readFileSync(directGlbPath);
           deps.sendLog(`[${modelName}] GLB generated via build123d.export_gltf (${formatDuration(elapsedMs(startedAt))}).`);
-          return buffer;
+          return { buffer, unitScale: 1000, coordinateSystem: 'gltf-y-up', generator: 'build123d.export_gltf' };
         } catch (err) {
           deps.sendLog(`[${modelName}] Direct GLB export failed, falling back to STL→GLB: ${err?.message || err}`, 'warn');
         }
@@ -770,9 +886,9 @@ function createMainExportTools({ dialog, state, deps }) {
         await runPythonExport(modelName, modelName, 'stl', stlPath, resolved.sourcePath);
         const scene = await buildSceneFromStl(stlPath);
         try {
-          const buffer = await exportSceneToGlb(scene);
+          const buffer = await exportSceneToGlb(scene, { scale: 0.001, cadToGltf: true });
           deps.sendLog(`[${modelName}] GLB generated (${formatDuration(elapsedMs(startedAt))}).`);
-          return buffer;
+          return { buffer, unitScale: 1000, coordinateSystem: 'gltf-y-up', generator: 'stl-fallback' };
         } finally {
           disposeScene(scene);
         }
@@ -783,6 +899,92 @@ function createMainExportTools({ dialog, state, deps }) {
       deps.sendLog(`[${modelName}] GLB generation failed: ${err?.message || err}`, 'warn');
       return null;
     }
+  }
+
+  async function buildModelGlbBuffer(modelName, kind, source = null) {
+    const payload = await buildModelGlbPayload(modelName, kind, source);
+    return payload?.buffer || null;
+  }
+
+  async function ensureModelGlbArtifact(modelName, opts = {}) {
+    if (!state.currentProjectPath()) return { ok: false, reason: 'no-project' };
+    const cleanName = String(modelName || '').trim();
+    if (!cleanName) return { ok: false, reason: 'missing-model' };
+    const source = deps.resolveModelSource(state.currentProjectPath(), cleanName, state.currentKernel());
+    if (!source) return { ok: false, part: cleanName, reason: 'source-missing' };
+    const outFile = modelGlbPath(cleanName);
+    if (!outFile) return { ok: false, part: cleanName, reason: 'path-missing' };
+
+    const key = outFile.toLowerCase();
+    if (glbExportPromises.has(key)) return glbExportPromises.get(key);
+
+    const promise = (async () => {
+      const ts = Date.now();
+      if (isModelGlbFresh(outFile, cleanName, source)) {
+        const stat = fs.statSync(outFile);
+        const metadata = readModelGlbMetadata(outFile);
+        const unitScale = normalizeGlbUnitScale(metadata.unitScale, defaultGlbUnitScaleForSource(source));
+        const coordinateSystem = normalizeGlbCoordinateSystem(
+          metadata.coordinateSystem,
+          defaultGlbCoordinateSystemForSource(source)
+        );
+        return {
+          ok: true,
+          skipped: true,
+          reason: 'fresh',
+          part: cleanName,
+          path: outFile,
+          url: projectAssetUrl(outFile, ts),
+          format: 'GLB',
+          unitScale,
+          coordinateSystem,
+          size: stat.size,
+          ts
+        };
+      }
+      if (opts?.cachedOnly) {
+        return { ok: false, part: cleanName, reason: 'glb-cache-missing-or-stale' };
+      }
+      if (!hasFreshPreviewInput(cleanName, source)) {
+        return { ok: false, part: cleanName, reason: 'preview-cache-stale' };
+      }
+
+      const glb = await buildModelGlbPayload(cleanName, source.kind === 'asm' ? 'mjcf' : source.kind, source);
+      if (!glb?.buffer) return { ok: false, part: cleanName, reason: 'generation-failed' };
+      const generatedAt = Date.now();
+      const unitScale = normalizeGlbUnitScale(glb.unitScale, defaultGlbUnitScaleForSource(source));
+      const coordinateSystem = normalizeGlbCoordinateSystem(
+        glb.coordinateSystem,
+        defaultGlbCoordinateSystemForSource(source)
+      );
+      fs.mkdirSync(path.dirname(outFile), { recursive: true });
+      fs.writeFileSync(outFile, glb.buffer);
+      writeModelGlbMetadata(outFile, {
+        part: cleanName,
+        sourceKind: source.kind,
+        generator: glb.generator || 'unknown',
+        unitScale,
+        coordinateSystem,
+        generatedAt
+      });
+      const stat = fs.statSync(outFile);
+      return {
+        ok: true,
+        skipped: false,
+        part: cleanName,
+        path: outFile,
+        url: projectAssetUrl(outFile, generatedAt),
+        format: 'GLB',
+        unitScale,
+        coordinateSystem,
+        size: stat.size,
+        ts: generatedAt
+      };
+    })().finally(() => {
+      glbExportPromises.delete(key);
+    });
+    glbExportPromises.set(key, promise);
+    return promise;
   }
 
   async function exportPartByRequest(partName, format, opts = {}) {
@@ -821,7 +1023,9 @@ function createMainExportTools({ dialog, state, deps }) {
     generateExportFile,
     ensurePartStlArtifact,
     exportPartByRequest,
-    buildModelGlbBuffer
+    buildModelGlbBuffer,
+    ensureModelGlbArtifact,
+    modelGlbPath
   };
 }
 
@@ -854,6 +1058,7 @@ function initMainExportTools(mainContext) {
       modelPartSource: model.modelPartSource,
       modelPartParamsPath: model.modelPartParamsPath,
       modelPartStlPath: model.modelPartStlPath,
+      modelGlbPath: model.modelGlbPath,
       partCache: model.partCache,
       modelCacheFile: model.modelCacheFile,
       resolveModelSource: model.resolveModelSource,

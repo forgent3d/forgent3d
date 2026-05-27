@@ -464,8 +464,9 @@ function createMainLogicTools({ state, deps }) {
     deps.sendToRenderer('ACTIVE_MODEL_CHANGED', { name });
     broadcastPartsList();
 
-    deps.scheduleBuild(name, { force: true });
-    deps.maybeSendModelUpdated(name);
+    deps.scheduleBuild(name, { notifyCached: false });
+    const sentGlb = await Promise.resolve(deps.maybeSendCachedModelGlbUpdated?.(name));
+    if (!sentGlb) deps.maybeSendModelUpdated(name);
   }
 
   function buildMcpContext() {
@@ -631,6 +632,7 @@ function initMainLogicTools(mainContext) {
     buildRuntimeSpawn: runtime.buildRuntimeSpawn,
     getBuildRuntimeStatus: runtime.getBuildRuntimeStatus,
     ensurePartStlArtifact: build.ensurePartStlArtifact,
+    ensureModelGlbArtifact: exportApi.ensureModelGlbArtifact,
     rebuildAppMenu: ui.rebuildAppMenu,
     sendToRenderer: ui.sendToRenderer,
     sendLog: ui.sendLog,
@@ -667,6 +669,7 @@ function initMainLogicTools(mainContext) {
       buildRuntimeSpawn: sharedDeps.buildRuntimeSpawn,
       getBuildRuntimeStatus: sharedDeps.getBuildRuntimeStatus,
       ensurePartStlArtifact: sharedDeps.ensurePartStlArtifact,
+      ensureModelGlbArtifact: sharedDeps.ensureModelGlbArtifact,
       sendToRenderer: sharedDeps.sendToRenderer,
       sendLog: sharedDeps.sendLog,
       broadcastPartsList: () => logicApi.broadcastPartsList()
@@ -683,6 +686,7 @@ function initMainLogicTools(mainContext) {
       scheduleBuild: rebuildApi.scheduleBuild,
       prepareMotionPreview: rebuildApi.prepareMotionPreview,
       maybeSendModelUpdated: rebuildApi.maybeSendModelUpdated,
+      maybeSendCachedModelGlbUpdated: rebuildApi.maybeSendCachedModelGlbUpdated,
       prepareModelDeletion: rebuildApi.prepareModelDeletion,
       rebuildPartSync: rebuildApi.rebuildPartSync,
       resolvePartLoadedWaiters: rebuildApi.resolvePartLoadedWaiters

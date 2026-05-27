@@ -1,4 +1,4 @@
-import { createViewer } from './viewer.js';
+import { createViewer } from '@forgent3d/viewer';
 import { initUI } from './ui.js';
 
 const host = document.getElementById('canvas-host');

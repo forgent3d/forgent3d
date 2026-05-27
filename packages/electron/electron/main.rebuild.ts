@@ -296,6 +296,60 @@ function createMainRebuildTools({ state, deps }) {
     }
   }
 
+  async function maybeSendCachedModelGlbUpdated(partName) {
+    if (!state.currentProjectPath() || !partName || partName !== state.activePart()) return false;
+    if (typeof deps.ensureModelGlbArtifact !== 'function') return false;
+    const projectAtRequest = state.currentProjectPath();
+    let result;
+    try {
+      result = await Promise.resolve(deps.ensureModelGlbArtifact(partName, { cachedOnly: true }));
+    } catch (err) {
+      deps.sendLog?.(`[${partName}] Cached GLB check failed: ${err?.message || err}`, 'warn');
+      return false;
+    }
+    if (!result?.ok || !result.url) return false;
+    if (projectAtRequest !== state.currentProjectPath() || partName !== state.activePart()) return false;
+    const source = deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
+    if (!source) return false;
+    const ts = result.ts || Date.now();
+    const assetUrl = (filePath) => projectAssetUrl(filePath, ts);
+    const paramsUrl = modelParamsAssetUrl(partName, ts);
+    deps.sendToRenderer('MODEL_UPDATED', {
+      part: partName,
+      url: result.url,
+      paramsUrl,
+      format: 'GLB',
+      extension: 'glb',
+      kernel: state.currentKernel(),
+      kind: 'model',
+      sourceKind: source?.kind || null,
+      ...modelMotionPayload(partName, paramsUrl, assetUrl),
+      size: result.size || 0,
+      ts,
+      unitScale: result.unitScale,
+      coordinateSystem: result.coordinateSystem
+    });
+    return true;
+  }
+
+  function scheduleActiveModelGlb(partName) {
+    if (typeof deps.ensureModelGlbArtifact !== 'function') return;
+    const projectAtRequest = state.currentProjectPath();
+    Promise.all([
+      Promise.resolve(deps.ensureModelGlbArtifact(partName)),
+      waitForPartLoaded(partName, 8000)
+    ])
+      .then(([result]) => {
+        if (!result?.ok || !result.url) return;
+        if (projectAtRequest !== state.currentProjectPath()) return;
+        if (partName !== state.activePart()) return;
+        deps.sendToRenderer('MODEL_GLB_READY', result);
+      })
+      .catch((err) => {
+        deps.sendLog?.(`[${partName}] GLB artifact update failed: ${err?.message || err}`, 'warn');
+      });
+  }
+
   function assemblyMeshesReady(modelName, source) {
     const sourcePath = source?.sourcePath;
     if (!sourcePath || !fs.existsSync(sourcePath)) return false;
@@ -337,11 +391,12 @@ function createMainRebuildTools({ state, deps }) {
     deps.sendToRenderer('ACTIVE_MODEL_CHANGED', { name });
     deps.broadcastPartsList();
 
-    scheduleBuild(name, { force: true });
-    maybeSendModelUpdated(name);
+    scheduleBuild(name, { notifyCached: false });
+    const sentGlb = await maybeSendCachedModelGlbUpdated(name);
+    if (!sentGlb) maybeSendModelUpdated(name);
   }
 
-  function scheduleBuild(partName, { force = false } = {}) {
+  function scheduleBuild(partName, { force = false, notifyCached = true } = {}) {
     if (!state.currentProjectPath() || !partName) return;
     const source = deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
     if (!source) return;
@@ -355,7 +410,7 @@ function createMainRebuildTools({ state, deps }) {
       return;
     }
     if (!freshness.buildDirty) {
-      if (partName === state.activePart()) maybeSendModelUpdated(partName);
+      if (notifyCached && partName === state.activePart()) maybeSendModelUpdated(partName);
       resolveBuildWaiters(partName, cachedBuildResult(partName, source));
       return;
     }
@@ -835,6 +890,29 @@ function createMainRebuildTools({ state, deps }) {
     return { cacheRefresh: 'ok', faceCount: state.partInfoCache().get(partName)?.faceCount ?? null };
   }
 
+  function projectAssetUrl(filePath, ts = Date.now()) {
+    const rel = path.relative(state.currentProjectPath(), filePath).replace(/\\/g, '/');
+    return `aicad://asset/${rel.split('/').map((segment) => encodeURIComponent(segment)).join('/')}?t=${ts}`;
+  }
+
+  function modelParamsAssetUrl(partName, ts = Date.now()) {
+    const paramsPath = deps.modelParamsPath(state.currentProjectPath(), partName);
+    return fs.existsSync(paramsPath) ? projectAssetUrl(paramsPath, ts) : null;
+  }
+
+  function modelMotionPayload(partName, paramsUrl, assetUrl) {
+    const motionSource = deps.resolveMotionSource?.(state.currentProjectPath(), partName, state.currentKernel());
+    const motionReady = !!motionSource && assemblyMeshesReady(partName, motionSource);
+    return {
+      hasMotionPreview: !!motionSource,
+      motionReady,
+      motionUrl: motionReady ? assetUrl(motionSource.sourcePath) : null,
+      motionParamsUrl: motionReady ? paramsUrl : null,
+      motionFormat: 'MJCF',
+      motionSourceFile: motionSource?.fileName || null
+    };
+  }
+
   function sendModelUpdated(partName) {
     const source = deps.resolveModelSource(state.currentProjectPath(), partName, state.currentKernel());
     const cache = deps.modelCacheFile(state.currentProjectPath(), partName, source, state.currentKernel());
@@ -843,17 +921,9 @@ function createMainRebuildTools({ state, deps }) {
     const size = fs.statSync(cache).size;
     const ext = path.extname(cache).replace(/^\./, '');
     const format = deps.modelPreviewFormat(source, state.currentKernel());
-    const assetUrl = (filePath) => {
-      const rel = path.relative(state.currentProjectPath(), filePath).replace(/\\/g, '/');
-      return `aicad://asset/${rel.split('/').map((segment) => encodeURIComponent(segment)).join('/')}?t=${ts}`;
-    };
+    const assetUrl = (filePath) => projectAssetUrl(filePath, ts);
     const url = assetUrl(cache);
-    const paramsPath = deps.modelParamsPath(state.currentProjectPath(), partName);
-    const paramsUrl = fs.existsSync(paramsPath)
-      ? assetUrl(paramsPath)
-      : null;
-    const motionSource = deps.resolveMotionSource?.(state.currentProjectPath(), partName, state.currentKernel());
-    const motionReady = !!motionSource && assemblyMeshesReady(partName, motionSource);
+    const paramsUrl = modelParamsAssetUrl(partName, ts);
     deps.sendToRenderer('MODEL_UPDATED', {
       part: partName,
       url,
@@ -863,15 +933,11 @@ function createMainRebuildTools({ state, deps }) {
       kernel: state.currentKernel(),
       kind: 'model',
       sourceKind: source?.kind || null,
-      hasMotionPreview: !!motionSource,
-      motionReady,
-      motionUrl: motionReady ? assetUrl(motionSource.sourcePath) : null,
-      motionParamsUrl: motionReady ? paramsUrl : null,
-      motionFormat: 'MJCF',
-      motionSourceFile: motionSource?.fileName || null,
+      ...modelMotionPayload(partName, paramsUrl, assetUrl),
       size,
       ts
     });
+    scheduleActiveModelGlb(partName);
   }
   async function rebuildPartSync(name) {
     if (!state.currentProjectPath()) return { ok: false, error: 'No project is open in Forgent3D.' };
@@ -914,6 +980,7 @@ function createMainRebuildTools({ state, deps }) {
     refreshViewerCachesAfterBuild,
     sendModelUpdated,
     maybeSendModelUpdated,
+    maybeSendCachedModelGlbUpdated,
     rebuildPartSync
   };
 }

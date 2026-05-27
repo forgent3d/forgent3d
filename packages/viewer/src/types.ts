@@ -31,12 +31,16 @@ export type PartInfo = {
   faces: FaceInfo[];
 };
 
-export type LoadModelFormat = 'BREP' | 'STL' | 'MJCF';
+export type LoadModelFormat = 'BREP' | 'STL' | 'MJCF' | 'GLB';
 
 export type LoadModelOptions = {
   format?: LoadModelFormat | string;
   paramsUrl?: string;
   preserveView?: boolean;
+  /** Display scale applied while loading unit-conventional formats such as glTF. */
+  unitScale?: number;
+  /** Coordinate convention of the loaded asset before viewer display. */
+  coordinateSystem?: 'cad-z-up' | 'gltf-y-up' | string;
   /** Logical sub-part id for STL pick/highlight (e.g. parts/<name>/). */
   materialPart?: string;
   /** Compound child labels from models/<model>/metadata.json for BREP assemblies. */
@@ -109,6 +113,7 @@ export type Viewer = {
   loadBrep(url: string, onLog?: LogHandler, opts?: LoadModelOptions): Promise<PartInfo>;
   loadStl(url: string, onLog?: LogHandler, opts?: LoadModelOptions): Promise<PartInfo>;
   loadMjcf(url: string, paramsUrl?: string, onLog?: LogHandler, opts?: LoadModelOptions): Promise<PartInfo>;
+  loadGlb(url: string, onLog?: LogHandler, opts?: LoadModelOptions): Promise<PartInfo>;
   loadModel(url: string, onLog?: LogHandler, opts?: LoadModelOptions): Promise<PartInfo>;
   snapshot: SnapshotRenderer;
   setView(viewInput?: ViewSpec | string, opts?: { distance?: number }): ViewKey | string;

@@ -648,7 +648,9 @@ export function initUI(viewer) {
       mode,
       url: mode === 'motion' ? payload.motionUrl : payload.url,
       paramsUrl: mode === 'motion' ? (payload.motionParamsUrl || payload.paramsUrl) : payload.paramsUrl,
-      format: mode === 'motion' ? (payload.motionFormat || 'MJCF') : (payload.format || 'BREP')
+      format: mode === 'motion' ? (payload.motionFormat || 'MJCF') : (payload.format || 'BREP'),
+      unitScale: mode === 'motion' ? payload.motionUnitScale : payload.unitScale,
+      coordinateSystem: mode === 'motion' ? payload.motionCoordinateSystem : payload.coordinateSystem
     };
   }
 
@@ -673,14 +675,16 @@ export function initUI(viewer) {
     const fmt = String(preview.format || 'BREP').toUpperCase();
     const partLabel = payload.part ? `[${payload.part}] ` : '';
     const loadingLabel = fmt === 'MJCF'
-      ? t('loadingMotion')
-      : (fmt === 'STL' ? t('parsingStl') : t('parsingBrep'));
+      ? (preview.mode === 'motion' ? t('loadingMotion') : t('loadingMjcf'))
+      : (fmt === 'GLB' ? t('parsingGlb') : (fmt === 'STL' ? t('parsingStl') : t('parsingBrep')));
     setStatus(`${partLabel}${loadingLabel} ...`, true);
     try {
       const partInfo = await viewer.loadModel(preview.url, (msg) => appendLog(msg), {
         format: fmt,
         paramsUrl: preview.paramsUrl,
-        preserveView
+        preserveView,
+        unitScale: preview.unitScale,
+        coordinateSystem: preview.coordinateSystem
       });
       if (payload?.part) loadedPart = payload.part;
       const modelParts = modelPartsFor(payload.part);
@@ -688,8 +692,8 @@ export function initUI(viewer) {
       renderPartsList();
       const sizeKB = payload.size ? (payload.size / 1024).toFixed(1) + ' KB' : '';
       const tail = fmt === 'MJCF'
-        ? t('mjcfAssembly')
-        : (fmt === 'STL' ? t('stlMesh') : t('brepFaces', { count: partInfo?.faceCount ?? 0 }));
+        ? (preview.mode === 'motion' ? t('motionPreviewReady') : t('mjcfAssembly'))
+        : (fmt === 'GLB' ? t('glbModel') : (fmt === 'STL' ? t('stlMesh') : t('brepFaces', { count: partInfo?.faceCount ?? 0 })));
       setStatus(t('modelReady', { partLabel, sizeLabel: sizeKB ? sizeKB : '', tail }));
       viewerUi.renderAll();
       return partInfo;
@@ -1584,12 +1588,17 @@ export function initUI(viewer) {
           break;
         }
         const fmt = (payload.format || 'BREP').toUpperCase();
-        setStatus(`${partLabel}${fmt === 'STL' ? t('parsingStl') : t('parsingBrep')} ...`, true);
+        const loadingLabel = fmt === 'GLB'
+          ? t('parsingGlb')
+          : (fmt === 'STL' ? t('parsingStl') : t('parsingBrep'));
+        setStatus(`${partLabel}${loadingLabel} ...`, true);
         const sizeKB = payload.size ? (payload.size / 1024).toFixed(1) + ' KB' : '';
         viewer.loadModel(url, (msg) => appendLog(msg), {
           format: fmt,
           paramsUrl: payload.paramsUrl,
-          preserveView
+          preserveView,
+          unitScale: payload.unitScale,
+          coordinateSystem: payload.coordinateSystem
         })
           .then(async (partInfo) => {
             if (payload?.part) loadedPart = payload.part;
@@ -1599,7 +1608,7 @@ export function initUI(viewer) {
             const { faceCount } = partInfo;
             const tail = fmt === 'MJCF'
               ? t('mjcfAssembly')
-              : (fmt === 'STL' ? t('stlMesh') : t('brepFaces', { count: faceCount }));
+              : (fmt === 'GLB' ? t('glbModel') : (fmt === 'STL' ? t('stlMesh') : t('brepFaces', { count: faceCount })));
             setStatus(
               t('modelReady', { partLabel, sizeLabel: sizeKB ? ' · ' + sizeKB : '', tail })
             );
@@ -1639,6 +1648,16 @@ export function initUI(viewer) {
           });
         break;
       }
+      case 'MODEL_GLB_READY':
+        if (!payload?.part || payload.part !== activePart) break;
+        if (displayedModelPart || selectedModelPartModel === payload.part) break;
+        assemblyPayloads.set(payload.part, {
+          ...(assemblyPayloads.get(payload.part) || {}),
+          ...payload,
+          format: 'GLB'
+        });
+        showAssembly(payload.part, { preserveView: true }).catch(() => {});
+        break;
       case 'LOG':
         appendLog(payload.message, payload.level || 'info');
         break;

@@ -1,0 +1,28 @@
+{
+  "name": "@forgent3d/viewer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared browser-only Forgent3D 3D viewer",
+  "type": "module",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mujoco/mujoco": "^3.8.0",
+    "occt-import-js": "^0.0.23",
+    "three": "^0.168.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.184.0",
+    "typescript": "^6.0.3",
+    "vite": "^5.4.0"
+  }
+}

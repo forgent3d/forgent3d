@@ -682,6 +682,11 @@ function registerIpcHandlers({
       tryUnlink(deps.modelPartStlPath(projectPath, modelName, part.name));
     }
     tryUnlink(deps.partCache(projectPath, modelName, modelName, kernel));
+    if (typeof deps.modelGlbPath === 'function') {
+      const glbPath = deps.modelGlbPath(projectPath, modelName);
+      tryUnlink(glbPath);
+      tryUnlink(glbPath ? `${glbPath}.json` : null);
+    }
     const remaining = deps.listParts(projectPath).filter((model) => model.name !== modelName);
     if (wasActive) {
       const nextModel = remaining[0]?.name || null;

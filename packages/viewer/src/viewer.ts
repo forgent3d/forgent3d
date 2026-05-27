@@ -1,5 +1,8 @@
+/// <reference path="./declarations.d.ts" />
+
 import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import occtImportJs from 'occt-import-js';
 import loadMujoco from '@mujoco/mujoco';
 import { createViewCubeOverlay } from './viewer-viewcube.js';
@@ -466,6 +469,63 @@ export function createViewer(host: HTMLElement): Viewer {
     };
   }
 
+  async function loadGlb(url: string, onLog: LogHandler = () => {}, opts: LoadModelOptions = {}): Promise<PartInfo> {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`fetch ${url} failed: ${resp.status}`);
+    const buf = await resp.arrayBuffer();
+    onLog(`GLB parsing (${(buf.byteLength / 1024).toFixed(1)} KB)...`);
+
+    const gltf = await new GLTFLoader().parseAsync(buf, '');
+    const contentRoot = gltf.scene || new THREE.Group();
+    const root = new THREE.Group();
+    root.name = contentRoot.name || 'glb-model';
+    root.add(contentRoot);
+    const unitScale = typeof opts.unitScale === 'number' && Number.isFinite(opts.unitScale) && opts.unitScale > 0
+      ? opts.unitScale
+      : 1;
+    const coordinateSystem = String(opts.coordinateSystem || '').toLowerCase();
+    if (coordinateSystem === 'gltf-y-up') {
+      root.rotation.x = Math.PI / 2;
+      onLog('GLB display axes: glTF Y-up -> CAD Z-up');
+    }
+    if (unitScale !== 1) {
+      root.scale.setScalar(unitScale);
+      onLog(`GLB display unit scale: ${unitScale}x`);
+    }
+    root.updateMatrixWorld(true);
+
+    const box = new THREE.Box3().setFromObject(root);
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    box.getSize(size); box.getCenter(center);
+    root.position.sub(center);
+    root.updateMatrixWorld(true);
+
+    replaceCurrentModel(root, { preserveView: !!opts.preserveView, isMjcf: false });
+
+    let triangles = 0;
+    root.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      const geometry = mesh.geometry as THREE.BufferGeometry | undefined;
+      if (!geometry?.isBufferGeometry) return;
+      const position = geometry.getAttribute('position');
+      if (!position) return;
+      triangles += (geometry.index ? geometry.index.count : position.count) / 3;
+    });
+    onLog(`GLB parse complete: ${Math.floor(triangles)} triangles`);
+
+    return {
+      faceCount: 0,
+      bbox: {
+        min: [box.min.x, box.min.y, box.min.z],
+        max: [box.max.x, box.max.y, box.max.z],
+        size: [size.x, size.y, size.z],
+        center: [center.x, center.y, center.z]
+      },
+      faces: []
+    };
+  }
+
   async function loadMjcf(
     url: string,
     paramsUrl?: string,
@@ -488,7 +548,7 @@ export function createViewer(host: HTMLElement): Viewer {
    * Unified entry: choose BREP/STL/MJCF loader by URL suffix or explicit format.
    * @param {string} url
    * @param {(msg:string)=>void} [onLog]
-   * @param {{ format?: 'BREP'|'STL'|'MJCF', paramsUrl?: string, preserveView?: boolean }} [opts]
+   * @param {{ format?: 'BREP'|'STL'|'MJCF'|'GLB', paramsUrl?: string, preserveView?: boolean, unitScale?: number, coordinateSystem?: string }} [opts]
    */
   async function loadModel(url: string, onLog: LogHandler = () => {}, opts: LoadModelOptions = {}): Promise<PartInfo> {
     const fmt = (opts.format || '').toUpperCase();
@@ -504,6 +564,8 @@ export function createViewer(host: HTMLElement): Viewer {
     let partInfo;
     if (fmt === 'MJCF' || /\/asm\.xml(\?|$)/i.test(url)) {
       partInfo = await loadMjcf(url, opts.paramsUrl, onLog, loadOpts);
+    } else if (fmt === 'GLB' || /\.glb(\?|$)/i.test(url)) {
+      partInfo = await loadGlb(url, onLog, loadOpts);
     } else {
       const isStl = fmt === 'STL' || /\.stl(\?|$)/i.test(url);
       partInfo = await (isStl ? loadStl(url, onLog, loadOpts) : loadBrep(url, onLog, loadOpts));
@@ -605,6 +667,7 @@ export function createViewer(host: HTMLElement): Viewer {
     loadBrep,
     loadStl,
     loadMjcf,
+    loadGlb,
     loadModel,
     snapshot,
     setView: viewController.setView,

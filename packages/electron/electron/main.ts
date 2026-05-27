@@ -194,6 +194,9 @@ function modelCacheFile(projectPath, name, source = null, kernel = currentKernel
   if (!s) return null;
   return path.join(projectPath, CACHE_DIR, `${name}${kernelMeta(kernel).cacheExt}`);
 }
+function modelGlbPath(projectPath, name) {
+  return path.join(projectPath, CACHE_DIR, `${name}.glb`);
+}
 function modelPreviewFormat(source = null, kernel = currentKernel) {
   return kernelMeta(kernel).previewFormat;
 }
@@ -580,8 +583,10 @@ function registerIpc() {
       resolveModelSource,
       resolveMotionSource,
       ensurePartStlArtifact,
+      modelGlbPath,
       exportPartByRequest,
       buildModelGlbBuffer,
+      ensureModelGlbArtifact,
       partPng,
       partCache,
       modelPartStlPath,
@@ -683,6 +688,7 @@ function initModuleTools() {
       modelPartStlPath,
       partCache,
       modelCacheFile,
+      modelGlbPath,
       modelPreviewFormat,
       toProjectRelativeAsset,
       partPng
@@ -714,6 +720,7 @@ function initModuleTools() {
     },
     exportApi: {
       exportPartByRequest: (...args) => exportPartByRequest(...args),
+      ensureModelGlbArtifact: (...args) => ensureModelGlbArtifact(...args),
       handleExportFromMenu: (...args) => handleExportFromMenu(...args)
     },
       ui: {
@@ -896,12 +903,16 @@ function sendModelUpdated(partName) {
 }
 
 
-async function exportPartByRequest(partName, format) {
-  return exportTools.exportPartByRequest(partName, format);
+async function exportPartByRequest(partName, format, opts) {
+  return exportTools.exportPartByRequest(partName, format, opts);
 }
 
 async function buildModelGlbBuffer(modelName, kind, source = null) {
   return exportTools.buildModelGlbBuffer(modelName, kind, source);
+}
+
+async function ensureModelGlbArtifact(modelName, opts) {
+  return exportTools.ensureModelGlbArtifact(modelName, opts);
 }
 
 /* ---------------- Broadcast ---------------- */
