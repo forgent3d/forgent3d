@@ -1,8 +1,7 @@
 {
   "name": "@forgent3d/viewer",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Shared browser-only Forgent3D 3D viewer",
+  "version": "1.1.0",
+  "description": "Shared browser-only Forgent3D 3D viewer (Three.js + BREP/GLB/STL/MJCF loaders)",
   "type": "module",
   "types": "./src/index.ts",
   "exports": {
@@ -17,16 +16,25 @@
       "default": "./src/viewer-glb.ts"
     }
   },
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
+  "peerDependencies": {
+    "three": "^0.168.0"
+  },
   "dependencies": {
     "@mujoco/mujoco": "^3.8.0",
-    "occt-import-js": "^0.0.23",
-    "three": "^0.168.0"
+    "occt-import-js": "^0.0.23"
   },
   "devDependencies": {
     "@types/three": "^0.184.0",
+    "three": "^0.168.0",
     "typescript": "^6.0.3",
     "vite": "^5.4.0"
   }
