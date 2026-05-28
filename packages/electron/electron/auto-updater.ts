@@ -2,7 +2,7 @@
 export {};
 'use strict';
 
-const { dialog, app } = require('electron');
+const { dialog, app, BrowserWindow } = require('electron');
 
 const defaultMessages = {
   updateReadyTitle: 'Update ready',
@@ -13,9 +13,11 @@ const defaultMessages = {
   updateNotAvailableTitle: 'No Updates',
   updateNotAvailableMessage: 'You are running the latest version ({version}).',
   updateAvailableTitle: 'Update Available',
-  updateAvailableMessage: 'Forgent3D {version} is available. Downloading in the background…',
+  updateAvailablePromptMessage: 'Forgent3D {version} is available. Download now?',
+  updateAvailablePromptDetail: 'The update installs on next quit, or you can restart immediately when the download finishes.',
+  updateDownloadNow: 'Download',
   updateDownloadingTitle: 'Downloading Update',
-  updateDownloadingMessage: 'Forgent3D {version} is downloading ({percent}%).',
+  updateDownloadingLabel: 'Downloading Forgent3D {version}…',
   updateCheckFailedTitle: 'Update Check Failed',
   updateDevUnavailableTitle: 'Updates Unavailable',
   updateDevUnavailableMessage: 'Automatic updates are only available in the installed app.',
@@ -29,10 +31,12 @@ let getMessagesFn = () => defaultMessages;
 let getParentWindowFn = () => null;
 
 const state = {
-  status: 'idle', // 'idle' | 'checking' | 'downloading' | 'downloaded' | 'not-available' | 'error'
+  status: 'idle', // 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'not-available' | 'error'
   latestVersion: null,
   downloadPercent: 0,
   inFlightCheck: null,
+  progressWindow: null,
+  promptInFlight: false,
 };
 
 function semverGt(a, b) {
@@ -72,6 +76,118 @@ function log(msg, level = 'info') {
   sendLogFn?.(`[updater] ${msg}`, level);
 }
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function progressHtml(labelText) {
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+    html, body { margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 18px 20px; color: #1f1f1f; background: #f6f6f7; -webkit-user-select: none; user-select: none; }
+    .label { font-size: 13px; margin-bottom: 12px; line-height: 1.3; }
+    .bar { width: 100%; height: 8px; background: #dcdcdc; border-radius: 4px; overflow: hidden; }
+    .fill { height: 100%; background: #2e7df5; width: 0%; transition: width .15s linear; }
+    .pct { font-size: 12px; color: #555; margin-top: 8px; text-align: right; font-variant-numeric: tabular-nums; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #1f1f22; color: #ececec; }
+      .bar { background: #3a3a3d; }
+      .pct { color: #b0b0b3; }
+    }
+  </style></head><body>
+    <div class="label">${escapeHtml(labelText)}</div>
+    <div class="bar"><div class="fill" id="fill"></div></div>
+    <div class="pct" id="pct">0%</div>
+  </body></html>`;
+}
+
+function openProgressWindow(version) {
+  if (state.progressWindow && !state.progressWindow.isDestroyed()) {
+    state.progressWindow.show();
+    state.progressWindow.focus();
+    return;
+  }
+  const m = messages();
+  const parent = parentWindow();
+  const win = new BrowserWindow({
+    width: 360,
+    height: 130,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    parent: parent || undefined,
+    modal: false,
+    alwaysOnTop: false,
+    show: false,
+    title: m.updateDownloadingTitle,
+    autoHideMenuBar: true,
+    skipTaskbar: true,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  win.setMenuBarVisibility(false);
+  const labelText = formatMessage(m.updateDownloadingLabel, { version: version || state.latestVersion || '' });
+  win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(progressHtml(labelText)));
+  win.once('ready-to-show', () => {
+    win.show();
+    updateProgressWindow(state.downloadPercent);
+  });
+  win.on('closed', () => {
+    if (state.progressWindow === win) state.progressWindow = null;
+  });
+  state.progressWindow = win;
+}
+
+function updateProgressWindow(percent) {
+  const win = state.progressWindow;
+  if (!win || win.isDestroyed()) return;
+  const safePct = Math.max(0, Math.min(100, Math.round(percent || 0)));
+  win.webContents
+    .executeJavaScript(
+      `(function(){var f=document.getElementById('fill');var p=document.getElementById('pct');` +
+      `if(f)f.style.width='${safePct}%';if(p)p.textContent='${safePct}%';})();`,
+      true,
+    )
+    .catch(() => {});
+}
+
+function closeProgressWindow() {
+  const win = state.progressWindow;
+  state.progressWindow = null;
+  if (win && !win.isDestroyed()) win.destroy();
+}
+
+async function promptDownload(version) {
+  if (state.promptInFlight) return;
+  if (state.status === 'downloading' || state.status === 'downloaded') return;
+  if (!autoUpdaterInstance) return;
+  state.promptInFlight = true;
+  try {
+    const m = messages();
+    const { response } = await dialog.showMessageBox(parentWindow(), {
+      type: 'info',
+      buttons: [m.updateDownloadNow, m.updateLater],
+      defaultId: 0,
+      cancelId: 1,
+      title: m.updateAvailableTitle,
+      message: formatMessage(m.updateAvailablePromptMessage, { version: version || state.latestVersion || '' }),
+      detail: m.updateAvailablePromptDetail,
+    });
+    if (response !== 0) return;
+    state.status = 'downloading';
+    state.downloadPercent = 0;
+    openProgressWindow(version);
+    try {
+      await autoUpdaterInstance.downloadUpdate();
+    } catch (err) {
+      log(`download failed: ${err?.message || err}`, 'error');
+      closeProgressWindow();
+      state.status = 'error';
+    }
+  } finally {
+    state.promptInFlight = false;
+  }
+}
+
 async function promptRestart(version) {
   const m = messages();
   const { response } = await dialog.showMessageBox(parentWindow(), {
@@ -92,10 +208,11 @@ function wireAutoUpdaterEvents(autoUpdater) {
     log('checking for updates');
   });
   autoUpdater.on('update-available', (info) => {
-    state.status = 'downloading';
+    state.status = 'available';
     state.latestVersion = info?.version || state.latestVersion;
     state.downloadPercent = 0;
     log(`update available: ${info?.version}`);
+    void promptDownload(state.latestVersion);
   });
   autoUpdater.on('update-not-available', (info) => {
     state.status = 'not-available';
@@ -106,15 +223,20 @@ function wireAutoUpdaterEvents(autoUpdater) {
     state.status = 'downloading';
     state.downloadPercent = Math.round(p?.percent || 0);
     log(`downloading ${state.downloadPercent}%`);
+    updateProgressWindow(state.downloadPercent);
   });
   autoUpdater.on('error', (err) => {
     state.status = 'error';
     log(`error: ${err?.message || err}`, 'error');
+    closeProgressWindow();
   });
   autoUpdater.on('update-downloaded', async (info) => {
     state.status = 'downloaded';
     state.latestVersion = info?.version || state.latestVersion;
+    state.downloadPercent = 100;
     log(`update downloaded: ${info?.version}`);
+    updateProgressWindow(100);
+    closeProgressWindow();
     await promptRestart(info?.version);
   });
 }
@@ -138,7 +260,8 @@ function initAutoUpdater({ sendLog, getMessages, getParentWindow } = {}) {
   }
 
   autoUpdaterInstance = autoUpdater;
-  autoUpdater.autoDownload = true;
+  // Require explicit user agreement before pulling the installer.
+  autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
 
   autoUpdater.logger = {
@@ -185,15 +308,16 @@ async function checkForUpdatesFromMenu() {
     return;
   }
 
-  // Mid-download — show progress instead of starting another check.
+  // Mid-download — reopen the progress window if it was closed.
   if (state.status === 'downloading' && isNewer(state.latestVersion)) {
-    await showInfo(
-      m.updateDownloadingTitle,
-      formatMessage(m.updateDownloadingMessage, {
-        version: state.latestVersion,
-        percent: state.downloadPercent,
-      }),
-    );
+    openProgressWindow(state.latestVersion);
+    updateProgressWindow(state.downloadPercent);
+    return;
+  }
+
+  // User previously declined — re-prompt without re-fetching the manifest.
+  if (state.status === 'available' && isNewer(state.latestVersion)) {
+    await promptDownload(state.latestVersion);
     return;
   }
 
@@ -217,11 +341,8 @@ async function checkForUpdatesFromMenu() {
       return;
     }
 
+    // update-available event handler already showed the download prompt.
     state.latestVersion = remoteVersion;
-    await showInfo(
-      m.updateAvailableTitle,
-      formatMessage(m.updateAvailableMessage, { version: remoteVersion }),
-    );
   } catch (err) {
     log(`manual check failed: ${err?.message || err}`, 'warn');
     await dialog.showMessageBox(parentWindow(), {
