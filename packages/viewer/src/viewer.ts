@@ -299,6 +299,7 @@ export function createViewer(host: HTMLElement): Viewer {
     nextRoot: THREE.Object3D,
     { preserveView = false, isMjcf = false }: { preserveView?: boolean; isMjcf?: boolean } = {}
   ) {
+    cursorWheelZoom.cancelGesture();
     const previousRoot = currentRoot;
     const previousSimulation = mjcfSimulation;
     const viewState = preserveView && previousRoot ? viewController.captureState() : null;

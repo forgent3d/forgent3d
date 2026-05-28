@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 
 const WHEEL_GESTURE_IDLE_MS = 180;
-const WHEEL_GESTURE_POINTER_TOLERANCE_PX = 10;
+const WHEEL_GESTURE_POINTER_TOLERANCE_PX = 1;
 const MAX_WHEEL_ZOOM_STEP = 0.34;
 const MIN_CAMERA_DISTANCE = 1e-6;
 
@@ -35,13 +35,35 @@ export function createCursorWheelZoomController({
   const cameraOffset = new THREE.Vector3();
 
   let gesture: WheelGesture | null = null;
+  let lastPointerClient: { x: number; y: number } | null = null;
+  let wheelPointerClient: { x: number; y: number } | null = null;
+
+  function pointInsideRect(x: number, y: number, rect: DOMRect) {
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  }
+
+  function trackPointer(event: PointerEvent) {
+    const rect = domElement.getBoundingClientRect();
+    if (!rect.width || !rect.height || !pointInsideRect(event.clientX, event.clientY, rect)) return;
+    lastPointerClient = { x: event.clientX, y: event.clientY };
+  }
+
+  function clearTrackedPointer() {
+    lastPointerClient = null;
+    gesture = null;
+  }
 
   function readPointer(event: WheelEvent) {
     const rect = domElement.getBoundingClientRect();
     if (!rect.width || !rect.height) return false;
 
-    pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    const client = lastPointerClient && pointInsideRect(lastPointerClient.x, lastPointerClient.y, rect)
+      ? lastPointerClient
+      : { x: event.clientX, y: event.clientY };
+
+    wheelPointerClient = client;
+    pointer.x = ((client.x - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((client.y - rect.top) / rect.height) * 2 + 1;
     return true;
   }
 
@@ -58,7 +80,8 @@ export function createCursorWheelZoomController({
 
   function pointerMovedOutsideGesture(event: WheelEvent) {
     if (!gesture) return true;
-    return Math.hypot(event.clientX - gesture.clientX, event.clientY - gesture.clientY) > WHEEL_GESTURE_POINTER_TOLERANCE_PX;
+    const client = wheelPointerClient || { x: event.clientX, y: event.clientY };
+    return Math.hypot(client.x - gesture.clientX, client.y - gesture.clientY) > WHEEL_GESTURE_POINTER_TOLERANCE_PX;
   }
 
   function gestureExpired(now: number) {
@@ -73,15 +96,30 @@ export function createCursorWheelZoomController({
     return projected ? target : null;
   }
 
-  function pickGestureAnchor(event: WheelEvent) {
+  function isSolidModelHit(hit: THREE.Intersection) {
+    const object = hit.object;
+    if (!object.visible || object.userData?.isWireframe) return false;
+    if (!(object instanceof THREE.Mesh)) return false;
+    return !!object.geometry?.isBufferGeometry;
+  }
+
+  function pickGestureAnchor(_event: WheelEvent): THREE.Vector3 {
+    // Snap the camera to look at the orbit target BEFORE raycasting so the
+    // anchor is picked using the same orientation that keepAnchorUnderPointer
+    // will apply later in the same wheel handler. Without this, TrackballControls
+    // can leave the camera slightly off-axis after an orbit, and the first-wheel
+    // correction = (anchor under old ray) − (anchor under post-lookAt ray) shows
+    // up as a one-time sideways lurch.
+    camera.lookAt(controls.target);
     camera.updateMatrixWorld();
     raycaster.setFromCamera(pointer, camera);
 
     const currentRoot = getCurrentRoot();
     if (currentRoot) {
+      currentRoot.updateMatrixWorld(true);
       const hit = raycaster
         .intersectObject(currentRoot, true)
-        .find((entry) => entry.object.visible);
+        .find(isSolidModelHit);
       if (hit) return hit.point.clone();
     }
 
@@ -92,10 +130,11 @@ export function createCursorWheelZoomController({
   function getGestureAnchor(event: WheelEvent) {
     const now = performance.now();
     if (gestureExpired(now) || pointerMovedOutsideGesture(event)) {
+      const client = wheelPointerClient || { x: event.clientX, y: event.clientY };
       const nextGesture = {
         anchor: pickGestureAnchor(event),
-        clientX: event.clientX,
-        clientY: event.clientY,
+        clientX: client.x,
+        clientY: client.y,
         lastWheelAt: now
       };
       gesture = nextGesture;
@@ -131,11 +170,14 @@ export function createCursorWheelZoomController({
     camera.updateMatrixWorld();
 
     const projected = projectPointerToPlane(anchor, projectedAnchor);
-    if (!projected) return;
+    if (!projected) return null;
 
     correction.copy(anchor).sub(projected);
+    if (!Number.isFinite(correction.x) || !Number.isFinite(correction.y) || !Number.isFinite(correction.z)) return null;
+
     camera.position.add(correction);
     controls.target.add(correction);
+    return correction;
   }
 
   function onWheel(event: WheelEvent) {
@@ -144,8 +186,10 @@ export function createCursorWheelZoomController({
     event.preventDefault();
     event.stopImmediatePropagation();
 
+    const factor = wheelZoomFactor(event);
     const anchor = getGestureAnchor(event);
-    if (!zoomCameraDistance(wheelZoomFactor(event))) return;
+
+    if (!zoomCameraDistance(factor)) return;
 
     keepAnchorUnderPointer(anchor);
     camera.lookAt(controls.target);
@@ -153,6 +197,8 @@ export function createCursorWheelZoomController({
   }
 
   domElement.addEventListener('wheel', onWheel, { passive: false, capture: true });
+  domElement.addEventListener('pointermove', trackPointer, { passive: true, capture: true });
+  domElement.addEventListener('pointerleave', clearTrackedPointer, { passive: true, capture: true });
 
   return {
     cancelGesture() {
@@ -160,6 +206,8 @@ export function createCursorWheelZoomController({
     },
     dispose() {
       domElement.removeEventListener('wheel', onWheel, { capture: true });
+      domElement.removeEventListener('pointermove', trackPointer, { capture: true });
+      domElement.removeEventListener('pointerleave', clearTrackedPointer, { capture: true });
     }
   };
 }
