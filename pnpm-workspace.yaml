@@ -1,3 +1,4 @@
 packages:
   - 'packages/*'
   - '!packages/cf-sandbox'
+  - '!packages/cloud'

@@ -94,6 +94,7 @@
       "icon": "assets/images/logo.png"
     },
     "nsis": {
+      "artifactName": "Forgent3D.Setup.${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "displayLanguageSelector": true,
