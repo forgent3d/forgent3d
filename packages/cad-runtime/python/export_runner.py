@@ -30,6 +30,58 @@ MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
 CACHE_DIR = os.path.join(PROJECT_ROOT, ".cache")
 MODEL_KINDS = ("part",)
 
+# Sentinel-prefixed line emitted on stdout when --emit-build-json is passed, so a
+# caller can read the build summary (bbox/anchors/hasResult) from this single run
+# instead of a separate aicad-script build pass. Keep in sync with cf-sandbox rebuild.ts.
+BUILD_JSON_SENTINEL = "@@AICAD_BUILD_JSON@@"
+
+
+def _emit_build_json(payload) -> None:
+    print(BUILD_JSON_SENTINEL + json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+
+def _bbox_summary(shape):
+    if shape is None or not hasattr(shape, "bounding_box"):
+        return None
+    try:
+        bb = shape.bounding_box()
+        return {
+            "min": [float(bb.min.X), float(bb.min.Y), float(bb.min.Z)],
+            "max": [float(bb.max.X), float(bb.max.Y), float(bb.max.Z)],
+            "size": [
+                float(bb.max.X - bb.min.X),
+                float(bb.max.Y - bb.min.Y),
+                float(bb.max.Z - bb.min.Z),
+            ],
+        }
+    except Exception:
+        return None
+
+
+def _build_summary_payload(model_name, part_name, source_path, ns, result):
+    metadata = ns.get("metadata") if isinstance(ns, dict) else None
+    anchors = None
+    metadata_keys = []
+    if isinstance(metadata, dict):
+        metadata_keys = sorted(str(k) for k in metadata.keys())
+        if isinstance(metadata.get("anchors"), dict):
+            try:
+                anchors = _json_safe(metadata.get("anchors"))
+            except Exception:
+                anchors = None
+    return {
+        "ok": result is not None,
+        "script": "build",
+        "model": model_name,
+        "part": part_name,
+        "source": os.path.relpath(source_path, PROJECT_ROOT).replace(os.sep, "/") if source_path else None,
+        "resultType": type(result).__name__ if result is not None else None,
+        "hasResult": result is not None,
+        "bbox": _bbox_summary(result),
+        "metadataKeys": metadata_keys,
+        "metadataAnchors": anchors,
+    }
+
 
 def _looks_like_build123d(obj) -> bool:
     return any(c.__module__.startswith("build123d") for c in type(obj).__mro__)
@@ -552,7 +604,7 @@ def _build_namespace(model_name: str, part_name: str, source_override: str = Non
     return ns, source_path, 0
 
 
-def build_one(model_name: str, part_name: str = None, export_format: str = "brep", output: str = None, source_override: str = None) -> int:
+def build_one(model_name: str, part_name: str = None, export_format: str = "brep", output: str = None, source_override: str = None, emit_build_json: bool = False) -> int:
     part_name = part_name or model_name
     build_started = time.perf_counter()
     ns, source_path, err = _build_namespace(model_name, part_name, source_override)
@@ -566,6 +618,8 @@ def build_one(model_name: str, part_name: str = None, export_format: str = "brep
         if candidate is not None:
             result = candidate
     if result is None:
+        if emit_build_json:
+            _emit_build_json(_build_summary_payload(model_name, part_name, source_path, ns, None))
         print(f"[export_runner] {source_path} must define a global result (or assembly) object (build123d).",
               file=sys.stderr)
         return 4
@@ -575,6 +629,8 @@ def build_one(model_name: str, part_name: str = None, export_format: str = "brep
     except Exception as exc:
         print(f"[export_runner] Failed to write metadata.json: {exc}", file=sys.stderr)
         return 8
+    if emit_build_json:
+        _emit_build_json(_build_summary_payload(model_name, part_name, source_path, ns, result))
 
     fmt = (export_format or "brep").strip().lower()
     if fmt not in ("brep", "step", "stl", "obj", "glb", "3mf"):
@@ -625,6 +681,8 @@ def main() -> int:
     parser.add_argument("--source", default=None, help="Optional project-relative or absolute source file path (overrides default lookup)")
     parser.add_argument("--export-format", default="brep", choices=["brep", "step", "stl", "obj", "glb", "3mf"])
     parser.add_argument("--output", default=None, help="Optional absolute path for exported file")
+    parser.add_argument("--emit-build-json", action="store_true",
+                        help="Emit a sentinel-prefixed build-summary JSON line on stdout (cloud rebuild fast path)")
     args = parser.parse_args()
     global PROJECT_ROOT, MODELS_DIR, CACHE_DIR
     PROJECT_ROOT = os.path.abspath(args.project) if args.project else HERE
@@ -633,7 +691,7 @@ def main() -> int:
     model_name = args.model or args.part
     if not model_name:
         parser.error("one of --model / --part is required")
-    return build_one(model_name, args.part_name or model_name, args.export_format, args.output, args.source)
+    return build_one(model_name, args.part_name or model_name, args.export_format, args.output, args.source, args.emit_build_json)
 
 
 if __name__ == "__main__":
