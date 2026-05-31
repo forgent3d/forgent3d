@@ -14,6 +14,11 @@
       "types": "./src/viewer-glb.ts",
       "import": "./src/viewer-glb.ts",
       "default": "./src/viewer-glb.ts"
+    },
+    "./brep": {
+      "types": "./src/viewer-brep.ts",
+      "import": "./src/viewer-brep.ts",
+      "default": "./src/viewer-brep.ts"
     }
   },
   "files": [

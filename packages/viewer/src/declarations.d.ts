@@ -24,3 +24,8 @@ declare module 'occt-import-js' {
 
   export default function occtImportJs(options?: OcctOptions): Promise<OcctModule>;
 }
+
+declare module '*.wasm?url' {
+  const url: string;
+  export default url;
+}

@@ -17,7 +17,7 @@ Protocol (newline JSON bodies):
   POST /build_export  -> body {project, model, part?, output, format?, source?}
                          returns the export_runner build-summary dict
                          {ok, model, part, source, resultType, hasResult, bbox,
-                          metadataKeys, metadataAnchors, error?}, GLB written to `output`.
+                          metadataKeys, metadataAnchors, error?}, requested artifact written to `output`.
 """
 import argparse
 import importlib.util
@@ -88,7 +88,7 @@ def _build_export(req: dict) -> dict:
 
     model = str(req.get("model") or "").strip()
     part = str(req.get("part") or model).strip()
-    fmt = str(req.get("format") or "glb").strip().lower()
+    fmt = str(req.get("format") or "brep").strip().lower()
     output = req.get("output")
     source = req.get("source")
     if not model:
