@@ -512,22 +512,48 @@ def _circle_axis_from_edge(e: Edge):
 
 
 def _cylinder_face_axis_and_radius(face: Face):
-    """Return (axis_unit_vector, radius) for a cylindrical face, derived from a
-    bounding circular edge. Returns (None, None) when not derivable.
+    """Return (axis_unit_vector, radius) for a cylindrical face.
+
+    Prefer the exact surface parameters OCCT exposes through build123d
+    (``Face.axis_of_rotation`` / ``Face.radius``). Only fall back to deriving
+    them from a bounding circular edge when those are unavailable (e.g. a
+    trimmed-surface cylinder with no clean circular boundary). Returns
+    ``(None, None)`` when neither source yields a value.
     """
+    axis = None
+    radius = None
+    try:
+        rot = face.axis_of_rotation
+        if rot is not None:
+            d = getattr(rot, "direction", rot)
+            axis = d.normalized() if hasattr(d, "normalized") else Vector(d).normalized()
+    except Exception:
+        axis = None
+    try:
+        r = face.radius
+        if r is not None:
+            radius = float(r)
+    except Exception:
+        radius = None
+    if axis is not None and radius is not None:
+        return axis, radius
+
+    # Fallback: derive the missing value(s) from a bounding circular edge.
     for e in face.edges():
         gt = getattr(e, "geom_type", None)
         gt_val = gt() if callable(gt) else gt
         if gt_val != GeomType.CIRCLE:
             continue
-        axis = _circle_axis_from_edge(e)
+        edge_axis = axis if axis is not None else _circle_axis_from_edge(e)
+        if edge_axis is None:
+            continue
+        if radius is not None:
+            return edge_axis, radius
         try:
-            radius = float(e.radius)
+            return edge_axis, float(e.radius)
         except Exception:
             continue
-        if axis is not None:
-            return axis, radius
-    return None, None
+    return axis, radius
 
 
 def holes(
