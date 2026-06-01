@@ -59,7 +59,10 @@
       "Bash(npx --no-install tsc --noEmit -p .)",
       "Bash(npx --no-install tsc --noEmit -p tsconfig.electron.json)",
       "Bash(timeout 90 npx next build --no-lint)",
-      "Bash(npx next *)"
+      "Bash(npx next *)",
+      "Bash(echo \"=== exit: $? ===\")",
+      "Bash(grep -vE \"node_modules|/dist/|\\\\.map$\")",
+      "Bash(echo \"full-exit=$?\")"
     ]
   }
 }
