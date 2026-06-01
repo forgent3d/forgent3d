@@ -103,6 +103,7 @@ export function createAppearanceController({ getCurrentRoot }: { getCurrentRoot:
     if (!root) return;
     root.traverse((child) => {
       if (!(child instanceof THREE.Mesh)) return;
+      if (child.userData?.isFaceSelectionOverlay) return;
       // Meshes from GLB carry colors baked by build123d. Don't let an unmatched
       // params.json default overwrite them — leave the GLB material alone unless
       // an explicit per-part override matches.

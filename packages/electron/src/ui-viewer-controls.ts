@@ -71,6 +71,17 @@ export function createViewerUiController({
       btn.disabled = !hasModel;
       btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
+    if (elements.previewFaceSelectBtn) {
+      const canSelect = hasModel
+        && typeof viewer.canSelectBrepFaces === 'function'
+        && viewer.canSelectBrepFaces();
+      const active = canSelect
+        && typeof viewer.isFaceSelectionEnabled === 'function'
+        && viewer.isFaceSelectionEnabled();
+      elements.previewFaceSelectBtn.disabled = !canSelect;
+      elements.previewFaceSelectBtn.classList.toggle('active', active);
+      elements.previewFaceSelectBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    }
   }
 
   function startAutoShow() {

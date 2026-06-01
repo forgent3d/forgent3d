@@ -25,6 +25,20 @@ export type FaceInfo = {
   normal: Vec3Tuple;
 };
 
+export type BrepFaceSelection = {
+  index: number;
+  centroid: Vec3Tuple;
+  normal: Vec3Tuple;
+  meshName: string | null;
+  partId: string | number | null;
+  surfaceType: 'planar' | 'cylindrical' | 'other';
+  area: number;
+  selector: string;
+  matchCount: number;
+  disambiguation?: string;
+  screenshot?: string;
+};
+
 export type PartInfo = {
   faceCount: number;
   bbox: BBoxInfo;
@@ -32,6 +46,21 @@ export type PartInfo = {
 };
 
 export type LoadModelFormat = 'BREP' | 'STL' | 'MJCF' | 'GLB';
+
+export type ViewerOptions = {
+  loaders?: {
+    brep?: boolean;
+    stl?: boolean;
+    glb?: boolean;
+    mjcf?: boolean;
+  };
+  features?: {
+    faceSelection?: boolean;
+    materials?: boolean;
+    explode?: boolean;
+    viewCube?: boolean;
+  };
+};
 
 export type LoadModelOptions = {
   format?: LoadModelFormat | string;
@@ -131,6 +160,12 @@ export type Viewer = {
   setPartMaterialColors(colorsByPart: Record<string, THREE.ColorRepresentation>): void;
   setSelectedPart(partKey: string | number | null): string | number | null;
   setOnSelectedPartChange(handler: ((partKey: string | number | null) => void) | null): void;
+  setFaceSelectionEnabled(enabled: boolean): boolean;
+  isFaceSelectionEnabled(): boolean;
+  canSelectBrepFaces(): boolean;
+  setOnSelectedFaceChange(handler: ((selection: BrepFaceSelection | null) => void) | null): void;
+  setSelectedFace(faceIndex: number | null): BrepFaceSelection | null;
+  getSelectedFace(): BrepFaceSelection | null;
   getMaterialParts(): Array<MaterialPart & { color: string | null }>;
   getSelectedPart(): string | number | null;
   getPartMaterialState(): Record<string, MaterialSpec>;

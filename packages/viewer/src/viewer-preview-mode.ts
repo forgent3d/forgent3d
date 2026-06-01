@@ -31,6 +31,7 @@ export function createPreviewModeController({
     const isWireframe = mode === 'wireframe';
     const isXray = mode === 'xray';
     currentRoot.traverse((child) => {
+      if (child.userData?.isFaceSelectionOverlay) return;
       if (child instanceof THREE.Mesh) {
         for (const material of materialList(child.material)) {
           if (!material || !('wireframe' in material)) continue;

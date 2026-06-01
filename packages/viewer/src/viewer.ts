@@ -4,7 +4,6 @@ import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import occtImportJs from 'occt-import-js';
-import loadMujoco from '@mujoco/mujoco';
 import { createViewCubeOverlay } from './viewer-viewcube.js';
 import {
   applyCadStyleToGlbScene,
@@ -14,7 +13,6 @@ import {
   tagGlbSceneMaterialParts,
   tagSceneAsMaterialPart
 } from './viewer-loaders.js';
-import { disposeMjcfSimulation, loadMjcfScene, stepMjcfSimulation } from './viewer-mjcf.js';
 import { createContactShadow, createViewerLighting, decorateModelForCadDisplay } from './viewer-scene.js';
 import { createSnapshotRenderer } from './viewer-snapshot.js';
 import { createViewController } from './viewer-navigation.js';
@@ -24,15 +22,16 @@ import { createReferenceAxesController } from './viewer-reference-axes.js';
 import { createExplodeController } from './viewer-explode.js';
 import { createAdaptiveBackgroundController } from './viewer-background.js';
 import { createCursorWheelZoomController } from './viewer-cursor-zoom.js';
+import { createBrepFaceSelectionController } from './viewer-face-selection.js';
 import { disposeThreeObject } from './viewer-utils.js';
-import type { LoadModelOptions, LogHandler, MaterialParams, MaterialSpec, PartInfo, PreviewMode, Viewer, ViewSpec } from './types.js';
+import type { BrepFaceSelection, LoadModelOptions, LogHandler, MaterialParams, MaterialSpec, PartInfo, PreviewMode, Viewer, ViewerOptions, ViewSpec } from './types.js';
 // Vite treats wasm as an asset and returns the final bundled URL
 import occtWasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
-import mujocoWasmUrl from '@mujoco/mujoco/mujoco.wasm?url';
 import type occtImportJsType from 'occt-import-js';
 
 type OcctModule = Awaited<ReturnType<typeof occtImportJsType>>;
-type MujocoModule = Awaited<ReturnType<typeof loadMujoco>>;
+type MujocoModule = Record<string, any>;
+type MjcfRuntime = typeof import('./viewer-mjcf.js');
 type MjcfSimulation = Record<string, any> | null;
 type ViewCubeOverlay = {
   render(mainCameraQuaternion: THREE.Quaternion): void;
@@ -46,7 +45,19 @@ type ViewCubeOverlay = {
  *  - Keeps all BREP faces merged into a single mesh for efficient rendering
  *  - Keep feature-specific display logic in focused viewer-* modules; this file wires controllers together
  */
-export function createViewer(host: HTMLElement): Viewer {
+export function createViewer(host: HTMLElement, opts: ViewerOptions = {}): Viewer {
+  const loaders = {
+    brep: opts.loaders?.brep !== false,
+    stl: opts.loaders?.stl !== false,
+    glb: opts.loaders?.glb !== false,
+    mjcf: opts.loaders?.mjcf !== false
+  };
+  const features = {
+    faceSelection: opts.features?.faceSelection !== false,
+    materials: opts.features?.materials !== false,
+    explode: opts.features?.explode !== false,
+    viewCube: opts.features?.viewCube !== false
+  };
   let onSelectedPartChange: ((partKey: string | number | null) => void) | null = null;
   const scene = new THREE.Scene();
   scene.background = null;
@@ -160,17 +171,38 @@ export function createViewer(host: HTMLElement): Viewer {
     getCurrentRoot: () => currentRoot,
     updateDirectionalLights: lighting.updateDirectionalLights
   });
+  const faceSelectionController = createBrepFaceSelectionController({
+    renderer,
+    scene,
+    camera,
+    getCurrentRoot: () => currentRoot
+  });
 
   /* ---- Animation ---- */
   let running = true;
   let lastFrameTs = performance.now();
   let autoOrbitSpeed = 0;
+  let mjcfRuntime: MjcfRuntime | null = null;
+  let mjcfRuntimePromise: Promise<MjcfRuntime> | null = null;
+
+  function getMjcfRuntime(): Promise<MjcfRuntime> {
+    if (!loaders.mjcf) return Promise.reject(new Error('MJCF loader is disabled'));
+    if (!mjcfRuntimePromise) {
+      mjcfRuntimePromise = import('./viewer-mjcf.js').then((runtime) => {
+        mjcfRuntime = runtime;
+        return runtime;
+      });
+    }
+    return mjcfRuntimePromise;
+  }
+
   function animateMjcfSimulation(dt: number) {
+    if (!loaders.mjcf) return;
     if (!currentMjcfRoot) return;
     const sim = currentMjcfRoot.userData?.mjcfSimulation;
     if (!sim) return;
     try {
-      stepMjcfSimulation(currentMjcfRoot, dt);
+      mjcfRuntime?.stepMjcfSimulation(currentMjcfRoot, dt);
     } catch {
       // Ignore one-off simulation update failures to keep viewer responsive.
     }
@@ -180,9 +212,9 @@ export function createViewer(host: HTMLElement): Viewer {
     const now = performance.now();
     const dt = Math.min(0.05, Math.max(0, (now - lastFrameTs) / 1000));
     lastFrameTs = now;
-    explodeController.removeOffsets();
+    if (features.explode) explodeController.removeOffsets();
     animateMjcfSimulation(dt);
-    explodeController.update(dt);
+    if (features.explode) explodeController.update(dt);
     controls.update();
     if (autoOrbitSpeed && currentRoot) viewController.orbit(autoOrbitSpeed * dt);
     lighting.updateDirectionalLights(camera, controls.target);
@@ -218,15 +250,24 @@ export function createViewer(host: HTMLElement): Viewer {
 
   let mujocoPromise: Promise<MujocoModule> | null = null;
   function getMujoco(): Promise<MujocoModule> {
+    if (!loaders.mjcf) return Promise.reject(new Error('MJCF loader is disabled'));
     if (!mujocoPromise) {
-      mujocoPromise = loadMujoco({
-        locateFile: (file: string) => file.endsWith('.wasm') ? mujocoWasmUrl : file
+      mujocoPromise = Promise.all([
+        import('@mujoco/mujoco'),
+        import('@mujoco/mujoco/mujoco.wasm?url')
+      ]).then(([mujocoModule, wasmModule]) => {
+        const loadMujoco = mujocoModule.default;
+        const mujocoWasmUrl = wasmModule.default;
+        return loadMujoco({
+          locateFile: (file: string) => file.endsWith('.wasm') ? mujocoWasmUrl : file
+        });
       });
     }
     return mujocoPromise;
   }
 
   function clearModel() {
+    faceSelectionController.clearSelection();
     if (currentRoot) {
       scene.remove(currentRoot);
       disposeThreeObject(currentRoot);
@@ -234,10 +275,10 @@ export function createViewer(host: HTMLElement): Viewer {
     }
     markModelClipDirty();
     currentMjcfRoot = null;
-    disposeMjcfSimulation(mjcfSimulation);
+    mjcfRuntime?.disposeMjcfSimulation(mjcfSimulation);
     mjcfSimulation = null;
-    appearanceController.reset();
-    explodeController.reset();
+    if (features.materials) appearanceController.reset();
+    if (features.explode) explodeController.reset();
     backgroundController.reset();
     contactShadow.hide();
     referenceAxes.hide();
@@ -245,7 +286,7 @@ export function createViewer(host: HTMLElement): Viewer {
     controls.target.set(0, 0, 0);
     controls.update();
     viewController.reset();
-    if (viewCube) viewCube.setEnabled(false);
+    if (features.viewCube && viewCube) viewCube.setEnabled(false);
   }
 
   function materialPartFromObject(object: THREE.Object3D | null): string | number | null {
@@ -277,11 +318,19 @@ export function createViewer(host: HTMLElement): Viewer {
 
   function handlePartPickPointerDown(event: PointerEvent) {
     if (event.button !== 0) return;
+    if (faceSelectionController.isActive()) {
+      faceSelectionController.handlePointerDown(event);
+      return;
+    }
     partPickDown = { x: event.clientX, y: event.clientY };
   }
 
   function handlePartPickClick(event: MouseEvent) {
     if (event.button !== 0) return;
+    if (faceSelectionController.isActive()) {
+      faceSelectionController.handleClick(event);
+      return;
+    }
     if (partPickDown) {
       const dx = event.clientX - partPickDown.x;
       const dy = event.clientY - partPickDown.y;
@@ -300,6 +349,7 @@ export function createViewer(host: HTMLElement): Viewer {
     { preserveView = false, isMjcf = false }: { preserveView?: boolean; isMjcf?: boolean } = {}
   ) {
     cursorWheelZoom.cancelGesture();
+    faceSelectionController.clearSelection();
     const previousRoot = currentRoot;
     const previousSimulation = mjcfSimulation;
     const viewState = preserveView && previousRoot ? viewController.captureState() : null;
@@ -308,12 +358,13 @@ export function createViewer(host: HTMLElement): Viewer {
     currentRoot = nextRoot;
     currentMjcfRoot = isMjcf ? nextRoot : null;
     mjcfSimulation = isMjcf ? (nextRoot.userData.mjcfSimulation || null) : null;
+    faceSelectionController.syncAvailability();
     const modelBox = prepareModelForCadDisplay(nextRoot);
     referenceAxes.updateForBox(modelBox);
     markModelClipDirty();
-    appearanceController.apply();
+    if (features.materials) appearanceController.apply();
     backgroundController.update(nextRoot);
-    explodeController.rebuildTargets();
+    if (features.explode) explodeController.rebuildTargets();
     previewController.refresh();
 
     if (previousRoot) {
@@ -321,7 +372,7 @@ export function createViewer(host: HTMLElement): Viewer {
       disposeThreeObject(previousRoot);
     }
     if (previousSimulation && previousSimulation !== mjcfSimulation) {
-      disposeMjcfSimulation(previousSimulation);
+      mjcfRuntime?.disposeMjcfSimulation(previousSimulation);
     }
 
     if (viewState) {
@@ -331,7 +382,7 @@ export function createViewer(host: HTMLElement): Viewer {
       controls.update();
       viewController.fitView('iso');
     }
-    if (viewCube) viewCube.setEnabled(true);
+    if (features.viewCube && viewCube) viewCube.setEnabled(true);
   }
 
   function metadataUrlFromParamsUrl(paramsUrl: string | undefined): string | null {
@@ -370,6 +421,7 @@ export function createViewer(host: HTMLElement): Viewer {
   /* ---- Load BREP ---- */
 
   async function loadBrep(url: string, onLog: LogHandler = () => {}, opts: LoadModelOptions = {}): Promise<PartInfo> {
+    if (!loaders.brep) throw new Error('BREP loader is disabled');
     // 1) Fetch BREP bytes
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`fetch ${url} failed: ${resp.status}`);
@@ -401,8 +453,11 @@ export function createViewer(host: HTMLElement): Viewer {
 
     replaceCurrentModel(group, { preserveView: !!opts.preserveView, isMjcf: false });
 
-    const pickable = group.children.find((c) => c instanceof THREE.Mesh && c.userData.faceRanges);
-    const faceRanges: Array<{ faceIndex: number; centroid: THREE.Vector3; normal: THREE.Vector3 }> = pickable?.userData.faceRanges || [];
+    const faceRanges: Array<{ faceIndex: number; centroid: THREE.Vector3; normal: THREE.Vector3 }> = [];
+    group.traverse((child) => {
+      if (!(child instanceof THREE.Mesh) || !Array.isArray(child.userData.faceRanges)) return;
+      faceRanges.push(...child.userData.faceRanges);
+    });
     const totalFaces = faceRanges.length;
     onLog(`OCCT parse complete: ${totalFaces} BREP faces`);
 
@@ -439,6 +494,7 @@ export function createViewer(host: HTMLElement): Viewer {
   /* ---- Load STL mesh preview ---- */
 
   async function loadStl(url: string, onLog: LogHandler = () => {}, opts: LoadModelOptions = {}): Promise<PartInfo> {
+    if (!loaders.stl) throw new Error('STL loader is disabled');
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`fetch ${url} failed: ${resp.status}`);
     const buf = await resp.arrayBuffer();
@@ -473,6 +529,7 @@ export function createViewer(host: HTMLElement): Viewer {
   }
 
   async function loadGlb(url: string, onLog: LogHandler = () => {}, opts: LoadModelOptions = {}): Promise<PartInfo> {
+    if (!loaders.glb) throw new Error('GLB loader is disabled');
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`fetch ${url} failed: ${resp.status}`);
     const buf = await resp.arrayBuffer();
@@ -537,8 +594,10 @@ export function createViewer(host: HTMLElement): Viewer {
     onLog: LogHandler = () => {},
     opts: LoadModelOptions = {}
   ): Promise<PartInfo> {
+    if (!loaders.mjcf) throw new Error('MJCF loader is disabled');
     onLog('MJCF loading ...');
-    const { root, simulation, partInfo } = await loadMjcfScene({
+    const runtime = await getMjcfRuntime();
+    const { root, simulation, partInfo } = await runtime.loadMjcfScene({
       url,
       paramsUrl,
       baseUrl: url,
@@ -557,7 +616,7 @@ export function createViewer(host: HTMLElement): Viewer {
    */
   async function loadModel(url: string, onLog: LogHandler = () => {}, opts: LoadModelOptions = {}): Promise<PartInfo> {
     const fmt = (opts.format || '').toUpperCase();
-    appearanceController.reset();
+    if (features.materials) appearanceController.reset();
     const [params, assemblyPartLabels] = await Promise.all([
       loadViewerParams(opts.paramsUrl, onLog),
       loadAssemblyPartLabels(opts.paramsUrl, onLog)
@@ -575,13 +634,14 @@ export function createViewer(host: HTMLElement): Viewer {
       const isStl = fmt === 'STL' || /\.stl(\?|$)/i.test(url);
       partInfo = await (isStl ? loadStl(url, onLog, loadOpts) : loadBrep(url, onLog, loadOpts));
     }
-    appearanceController.setMaterialParams(params);
+    if (features.materials) appearanceController.setMaterialParams(params);
     backgroundController.update(currentRoot);
     previewController.refresh();
     return partInfo;
   }
 
   function mountViewCube(hostEl: HTMLElement | null) {
+    if (!features.viewCube) return;
     if (viewCube) {
       viewCube.dispose();
       viewCube = null;
@@ -597,6 +657,7 @@ export function createViewer(host: HTMLElement): Viewer {
   }
 
   function setViewCubeEnabled(enabled: boolean) {
+    if (!features.viewCube) return;
     if (viewCube) viewCube.setEnabled(!!enabled);
   }
 
@@ -613,28 +674,33 @@ export function createViewer(host: HTMLElement): Viewer {
   }
 
   function setMaterialParams(params: MaterialParams = {}) {
+    if (!features.materials) return;
     appearanceController.setMaterialParams(params);
     backgroundController.update(currentRoot);
   }
 
   function setPartMaterial(partKey: string | number, config: MaterialSpec | THREE.ColorRepresentation): boolean {
+    if (!features.materials) return false;
     const matched = appearanceController.setPartMaterial(partKey, config);
     backgroundController.update(currentRoot);
     return matched;
   }
 
   function setPartMaterialColor(partKey: string | number, color: THREE.ColorRepresentation): boolean {
+    if (!features.materials) return false;
     const matched = appearanceController.setPartMaterialColor(partKey, color);
     backgroundController.update(currentRoot);
     return matched;
   }
 
   function setPartMaterialColors(colorsByPart: Record<string, THREE.ColorRepresentation>) {
+    if (!features.materials) return;
     appearanceController.setPartMaterialColors(colorsByPart);
     backgroundController.update(currentRoot);
   }
 
   function setSelectedPart(partKey: string | number | null) {
+    if (!features.materials) return null;
     const selected = appearanceController.setSelectedPart(partKey);
     previewController.refresh();
     backgroundController.update(currentRoot);
@@ -648,11 +714,27 @@ export function createViewer(host: HTMLElement): Viewer {
     onSelectedPartChange = handler;
   }
 
+  function setFaceSelectionEnabled(enabled: boolean) {
+    if (!features.faceSelection) return false;
+    partPickDown = null;
+    if (enabled) setSelectedPart(null);
+    return faceSelectionController.setEnabled(enabled);
+  }
+
+  function setOnSelectedFaceChange(
+    handler: ((selection: BrepFaceSelection | null) => void) | null
+  ) {
+    if (!features.faceSelection) return;
+    faceSelectionController.setOnSelectedFaceChange(handler);
+  }
+
   function setExplodeEnabled(enabled: boolean) {
+    if (!features.explode) return explodeController.getState();
     return explodeController.setEnabled(enabled);
   }
 
   function setExplodeFactor(factor: number) {
+    if (!features.explode) return explodeController.getState();
     return explodeController.setFactor(factor);
   }
 
@@ -690,6 +772,12 @@ export function createViewer(host: HTMLElement): Viewer {
     setPartMaterialColors,
     setSelectedPart,
     setOnSelectedPartChange,
+    setFaceSelectionEnabled,
+    isFaceSelectionEnabled: faceSelectionController.isActive,
+    canSelectBrepFaces: faceSelectionController.canSelectFaces,
+    setOnSelectedFaceChange,
+    setSelectedFace: faceSelectionController.setSelectedFace,
+    getSelectedFace: faceSelectionController.getSelectedFace,
     getMaterialParts: appearanceController.getMaterialParts,
     getSelectedPart: appearanceController.getSelectedPart,
     getPartMaterialState: appearanceController.getPartMaterialState,
@@ -706,6 +794,7 @@ export function createViewer(host: HTMLElement): Viewer {
       clearModel();
       renderer.domElement.removeEventListener('pointerdown', handlePartPickPointerDown);
       renderer.domElement.removeEventListener('click', handlePartPickClick);
+      faceSelectionController.dispose();
       cursorWheelZoom.dispose();
       contactShadow.dispose();
       lighting.dispose();

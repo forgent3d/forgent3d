@@ -57,6 +57,21 @@
           <span class="preview-toolbar-divider" aria-hidden="true"></span>
           <button id="preview-solid" class="preview-mode-btn active" type="button" data-preview-mode="solid" aria-pressed="true" data-i18n="solid">Solid</button>
           <button id="preview-xray" class="preview-mode-btn" type="button" data-preview-mode="xray" aria-pressed="false" data-i18n="xray">X-Ray</button>
+          <span class="preview-toolbar-divider" aria-hidden="true"></span>
+          <button id="preview-face-select" class="preview-mode-btn" type="button" aria-pressed="false" title="Select BREP face" aria-label="Select BREP face" data-i18n="face" data-i18n-title="selectBrepFace" data-i18n-aria-label="selectBrepFace">Face</button>
+        </div>
+        <div id="brep-face-selection" class="brep-face-selection hidden" aria-live="polite">
+          <div class="brep-face-selection-head">
+            <strong id="brep-face-selection-label"></strong>
+            <button id="brep-face-selector-copy" class="brep-face-copy-btn" type="button" title="Copy face selector" aria-label="Copy face selector" data-i18n-title="copyFaceSelector" data-i18n-aria-label="copyFaceSelector">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect>
+                <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
+              </svg>
+            </button>
+          </div>
+          <code id="brep-face-selector"></code>
+          <span id="brep-face-selection-meta"></span>
         </div>
         <div id="viewcube-host" class="viewcube-host hidden" aria-label="ViewCube"></div>
         <div id="view-control-panel" class="view-control-panel hidden" aria-label="View controls" data-i18n-aria-label="viewControls">

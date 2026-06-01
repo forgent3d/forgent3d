@@ -22,6 +22,12 @@ export function initUI(viewer) {
     previewCadBtn: document.getElementById('preview-cad'),
     previewMotionBtn: document.getElementById('preview-motion'),
     viewModeBtns: document.querySelectorAll('[data-preview-mode]'),
+    previewFaceSelectBtn: document.getElementById('preview-face-select'),
+    brepFaceSelection: document.getElementById('brep-face-selection'),
+    brepFaceSelectionLabel: document.getElementById('brep-face-selection-label'),
+    brepFaceSelector: document.getElementById('brep-face-selector'),
+    brepFaceSelectionMeta: document.getElementById('brep-face-selection-meta'),
+    brepFaceSelectorCopy: document.getElementById('brep-face-selector-copy'),
     viewShowcaseBtn: document.getElementById('view-showcase'),
     viewExplodeBtn: document.getElementById('view-explode'),
     viewExplodeDistance: document.getElementById('view-explode-distance'),
@@ -130,6 +136,8 @@ export function initUI(viewer) {
   const expandedModels = new Set();
   let activeSourcePreviewMode = 'cad';
   let cadPreviewFormatPriority = 'glb';
+  let lastLoadedPreviewFormat = null;
+  let selectedBrepFace = null;
   const LEFT_SIDEBAR_PREF_KEY = 'forgent3d.leftSidebarVisible';
   let leftSidebarVisible = false;
   let openFirstModelWizardAfterProjectOpen = false;
@@ -199,6 +207,54 @@ export function initUI(viewer) {
     appendLog
     ,t
   });
+
+  function canSelectBrepFaces() {
+    return activeSourcePreviewMode === 'cad'
+      && typeof viewer.canSelectBrepFaces === 'function'
+      && viewer.canSelectBrepFaces();
+  }
+
+  function renderBrepFaceSelection() {
+    const enabled = typeof viewer.isFaceSelectionEnabled === 'function' && viewer.isFaceSelectionEnabled();
+    const canSelect = canSelectBrepFaces();
+    if (el.previewFaceSelectBtn) {
+      el.previewFaceSelectBtn.disabled = !canSelect;
+      el.previewFaceSelectBtn.classList.toggle('active', enabled);
+      el.previewFaceSelectBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+      el.previewFaceSelectBtn.title = canSelect ? t('selectBrepFace') : t('selectBrepFaceUnavailable');
+    }
+    const showPanel = enabled && !!selectedBrepFace;
+    el.brepFaceSelection?.classList.toggle('hidden', !showPanel);
+    if (!showPanel) return;
+    const selector = selectedBrepFace.selector || '';
+    const label = t('selectedBrepFace', { index: selectedBrepFace.index });
+    const meta = [
+      selectedBrepFace.surfaceType ? t('surfaceType', { type: selectedBrepFace.surfaceType }) : '',
+      selectedBrepFace.matchCount > 1 ? t('selectorMatches', { count: selectedBrepFace.matchCount }) : '',
+      selectedBrepFace.disambiguation || ''
+    ].filter(Boolean).join(' · ');
+    if (el.brepFaceSelectionLabel) el.brepFaceSelectionLabel.textContent = label;
+    if (el.brepFaceSelector) el.brepFaceSelector.textContent = selector;
+    if (el.brepFaceSelectionMeta) el.brepFaceSelectionMeta.textContent = meta;
+  }
+
+  function setFaceSelectionEnabled(enabled) {
+    const nextEnabled = !!enabled && canSelectBrepFaces();
+    const actual = typeof viewer.setFaceSelectionEnabled === 'function'
+      ? viewer.setFaceSelectionEnabled(nextEnabled)
+      : false;
+    if (enabled && !actual) appendLog(t('selectBrepFaceUnavailable'), 'warn');
+    if (!actual) selectedBrepFace = null;
+    renderBrepFaceSelection();
+    viewerUi.renderAll();
+    return actual;
+  }
+
+  function resetBrepFaceSelection() {
+    selectedBrepFace = null;
+    if (typeof viewer.setFaceSelectionEnabled === 'function') viewer.setFaceSelectionEnabled(false);
+    renderBrepFaceSelection();
+  }
 
   const paramsEditor = createParamsEditorController({
     api,
@@ -529,6 +585,7 @@ export function initUI(viewer) {
     syncSourcePreviewControls();
     renderPartsList();
     viewerUi.renderAll();
+    renderBrepFaceSelection();
     if (!currentProject) {
       paramsEditor.setIdle(t('selectModelParams'));
       setStatus(t('waitingForProject'));
@@ -550,9 +607,12 @@ export function initUI(viewer) {
       selectedModelPartModel = null;
       displayedModelPart = null;
       activeSourcePreviewMode = 'cad';
+      lastLoadedPreviewFormat = null;
+      selectedBrepFace = null;
       assemblyPayloads.clear();
       expandedModels.clear();
       if (typeof viewer.setSelectedPart === 'function') viewer.setSelectedPart(null);
+      if (typeof viewer.setFaceSelectionEnabled === 'function') viewer.setFaceSelectionEnabled(false);
     }
     if (!p) {
       viewerUi.stopAutoShow();
@@ -703,6 +763,7 @@ export function initUI(viewer) {
   function syncSourcePreviewControls(payload = assemblyPayloads.get(activePart)) {
     const motionReady = !!payload?.motionReady && !!payload?.motionUrl;
     if (activeSourcePreviewMode === 'motion' && !motionReady) activeSourcePreviewMode = 'cad';
+    if (activeSourcePreviewMode !== 'cad') resetBrepFaceSelection();
     el.sourcePreviewBtns?.forEach((btn) => {
       const mode = btn.dataset.sourcePreview || 'cad';
       const active = mode === activeSourcePreviewMode;
@@ -748,6 +809,7 @@ export function initUI(viewer) {
       return;
     }
     if (typeof viewer.setSelectedPart === 'function') viewer.setSelectedPart(null);
+    resetBrepFaceSelection();
     viewerUi.stopExplodedView();
     syncSourcePreviewControls(payload);
     const preview = previewPayloadForMode(payload);
@@ -765,6 +827,8 @@ export function initUI(viewer) {
         unitScale: preview.unitScale,
         coordinateSystem: preview.coordinateSystem
       });
+      lastLoadedPreviewFormat = fmt;
+      if (fmt !== 'BREP') resetBrepFaceSelection();
       if (payload?.part) loadedPart = payload.part;
       const modelParts = modelPartsFor(payload.part);
       if (payload?.part && modelParts.length >= 2) expandedModels.add(payload.part);
@@ -775,6 +839,7 @@ export function initUI(viewer) {
         : (fmt === 'GLB' ? t('glbModel') : (fmt === 'STL' ? t('stlMesh') : t('brepFaces', { count: partInfo?.faceCount ?? 0 })));
       setStatus(t('modelReady', { partLabel, sizeLabel: sizeKB ? sizeKB : '', tail }));
       viewerUi.renderAll();
+      renderBrepFaceSelection();
       return partInfo;
     } catch (e) {
       const message = e.message || String(e);
@@ -801,6 +866,7 @@ export function initUI(viewer) {
     syncExportControls();
     paramsEditor.refresh({ force: true });
     if (typeof viewer.setSelectedPart === 'function') viewer.setSelectedPart(null);
+    resetBrepFaceSelection();
     renderPartsList();
     setStatus(`[${part.name || partId}] ${part.hasStl ? t('parsingStl') : t('buildingPart', { part: partId })} ...`, true);
     try {
@@ -814,12 +880,14 @@ export function initUI(viewer) {
         preserveView: false,
         materialPart: partId
       });
+      lastLoadedPreviewFormat = 'STL';
       setStatus(t('modelReady', {
         partLabel: `[${part.name || partId}] `,
         sizeLabel: '',
         tail: t('stlMesh')
       }));
       viewerUi.renderAll();
+      renderBrepFaceSelection();
       return partInfo;
     } catch (e) {
       setStatus(t('modelLoadFailed'));
@@ -1046,6 +1114,26 @@ export function initUI(viewer) {
       if (activePart) showAssembly(activePart, { preserveView: true }).catch(() => {});
     });
   });
+
+  if (el.previewFaceSelectBtn) {
+    el.previewFaceSelectBtn.addEventListener('click', () => {
+      const enabled = typeof viewer.isFaceSelectionEnabled === 'function' && viewer.isFaceSelectionEnabled();
+      setFaceSelectionEnabled(!enabled);
+    });
+  }
+
+  if (el.brepFaceSelectorCopy) {
+    el.brepFaceSelectorCopy.addEventListener('click', async () => {
+      const selector = selectedBrepFace?.selector || '';
+      if (!selector) return;
+      try {
+        await api.clipboardWriteText(selector);
+        showToast(t('faceSelectorCopied'));
+      } catch (err) {
+        showToast(t('shareCopyFailed', { message: escapeHtml(String(err?.message || err)) }), 3200);
+      }
+    });
+  }
 
   /* ---------------- Button Events ---------------- */
   /** New projects always use build123d (no kernel picker in UI). */
@@ -1795,6 +1883,12 @@ export function initUI(viewer) {
 
   if (typeof viewer.setOnSelectedPartChange === 'function') {
     viewer.setOnSelectedPartChange(syncSelectionFromViewer);
+  }
+  if (typeof viewer.setOnSelectedFaceChange === 'function') {
+    viewer.setOnSelectedFaceChange((selection) => {
+      selectedBrepFace = selection;
+      renderBrepFaceSelection();
+    });
   }
 
   initRendererI18n(api).then(refreshLocalizedUi);
