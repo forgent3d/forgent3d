@@ -214,6 +214,15 @@ export function initUI(viewer) {
       && viewer.canSelectBrepFaces();
   }
 
+  // Compose the model/part reference the selector is scoped to. The viewer
+  // only knows the part (mesh); the active model name lives here in the host.
+  function brepFaceComponent(selection) {
+    const model = activePart || selectedModelPartModel || '';
+    if (!model) return '';
+    const part = selection.partId != null ? String(selection.partId) : (displayedModelPart || '');
+    return part ? `${model}/${part}` : model;
+  }
+
   function renderBrepFaceSelection() {
     const enabled = typeof viewer.isFaceSelectionEnabled === 'function' && viewer.isFaceSelectionEnabled();
     const canSelect = canSelectBrepFaces();
@@ -228,8 +237,11 @@ export function initUI(viewer) {
     if (!showPanel) return;
     const selector = selectedBrepFace.selector || '';
     const label = t('selectedBrepFace', { index: selectedBrepFace.index });
+    const component = brepFaceComponent(selectedBrepFace);
     const meta = [
       selectedBrepFace.surfaceType ? t('surfaceType', { type: selectedBrepFace.surfaceType }) : '',
+      selectedBrepFace.directionLabel ? t('faceDirection', { dir: t(`dir_${selectedBrepFace.directionLabel}`) }) : '',
+      component ? t('faceComponent', { name: component }) : '',
       selectedBrepFace.matchCount > 1 ? t('selectorMatches', { count: selectedBrepFace.matchCount }) : '',
       selectedBrepFace.disambiguation || ''
     ].filter(Boolean).join(' · ');
