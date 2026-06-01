@@ -81,8 +81,12 @@ export function createBrepFaceSelectionController({
   }
 
   function selectionFromRange(mesh: THREE.Mesh, range: BrepFaceRange): BrepFaceSelection {
-    const allFaces = getAllFaceReferences();
-    const selector = synthesizeSelector({ mesh, range }, allFaces);
+    // Scope the selector to the part the picked face belongs to (the faces on
+    // this mesh), not the whole scene. This matches the per-part semantics of
+    // the aicad_select helpers (top_face(part), extreme_face(part, …)): in an
+    // assembly, the "top face" of one part must not be measured against another.
+    const partFaces: BrepFaceReference[] = getFaceRanges(mesh).map((faceRange) => ({ mesh, range: faceRange }));
+    const selector = synthesizeSelector({ mesh, range }, partFaces);
     return {
       index: range.faceIndex,
       centroid: [range.centroid.x, range.centroid.y, range.centroid.z],
@@ -94,6 +98,7 @@ export function createBrepFaceSelectionController({
       selector: selector.selector,
       matchCount: selector.matchCount,
       disambiguation: selector.disambiguation,
+      directionLabel: selector.directionLabel,
       screenshot: captureViewerScreenshot()
     };
   }

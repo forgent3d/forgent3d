@@ -25,10 +25,21 @@ export type SelectorSynthesis = {
   selector: string;
   matchCount: number;
   disambiguation?: string;
+  /** Human-facing side name (right/left/front/back) for an X/Y extreme face. Omitted for
+   *  top/bottom (the selector already names them) and for non-extreme or curved faces. */
+  directionLabel?: string;
 };
 
 const AXIS_ALIGNMENT_DOT = Math.cos(THREE.MathUtils.degToRad(10));
 const FACE_FACING_DOT = 0.99;
+
+// Signed-axis → direction name, matching the viewcube convention in
+// viewer-navigation.ts (+X right / -X left, +Y back / -Y front, +Z top / -Z bottom).
+const DIRECTION_NAMES: Record<PrincipalAxis, { positive: string; negative: string }> = {
+  X: { positive: 'right', negative: 'left' },
+  Y: { positive: 'back', negative: 'front' },
+  Z: { positive: 'top', negative: 'bottom' }
+};
 
 export function synthesizeSelector(face: BrepFaceReference, allFaces: BrepFaceReference[]): SelectorSynthesis {
   const refs = allFaces.length ? allFaces : [face];
@@ -53,9 +64,21 @@ export function synthesizeSelector(face: BrepFaceReference, allFaces: BrepFaceRe
           : normalAxis === 'Z' && direction === 'min'
             ? 'bottom_face'
             : `extreme_face(Axis.${normalAxis}, '${direction}')`;
-      return withDisambiguation(selector, extremeMatches.length, centroid);
+      // Humanize only the X/Y extremes (right/left/front/back) — the one case the
+      // selector text does not already convey. top_face/bottom_face name themselves
+      // (label would be redundant); derive from `direction` so it always agrees with
+      // the selector, never from the raw normal.
+      const sideLabel =
+        normalAxis === 'Z'
+          ? undefined
+          : direction === 'max'
+            ? DIRECTION_NAMES[normalAxis].positive
+            : DIRECTION_NAMES[normalAxis].negative;
+      return withDisambiguation(selector, extremeMatches.length, centroid, sideLabel);
     }
 
+    // Non-extreme planar face: it is not a "side" of the part, so no direction label
+    // (the selector already pins axis + position exactly).
     const value = axisValue(centroid, normalAxis);
     const matches = refs.filter((candidate) => isPlanarAxisFaceAt(candidate.range, normalAxis, value, tol));
     return withDisambiguation(`face_at(Axis.${normalAxis}, ${formatNumber(value)})`, matches.length, centroid);
@@ -80,12 +103,18 @@ export function synthesizeSelector(face: BrepFaceReference, allFaces: BrepFaceRe
   return withDisambiguation(`face_facing([${nx}, ${ny}, ${nz}])`, Math.max(1, matches.length), centroid);
 }
 
-function withDisambiguation(selector: string, matchCount: number, centroid: THREE.Vector3): SelectorSynthesis {
+function withDisambiguation(
+  selector: string,
+  matchCount: number,
+  centroid: THREE.Vector3,
+  directionLabel?: string
+): SelectorSynthesis {
   const normalizedCount = Math.max(1, matchCount);
   return {
     selector,
     matchCount: normalizedCount,
-    disambiguation: normalizedCount > 1 ? `near (${formatVec3(centroid)})` : undefined
+    disambiguation: normalizedCount > 1 ? `near (${formatVec3(centroid)})` : undefined,
+    directionLabel
   };
 }
 

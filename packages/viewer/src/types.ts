@@ -36,6 +36,9 @@ export type BrepFaceSelection = {
   selector: string;
   matchCount: number;
   disambiguation?: string;
+  /** Side name (right/left/front/back) for an X/Y extreme face; absent for top/bottom faces
+   *  (named by the selector) and for non-extreme or curved faces. */
+  directionLabel?: string;
   screenshot?: string;
 };
 
