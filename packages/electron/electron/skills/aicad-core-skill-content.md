@@ -22,11 +22,11 @@
       metadata,
       "mounting_holes",
       faces=holes(result, radius=3, axis=Axis.Z),
-      selector="holes(part, radius=3, axis=Axis.Z)",
+      selector="holes(radius=3, axis=Axis.Z)",
       kind="hole",
   )
   ```
-- Feature tags are metadata hints, not persistent BREP IDs. Tag after the final `result` exists and pass the selector expression you would want the viewer/user to copy.
+- Feature tags are metadata hints, not persistent BREP IDs. Tag after the final `result` exists and pass the selector expression you would want the viewer/user to copy. Write the selector in the viewer's copy form — omit the part argument (`holes(radius=3, axis=Axis.Z)`, not `holes(part, ...)`) so it matches auto-synthesized selectors.
 
 ## Validation
 

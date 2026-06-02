@@ -62,7 +62,10 @@
       "Bash(npx next *)",
       "Bash(echo \"=== exit: $? ===\")",
       "Bash(grep -vE \"node_modules|/dist/|\\\\.map$\")",
-      "Bash(echo \"full-exit=$?\")"
+      "Bash(echo \"full-exit=$?\")",
+      "Bash(echo \"VIEWER TSC EXIT: $?\")",
+      "Bash(echo \"cf-sandbox EXIT: $?\")",
+      "Bash(echo \"cloud-lib EXIT: $?\")"
     ]
   }
 }

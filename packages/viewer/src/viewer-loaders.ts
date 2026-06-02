@@ -589,10 +589,14 @@ function matchCylindricalFeature(
     score += delta / radiusTol;
     checks++;
   }
-  if (item.bboxCenter || item.bboxSize) {
-    const part = bboxScore(rangeBBoxCenter, rangeBBoxSize, item);
-    if (part == null) return null;
-    score += part;
+  if (item.bboxCenter) {
+    // Soft penalty only: the tessellated cylinder bbox underestimates the true
+    // radial extent, so a hard tolerance would reject genuine matches on coarse
+    // meshes. Axis + radius already identify the feature, and every item of a
+    // feature carries the same selector, so bbox can only help rank — never gate.
+    const sizeScale = item.bboxSize?.length() || rangeBBoxSize.length() || 1;
+    const bboxTol = Math.max(1e-2, sizeScale * 5e-3);
+    score += Math.min(rangeBBoxCenter.distanceTo(item.bboxCenter) / bboxTol, 10);
     checks++;
   }
   if (item.area != null) {

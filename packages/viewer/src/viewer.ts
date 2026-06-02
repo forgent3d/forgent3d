@@ -636,7 +636,7 @@ export function createViewer(host: HTMLElement, opts: ViewerOptions = {}): Viewe
     const loadOpts = {
       ...opts,
       assemblyPartLabels: opts.assemblyPartLabels?.length ? opts.assemblyPartLabels : metadata.assemblyPartLabels,
-      featureTags: opts.featureTags || metadata.featureTags
+      featureTags: opts.featureTags && Object.keys(opts.featureTags).length ? opts.featureTags : metadata.featureTags
     };
     let partInfo;
     if (fmt === 'MJCF' || /\/asm\.xml(\?|$)/i.test(url)) {
