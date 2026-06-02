@@ -31,6 +31,47 @@ type FaceRange = {
   axis?: THREE.Vector3;
   boundsMin: THREE.Vector3;
   boundsMax: THREE.Vector3;
+  featureTag?: string;
+  featureSelector?: string;
+};
+
+type FeatureRange = Pick<
+  FaceRange,
+  'surfaceType' | 'centroid' | 'normal' | 'axis' | 'area' | 'radius' | 'boundsMin' | 'boundsMax'
+>;
+
+type FeatureTagItem = {
+  center?: [number, number, number];
+  normal?: [number, number, number];
+  axis?: [number, number, number];
+  area?: number;
+  radius?: number;
+  bbox?: {
+    min?: [number, number, number];
+    max?: [number, number, number];
+    center?: [number, number, number];
+    size?: [number, number, number];
+  };
+};
+
+type FeatureTagRecord = {
+  target?: string;
+  selector?: string;
+  items?: FeatureTagItem[];
+};
+
+type PreparedFeatureTag = {
+  name: string;
+  selector: string;
+  items: Array<{
+    center?: THREE.Vector3;
+    bboxCenter?: THREE.Vector3;
+    bboxSize?: THREE.Vector3;
+    normal?: THREE.Vector3;
+    axis?: THREE.Vector3;
+    area?: number;
+    radius?: number;
+  }>;
 };
 
 export function inferMaterialPartNameFromUrl(url: string): string {
@@ -47,11 +88,12 @@ export function inferMaterialPartNameFromUrl(url: string): string {
 
 export function buildSceneFromOcctResult(
   occtResult: OcctResult,
-  opts: { assemblyPartLabels?: string[] } = {}
+  opts: { assemblyPartLabels?: string[]; featureTags?: Record<string, unknown> } = {}
 ): THREE.Group {
   const group = new THREE.Group();
+  const featureTags = prepareFeatureTags(opts.featureTags);
   if (occtResult.meshes.length > 1) {
-    return buildSceneFromOcctMeshes(occtResult, opts.assemblyPartLabels || []);
+    return buildSceneFromOcctMeshes(occtResult, opts.assemblyPartLabels || [], featureTags);
   }
 
   const positions: number[] = [];
@@ -92,7 +134,8 @@ export function buildSceneFromOcctResult(
         radius: c.radius,
         axis: c.axis,
         boundsMin: c.boundsMin,
-        boundsMax: c.boundsMax
+        boundsMax: c.boundsMax,
+        ...matchingFeatureForRange(c, featureTags)
       });
     }
 
@@ -122,7 +165,11 @@ export function buildSceneFromOcctResult(
   return group;
 }
 
-function buildSceneFromOcctMeshes(occtResult: OcctResult, assemblyPartLabels: string[] = []): THREE.Group {
+function buildSceneFromOcctMeshes(
+  occtResult: OcctResult,
+  assemblyPartLabels: string[] = [],
+  featureTags: PreparedFeatureTag[] = []
+): THREE.Group {
   const group = new THREE.Group();
   let globalFaceIdx = 0;
 
@@ -159,7 +206,8 @@ function buildSceneFromOcctMeshes(occtResult: OcctResult, assemblyPartLabels: st
         radius: c.radius,
         axis: c.axis,
         boundsMin: c.boundsMin,
-        boundsMax: c.boundsMax
+        boundsMax: c.boundsMax,
+        ...matchingFeatureForRange(c, featureTags)
       });
     }
 
@@ -384,6 +432,174 @@ function estimateRadiusFromAxis(vertices: THREE.Vector3[], centroid: THREE.Vecto
     count++;
   }
   return count > 0 ? total / count : NaN;
+}
+
+function tupleToVector(value: unknown): THREE.Vector3 | undefined {
+  if (!Array.isArray(value) || value.length < 3) return undefined;
+  const x = Number(value[0]);
+  const y = Number(value[1]);
+  const z = Number(value[2]);
+  if (![x, y, z].every(Number.isFinite)) return undefined;
+  return new THREE.Vector3(x, y, z);
+}
+
+function bboxCenterFromItem(item: FeatureTagItem | undefined): THREE.Vector3 | undefined {
+  const explicit = tupleToVector(item?.bbox?.center);
+  if (explicit) return explicit;
+  const min = tupleToVector(item?.bbox?.min);
+  const max = tupleToVector(item?.bbox?.max);
+  if (!min || !max) return undefined;
+  return min.add(max).multiplyScalar(0.5);
+}
+
+function prepareFeatureTags(raw: Record<string, unknown> | undefined): PreparedFeatureTag[] {
+  if (!raw || typeof raw !== 'object') return [];
+  const tags: PreparedFeatureTag[] = [];
+  for (const [name, value] of Object.entries(raw)) {
+    const record = value as FeatureTagRecord;
+    if (!record || typeof record !== 'object') continue;
+    if (record.target && record.target !== 'faces') continue;
+    const selector = String(record.selector || '').trim();
+    if (!selector || !Array.isArray(record.items)) continue;
+    const items = record.items
+      .map((item) => ({
+        center: tupleToVector(item?.center),
+        bboxCenter: bboxCenterFromItem(item),
+        bboxSize: tupleToVector(item?.bbox?.size),
+        normal: tupleToVector(item?.normal)?.normalize(),
+        axis: tupleToVector(item?.axis)?.normalize(),
+        area: Number.isFinite(Number(item?.area)) ? Number(item?.area) : undefined,
+        radius: Number.isFinite(Number(item?.radius)) ? Number(item?.radius) : undefined
+      }))
+      .filter((item) => item.center || item.bboxCenter || item.normal || item.axis || item.area != null || item.radius != null);
+    if (items.length) tags.push({ name, selector, items });
+  }
+  return tags;
+}
+
+function matchingFeatureForRange(
+  range: FeatureRange,
+  tags: PreparedFeatureTag[]
+): { featureTag?: string; featureSelector?: string } {
+  if (!tags.length) return {};
+  let best: { tag: PreparedFeatureTag; score: number } | null = null;
+  for (const tag of tags) {
+    for (const item of tag.items) {
+      const score = featureMatchScore(range, item);
+      if (score == null) continue;
+      if (!best || score < best.score) best = { tag, score };
+    }
+  }
+  return best ? { featureTag: best.tag.name, featureSelector: best.tag.selector } : {};
+}
+
+function bboxScore(
+  rangeBBoxCenter: THREE.Vector3,
+  rangeBBoxSize: THREE.Vector3,
+  item: PreparedFeatureTag['items'][number]
+): number | null {
+  let score = 0;
+  const sizeScale = item.bboxSize?.length() || rangeBBoxSize.length() || 1;
+  const bboxTol = Math.max(1e-2, sizeScale * 5e-3);
+  if (item.bboxCenter) {
+    const distance = rangeBBoxCenter.distanceTo(item.bboxCenter);
+    if (distance > bboxTol) return null;
+    score += distance / bboxTol;
+  }
+  if (item.bboxSize) {
+    const delta = rangeBBoxSize.distanceTo(item.bboxSize);
+    if (delta > bboxTol) return null;
+    score += delta / bboxTol;
+  }
+  return score;
+}
+
+function areaScore(rangeArea: number, itemArea: number | undefined): number {
+  if (itemArea == null || !Number.isFinite(rangeArea)) return 0;
+  const areaTol = Math.max(1e-2, Math.abs(itemArea) * 5e-3);
+  const delta = Math.abs(rangeArea - itemArea);
+  return Math.min(delta / areaTol, 10);
+}
+
+function featureMatchScore(range: FeatureRange, item: PreparedFeatureTag['items'][number]): number | null {
+  const rangeBBoxCenter = new THREE.Vector3().addVectors(range.boundsMin, range.boundsMax).multiplyScalar(0.5);
+  const rangeBBoxSize = new THREE.Vector3().subVectors(range.boundsMax, range.boundsMin);
+  if (range.surfaceType === 'cylindrical') {
+    return matchCylindricalFeature(range, item, rangeBBoxCenter, rangeBBoxSize);
+  }
+  if (range.surfaceType === 'planar') {
+    return matchPlanarFeature(range, item, rangeBBoxCenter, rangeBBoxSize);
+  }
+  return null;
+}
+
+function matchPlanarFeature(
+  range: FeatureRange,
+  item: PreparedFeatureTag['items'][number],
+  rangeBBoxCenter: THREE.Vector3,
+  rangeBBoxSize: THREE.Vector3
+): number | null {
+  let score = 0;
+  let checks = 0;
+  if (item.normal) {
+    const normalDot = Math.abs(range.normal.clone().normalize().dot(item.normal));
+    if (normalDot < 0.995) return null;
+    score += 1 - normalDot;
+    checks++;
+  }
+  if (item.bboxCenter || item.bboxSize) {
+    const part = bboxScore(rangeBBoxCenter, rangeBBoxSize, item);
+    if (part == null) return null;
+    score += part;
+    checks++;
+  } else if (item.center) {
+    const distance = range.centroid.distanceTo(item.center);
+    const centerTol = Math.max(1e-3, Math.sqrt(Math.max(0, Math.abs(range.area))) * 1e-3);
+    if (distance > centerTol) return null;
+    score += distance / centerTol;
+    checks++;
+  }
+  if (item.area != null) {
+    score += areaScore(range.area, item.area);
+    checks++;
+  }
+  return checks > 0 ? score : null;
+}
+
+function matchCylindricalFeature(
+  range: FeatureRange,
+  item: PreparedFeatureTag['items'][number],
+  rangeBBoxCenter: THREE.Vector3,
+  rangeBBoxSize: THREE.Vector3
+): number | null {
+  let score = 0;
+  let checks = 0;
+  if (item.axis) {
+    if (!range.axis) return null;
+    const axisDot = Math.abs(range.axis.clone().normalize().dot(item.axis));
+    if (axisDot < 0.995) return null;
+    score += 1 - axisDot;
+    checks++;
+  }
+  if (item.radius != null) {
+    if (!Number.isFinite(range.radius ?? NaN)) return null;
+    const radiusTol = Math.max(1e-3, Math.abs(item.radius) * 1e-3);
+    const delta = Math.abs((range.radius ?? 0) - item.radius);
+    if (delta > radiusTol) return null;
+    score += delta / radiusTol;
+    checks++;
+  }
+  if (item.bboxCenter || item.bboxSize) {
+    const part = bboxScore(rangeBBoxCenter, rangeBBoxSize, item);
+    if (part == null) return null;
+    score += part;
+    checks++;
+  }
+  if (item.area != null) {
+    score += areaScore(range.area, item.area);
+    checks++;
+  }
+  return checks > 0 ? score : null;
 }
 
 export function buildSceneFromStlBuffer(buffer: ArrayBuffer): { group: THREE.Group; geometry: THREE.BufferGeometry } {

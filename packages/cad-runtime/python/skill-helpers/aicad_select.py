@@ -611,6 +611,66 @@ def holes(
 
 
 # --------------------------------------------------------------------------- #
+# Feature tags                                                                #
+# --------------------------------------------------------------------------- #
+
+
+def tag_feature(
+    metadata: dict,
+    name: str,
+    *,
+    faces=None,
+    edges=None,
+    selector: str = "",
+    kind: str = "",
+    **attrs,
+) -> dict:
+    """Record a lightweight semantic feature tag in ``metadata``.
+
+    This is intentionally metadata-only: it does not evaluate selectors or create
+    persistent BREP ids. The viewer can use the saved geometry summary to prefer
+    a human-authored selector when a picked face matches the tagged feature.
+
+    Example:
+        tag_feature(
+            metadata,
+            "mounting_holes",
+            faces=holes(result, radius=3, axis=Axis.Z),
+            selector="holes(part, radius=3, axis=Axis.Z)",
+            kind="hole",
+        )
+    """
+    if not isinstance(metadata, dict):
+        raise SelectionError("tag_feature(): metadata must be a dict")
+    key = str(name or "").strip()
+    if not key:
+        raise SelectionError("tag_feature(): name is required")
+    if faces is not None and edges is not None:
+        raise SelectionError("tag_feature(): pass faces or edges, not both")
+    target = "faces" if faces is not None else "edges" if edges is not None else "feature"
+    raw_items = faces if faces is not None else edges
+    items = list(_ensure_shapelist(raw_items)) if raw_items is not None else []
+    if raw_items is not None and not items:
+        raise SelectionError(f"tag_feature({key!r}): empty {target} selection")
+
+    features = metadata.setdefault("features", {})
+    if not isinstance(features, dict):
+        raise SelectionError("tag_feature(): metadata['features'] must be a dict when present")
+
+    record = {
+        "kind": str(kind or target).strip(),
+        "target": target,
+        "selector": str(selector or "").strip(),
+        "count": len(items),
+        "items": [_feature_item_summary(item, target) for item in items],
+    }
+    for attr_name, attr_value in attrs.items():
+        record[str(attr_name)] = _json_safe_value(attr_value)
+    features[key] = record
+    return record
+
+
+# --------------------------------------------------------------------------- #
 # Safe fillet / chamfer                                                       #
 # --------------------------------------------------------------------------- #
 
@@ -817,6 +877,92 @@ def _ensure_shapelist(x) -> ShapeList:
     return ShapeList([x])
 
 
+def _json_safe_value(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_safe_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_value(v) for v in value]
+    if hasattr(value, "to_tuple"):
+        try:
+            return _json_safe_value(value.to_tuple())
+        except Exception:
+            pass
+    for names in (("X", "Y", "Z"), ("x", "y", "z")):
+        if all(hasattr(value, n) for n in names):
+            try:
+                return [float(getattr(value, n)) for n in names]
+            except Exception:
+                pass
+    return str(value)
+
+
+def _vector_summary(value):
+    try:
+        return _json_safe_value(value)
+    except Exception:
+        return None
+
+
+def _feature_item_summary(item, target: str) -> dict:
+    entry = {"type": type(item).__name__}
+    geom_value = None
+    try:
+        geom_attr = getattr(item, "geom_type", None)
+        geom_value = geom_attr() if callable(geom_attr) else geom_attr
+        if geom_value is not None:
+            entry["geom_type"] = str(geom_value)
+    except Exception:
+        geom_value = None
+    for attr in ("length", "area", "radius"):
+        val = getattr(item, attr, None)
+        if callable(val):
+            try:
+                val = val()
+            except Exception:
+                val = None
+        if isinstance(val, (int, float)):
+            entry[attr] = float(val)
+    try:
+        entry["center"] = _vector_summary(item.center())
+    except Exception:
+        pass
+    if target == "faces":
+        is_cylindrical = geom_value == GeomType.CYLINDER or "CYLINDER" in str(geom_value).upper()
+        if not is_cylindrical:
+            try:
+                entry["normal"] = _vector_summary(item.normal_at().normalized())
+            except Exception:
+                pass
+        try:
+            axis = getattr(item, "axis_of_rotation", None)
+            if axis is not None:
+                direction = getattr(axis, "direction", axis)
+                entry["axis"] = _vector_summary(direction.normalized() if hasattr(direction, "normalized") else direction)
+        except Exception:
+            pass
+    try:
+        bb = item.bounding_box()
+        entry["bbox"] = {
+            "min": _vector_summary(bb.min),
+            "max": _vector_summary(bb.max),
+            "center": [
+                float((bb.min.X + bb.max.X) / 2),
+                float((bb.min.Y + bb.max.Y) / 2),
+                float((bb.min.Z + bb.max.Z) / 2),
+            ],
+            "size": [
+                float(bb.max.X - bb.min.X),
+                float(bb.max.Y - bb.min.Y),
+                float(bb.max.Z - bb.min.Z),
+            ],
+        }
+    except Exception:
+        pass
+    return entry
+
+
 def _bbox_summary(obj, label: str = "bbox") -> str:
     try:
         bb = _as_part(obj).bounding_box()
@@ -1000,6 +1146,8 @@ __all__ = [
     "feature_edges",
     # Holes
     "holes",
+    # Metadata feature tags
+    "tag_feature",
     # Safe ops
     "safe_fillet",
     "safe_chamfer",

@@ -17,6 +17,7 @@ type OcctModule = Awaited<ReturnType<typeof occtImportJsType>>;
 
 export type BrepViewerOptions = {
   faceSelection?: boolean;
+  featureTags?: Record<string, unknown>;
   onSelectedFaceChange?: (selection: BrepFaceSelection | null) => void;
 };
 
@@ -83,7 +84,7 @@ export function createBrepViewer(host: HTMLElement, opts: BrepViewerOptions = {}
     });
     if (!res.success) throw new Error('OCCT failed to parse BREP');
 
-    const root = buildSceneFromOcctResult(res);
+    const root = buildSceneFromOcctResult(res, { featureTags: opts.featureTags || {} });
     const box = new THREE.Box3().setFromObject(root);
     const center = box.getCenter(new THREE.Vector3());
     root.position.sub(center);
