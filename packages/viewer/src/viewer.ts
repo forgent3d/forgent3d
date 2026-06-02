@@ -409,9 +409,10 @@ export function createViewer(host: HTMLElement, opts: ViewerOptions = {}): Viewe
       const response = await fetch(metadataUrl);
       if (!response.ok) return [];
       const payload = await response.json();
-      const labels = payload?.assembly_parts;
+      const meshLabels = Array.isArray(payload?.assembly_mesh_parts) ? payload.assembly_mesh_parts : null;
+      const labels = meshLabels?.length ? meshLabels : payload?.assembly_parts;
       if (!Array.isArray(labels)) return [];
-      return labels.map((label) => String(label || '').trim()).filter(Boolean);
+      return labels.map((label) => String(label || '').trim());
     } catch (err: any) {
       onLog(`metadata.json assembly labels unavailable: ${err?.message || err}`);
       return [];

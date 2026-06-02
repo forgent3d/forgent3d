@@ -173,7 +173,7 @@ function buildSceneFromOcctMeshes(occtResult: OcctResult, assemblyPartLabels: st
 
     const meshName = String(mesh.name || '').trim();
     const fallbackLabel = String(assemblyPartLabels[meshIndex] || '').trim();
-    const partName = meshName || fallbackLabel || `part_${meshIndex}`;
+    const partName = fallbackLabel || meshName || `part_${meshIndex}`;
     const threeMesh = new THREE.Mesh(geometry, createCadClayMaterial());
     threeMesh.name = partName;
     threeMesh.userData.faceRanges = faceRanges;

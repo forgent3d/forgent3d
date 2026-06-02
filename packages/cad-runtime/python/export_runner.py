@@ -510,36 +510,83 @@ def _json_safe(value):
     raise TypeError(f"metadata contains non-JSON value of type {type(value).__name__}")
 
 
-def _collect_compound_labels(shape, ns=None):
-    labels = []
+def _compound_children(shape):
     children = getattr(shape, "children", None)
     if children is not None:
         try:
-            iterable = list(children)
+            return list(children)
         except TypeError:
-            iterable = []
-        for child in iterable:
-            label = getattr(child, "label", None)
-            if label is None and hasattr(child, "part"):
-                label = getattr(child.part, "label", None)
-            text = str(label).strip() if label is not None else ""
-            if text:
-                labels.append(text)
+            return []
+    return []
+
+
+def _shape_label(shape) -> str:
+    label = getattr(shape, "label", None)
+    if label is None and hasattr(shape, "part"):
+        label = getattr(shape.part, "label", None)
+    return str(label).strip() if label is not None else ""
+
+
+def _solid_count_for_metadata(shape) -> int:
+    """Return how many BREP mesh entries this labeled child is expected to produce."""
+    wrapped = getattr(shape, "wrapped", shape)
+    try:
+        from OCP.TopAbs import TopAbs_ShapeEnum  # type: ignore
+        from OCP.TopExp import TopExp_Explorer  # type: ignore
+
+        count = 0
+        explorer = TopExp_Explorer(wrapped, TopAbs_ShapeEnum.TopAbs_SOLID)
+        while explorer.More():
+            count += 1
+            explorer.Next()
+        if count > 0:
+            return count
+    except Exception:
+        pass
+
+    try:
+        solids = shape.solids()
+        return max(1, len(solids))
+    except Exception:
+        return 1
+
+
+def _collect_compound_labels(shape, ns=None):
+    labels = []
+    for child in _compound_children(shape):
+        text = _shape_label(child)
+        if text:
+            labels.append(text)
     if labels:
         return labels
     if isinstance(ns, dict):
         parts_var = ns.get("parts")
         if isinstance(parts_var, (list, tuple)):
             for item in parts_var:
-                text = str(getattr(item, "label", "") or "").strip()
+                text = _shape_label(item)
                 if text:
                     labels.append(text)
     return labels
 
 
+def _collect_mesh_aligned_compound_labels(shape, ns=None):
+    labels = []
+    any_label = False
+    children = _compound_children(shape)
+    if children:
+        for child in children:
+            text = _shape_label(child)
+            any_label = any_label or bool(text)
+            labels.extend([text] * _solid_count_for_metadata(child))
+    if any_label:
+        return labels
+    return _collect_compound_labels(shape, ns)
+
+
 def _ensure_assembly_metadata(ns: dict, result) -> None:
     labels = _collect_compound_labels(result, ns)
-    if not labels:
+    mesh_labels = _collect_mesh_aligned_compound_labels(result, ns)
+    if not labels and not mesh_labels:
         return
     metadata = ns.get("metadata")
     if metadata is None:
@@ -547,8 +594,15 @@ def _ensure_assembly_metadata(ns: dict, result) -> None:
         ns["metadata"] = metadata
     if not isinstance(metadata, dict):
         return
-    if not metadata.get("assembly_parts"):
+    if labels and not metadata.get("assembly_parts"):
         metadata["assembly_parts"] = labels
+    if mesh_labels:
+        current = metadata.get("assembly_mesh_parts")
+        current_labels = []
+        if isinstance(current, list):
+            current_labels = [str(label or "").strip() for label in current]
+        if current_labels != mesh_labels:
+            metadata["assembly_mesh_parts"] = mesh_labels
 
 
 def _write_metadata(source_path: str, ns: dict):

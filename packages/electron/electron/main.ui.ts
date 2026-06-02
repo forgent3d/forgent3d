@@ -28,7 +28,7 @@ function createMainUiTools({
     sendToRenderer('LOG', { message, level, ts: Date.now() });
   }
 
-  let cadPreviewFormatPriority = 'glb';
+  let cadPreviewFormatPriority = 'brep';
 
   function toggleDevToolsFor(contents, label = 'window') {
     if (!contents || contents.isDestroyed?.()) return;
