@@ -12,6 +12,21 @@
   - multi-part assembly: `models/<model_name>/parts/<part_name>/params.json`
   Examples: teeth, bore, thickness, radii, hole sizes, feature counts, and local dimensions.
 - Do not create project overview docs unless the user asks. The file tree and UI are the overview.
+- For assembly-ready or feature-rich parts, expose derived anchors and meaningful semantic feature tags through global `metadata` in `part.py`. Use `tag_feature` for functional/user-visible topology that should produce good copied selectors later, such as mounting holes, slots, bosses, rims, connector cutouts, rails, hinge points, and gear bores. Do not tag every generic face or edge.
+- Minimal feature tag pattern:
+  ```python
+  from aicad_select import holes, tag_feature
+
+  metadata = {"schema": "aicad.part.metadata.v1", "units": "mm", "anchors": anchors}
+  tag_feature(
+      metadata,
+      "mounting_holes",
+      faces=holes(result, radius=3, axis=Axis.Z),
+      selector="holes(part, radius=3, axis=Axis.Z)",
+      kind="hole",
+  )
+  ```
+- Feature tags are metadata hints, not persistent BREP IDs. Tag after the final `result` exists and pass the selector expression you would want the viewer/user to copy.
 
 ## Validation
 

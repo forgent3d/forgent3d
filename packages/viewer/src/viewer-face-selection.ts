@@ -95,6 +95,7 @@ export function createBrepFaceSelectionController({
       partId: partIdFromObject(mesh),
       surfaceType: range.surfaceType || 'other',
       area: Number.isFinite(range.area) ? range.area : 0,
+      featureTag: range.featureTag,
       selector: selector.selector,
       matchCount: selector.matchCount,
       disambiguation: selector.disambiguation,

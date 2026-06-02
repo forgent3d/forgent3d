@@ -33,6 +33,7 @@ export type BrepFaceSelection = {
   partId: string | number | null;
   surfaceType: 'planar' | 'cylindrical' | 'other';
   area: number;
+  featureTag?: string;
   selector: string;
   matchCount: number;
   disambiguation?: string;
@@ -77,6 +78,8 @@ export type LoadModelOptions = {
   materialPart?: string;
   /** Compound child labels from models/<model>/metadata.json for BREP assemblies. */
   assemblyPartLabels?: string[];
+  /** Lightweight semantic feature tags from models/<model>/metadata.json. */
+  featureTags?: Record<string, unknown>;
 };
 
 export type LogHandler = (message: string, level?: string) => void;

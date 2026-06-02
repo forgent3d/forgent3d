@@ -38,6 +38,10 @@ type ViewCubeOverlay = {
   setEnabled(value: boolean): void;
   dispose(): void;
 };
+type ModelMetadata = {
+  assemblyPartLabels: string[];
+  featureTags: Record<string, unknown>;
+};
 
 /**
  * A viewer object wrapping a Three.js scene:
@@ -402,20 +406,26 @@ export function createViewer(host: HTMLElement, opts: ViewerOptions = {}): Viewe
     }
   }
 
-  async function loadAssemblyPartLabels(paramsUrl: string | undefined, onLog: LogHandler = () => {}): Promise<string[]> {
+  async function loadModelMetadata(paramsUrl: string | undefined, onLog: LogHandler = () => {}): Promise<ModelMetadata> {
     const metadataUrl = metadataUrlFromParamsUrl(paramsUrl);
-    if (!metadataUrl) return [];
+    const empty = { assemblyPartLabels: [], featureTags: {} };
+    if (!metadataUrl) return empty;
     try {
       const response = await fetch(metadataUrl);
-      if (!response.ok) return [];
+      if (!response.ok) return empty;
       const payload = await response.json();
       const meshLabels = Array.isArray(payload?.assembly_mesh_parts) ? payload.assembly_mesh_parts : null;
       const labels = meshLabels?.length ? meshLabels : payload?.assembly_parts;
-      if (!Array.isArray(labels)) return [];
-      return labels.map((label) => String(label || '').trim());
+      const featureTags = payload?.features && typeof payload.features === 'object' ? payload.features : {};
+      const featureTagNames = Object.keys(featureTags);
+      if (featureTagNames.length) onLog(`metadata.json feature tags: ${featureTagNames.join(", ")}`);
+      return {
+        assemblyPartLabels: Array.isArray(labels) ? labels.map((label) => String(label || '').trim()) : [],
+        featureTags
+      };
     } catch (err: any) {
-      onLog(`metadata.json assembly labels unavailable: ${err?.message || err}`);
-      return [];
+      onLog(`metadata.json unavailable: ${err?.message || err}`);
+      return empty;
     }
   }
 
@@ -442,7 +452,8 @@ export function createViewer(host: HTMLElement, opts: ViewerOptions = {}): Viewe
 
     // 3) Build Three.js scene
     const group = buildSceneFromOcctResult(res, {
-      assemblyPartLabels: opts.assemblyPartLabels || []
+      assemblyPartLabels: opts.assemblyPartLabels || [],
+      featureTags: opts.featureTags || {}
     });
 
     // Center model + adapt camera
@@ -618,13 +629,14 @@ export function createViewer(host: HTMLElement, opts: ViewerOptions = {}): Viewe
   async function loadModel(url: string, onLog: LogHandler = () => {}, opts: LoadModelOptions = {}): Promise<PartInfo> {
     const fmt = (opts.format || '').toUpperCase();
     if (features.materials) appearanceController.reset();
-    const [params, assemblyPartLabels] = await Promise.all([
+    const [params, metadata] = await Promise.all([
       loadViewerParams(opts.paramsUrl, onLog),
-      loadAssemblyPartLabels(opts.paramsUrl, onLog)
+      loadModelMetadata(opts.paramsUrl, onLog)
     ]);
     const loadOpts = {
       ...opts,
-      assemblyPartLabels: opts.assemblyPartLabels?.length ? opts.assemblyPartLabels : assemblyPartLabels
+      assemblyPartLabels: opts.assemblyPartLabels?.length ? opts.assemblyPartLabels : metadata.assemblyPartLabels,
+      featureTags: opts.featureTags || metadata.featureTags
     };
     let partInfo;
     if (fmt === 'MJCF' || /\/asm\.xml(\?|$)/i.test(url)) {

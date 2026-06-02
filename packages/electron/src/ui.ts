@@ -240,6 +240,7 @@ export function initUI(viewer) {
     const component = brepFaceComponent(selectedBrepFace);
     const meta = [
       selectedBrepFace.surfaceType ? t('surfaceType', { type: selectedBrepFace.surfaceType }) : '',
+      selectedBrepFace.featureTag ? `tag=${selectedBrepFace.featureTag}` : '',
       selectedBrepFace.directionLabel ? t('faceDirection', { dir: t(`dir_${selectedBrepFace.directionLabel}`) }) : '',
       component ? t('faceComponent', { name: component }) : '',
       selectedBrepFace.matchCount > 1 ? t('selectorMatches', { count: selectedBrepFace.matchCount }) : '',

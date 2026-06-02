@@ -12,6 +12,8 @@ export type BrepFaceRange = {
   axis?: THREE.Vector3;
   boundsMin?: THREE.Vector3;
   boundsMax?: THREE.Vector3;
+  featureTag?: string;
+  featureSelector?: string;
 };
 
 export type BrepFaceReference = {
@@ -46,6 +48,13 @@ export function synthesizeSelector(face: BrepFaceReference, allFaces: BrepFaceRe
   const tol = selectorTolerance(refs);
   const range = face.range;
   const centroid = range.centroid;
+  if (range.featureSelector) {
+    const matches = refs.filter((candidate) => candidate.range.featureTag === range.featureTag);
+    return {
+      selector: range.featureSelector,
+      matchCount: Math.max(1, matches.length)
+    };
+  }
   const normalAxis = principalAxisForVector(range.normal, AXIS_ALIGNMENT_DOT);
 
   if (range.surfaceType === 'planar' && normalAxis) {
