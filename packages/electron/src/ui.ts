@@ -135,7 +135,7 @@ export function initUI(viewer) {
   const buildingModels = new Set();
   const expandedModels = new Set();
   let activeSourcePreviewMode = 'cad';
-  let cadPreviewFormatPriority = 'glb';
+  let cadPreviewFormatPriority = 'brep';
   let lastLoadedPreviewFormat = null;
   let selectedBrepFace = null;
   const LEFT_SIDEBAR_PREF_KEY = 'forgent3d.leftSidebarVisible';
