@@ -631,12 +631,16 @@ def tag_feature(
     persistent BREP ids. The viewer can use the saved geometry summary to prefer
     a human-authored selector when a picked face matches the tagged feature.
 
+    Write ``selector`` in the same form the viewer copies for picked faces, i.e.
+    omit the part argument (``holes(radius=3, axis=Axis.Z)``, not
+    ``holes(part, ...)``) so tagged and auto-synthesized selectors stay uniform.
+
     Example:
         tag_feature(
             metadata,
             "mounting_holes",
             faces=holes(result, radius=3, axis=Axis.Z),
-            selector="holes(part, radius=3, axis=Axis.Z)",
+            selector="holes(radius=3, axis=Axis.Z)",
             kind="hole",
         )
     """
@@ -935,13 +939,17 @@ def _feature_item_summary(item, target: str) -> dict:
                 entry["normal"] = _vector_summary(item.normal_at().normalized())
             except Exception:
                 pass
-        try:
-            axis = getattr(item, "axis_of_rotation", None)
-            if axis is not None:
-                direction = getattr(axis, "direction", axis)
-                entry["axis"] = _vector_summary(direction.normalized() if hasattr(direction, "normalized") else direction)
-        except Exception:
-            pass
+        else:
+            # Reuse the canonical helper so trimmed cylinders (no clean
+            # axis_of_rotation/radius) still get axis+radius via its edge fallback.
+            try:
+                axis, radius = _cylinder_face_axis_and_radius(item)
+                if axis is not None:
+                    entry["axis"] = _vector_summary(axis)
+                if radius is not None:
+                    entry["radius"] = float(radius)
+            except Exception:
+                pass
     try:
         bb = item.bounding_box()
         entry["bbox"] = {

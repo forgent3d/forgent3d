@@ -20,7 +20,9 @@ Protocol (newline JSON bodies):
                           metadataKeys, metadataAnchors, error?}, requested artifact written to `output`.
 """
 import argparse
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import sys
@@ -94,10 +96,21 @@ def _build_export(req: dict) -> dict:
     if not model:
         return {"ok": False, "model": "", "part": "", "hasResult": False, "error": "model is required."}
 
-    ns, source_path, err = er._build_namespace(model, part, source)
+    # _build_namespace prints the model's traceback (or "no source file" message) to
+    # stderr. The cf-sandbox client reads our HTTP response, not our stderr, so capture it
+    # and return it — otherwise the caller would have to re-run export_runner.py cold (~2.2s
+    # OCP import) just to recover the traceback. Tee it back to the real stderr for logs.
+    err_buf = io.StringIO()
+    with contextlib.redirect_stderr(err_buf):
+        ns, source_path, err = er._build_namespace(model, part, source)
+    captured = err_buf.getvalue()
+    if captured:
+        sys.stderr.write(captured)
     if err:
+        detail = captured.strip()
         return {"ok": False, "model": model, "part": part, "hasResult": False,
-                "error": f"build failed (export_runner code {err}); see daemon stderr"}
+                "error": detail or f"build failed (export_runner code {err})",
+                "traceback": detail or None}
 
     result = ns.get("result", None)
     if result is None:

@@ -21,8 +21,13 @@ export type BrepViewerOptions = {
   onSelectedFaceChange?: (selection: BrepFaceSelection | null) => void;
 };
 
+export type BrepLoadOptions = {
+  /** Per-model feature tags (from metadata.json `features`). Overrides any set at construction. */
+  featureTags?: Record<string, unknown>;
+};
+
 export type BrepViewer = {
-  load(url: string): Promise<void>;
+  load(url: string, opts?: BrepLoadOptions): Promise<void>;
   clear(): void;
   refresh(): void;
   setFaceSelectionEnabled(enabled: boolean): void;
@@ -70,7 +75,7 @@ export function createBrepViewer(host: HTMLElement, opts: BrepViewerOptions = {}
     faceSelection.syncAvailability();
   }
 
-  async function load(url: string) {
+  async function load(url: string, loadOpts: BrepLoadOptions = {}) {
     const resp = await fetch(url, { cache: 'no-store' });
     if (!resp.ok) throw new Error(`fetch ${url} failed: ${resp.status}`);
     const buf = await resp.arrayBuffer();
@@ -84,7 +89,7 @@ export function createBrepViewer(host: HTMLElement, opts: BrepViewerOptions = {}
     });
     if (!res.success) throw new Error('OCCT failed to parse BREP');
 
-    const root = buildSceneFromOcctResult(res, { featureTags: opts.featureTags || {} });
+    const root = buildSceneFromOcctResult(res, { featureTags: loadOpts.featureTags || opts.featureTags || {} });
     const box = new THREE.Box3().setFromObject(root);
     const center = box.getCenter(new THREE.Vector3());
     root.position.sub(center);

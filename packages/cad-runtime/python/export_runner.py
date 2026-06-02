@@ -61,6 +61,7 @@ def _bbox_summary(shape):
 def _build_summary_payload(model_name, part_name, source_path, ns, result):
     metadata = ns.get("metadata") if isinstance(ns, dict) else None
     anchors = None
+    features = None
     metadata_keys = []
     if isinstance(metadata, dict):
         metadata_keys = sorted(str(k) for k in metadata.keys())
@@ -69,6 +70,11 @@ def _build_summary_payload(model_name, part_name, source_path, ns, result):
                 anchors = _json_safe(metadata.get("anchors"))
             except Exception:
                 anchors = None
+        if isinstance(metadata.get("features"), dict):
+            try:
+                features = _json_safe(metadata.get("features"))
+            except Exception:
+                features = None
     return {
         "ok": result is not None,
         "script": "build",
@@ -80,6 +86,7 @@ def _build_summary_payload(model_name, part_name, source_path, ns, result):
         "bbox": _bbox_summary(result),
         "metadataKeys": metadata_keys,
         "metadataAnchors": anchors,
+        "metadataFeatures": features,
     }
 
 
