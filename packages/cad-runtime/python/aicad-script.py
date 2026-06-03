@@ -1,5 +1,8 @@
+import base64
+import contextlib
 import importlib
 import inspect
+import io
 import json
 import math
 import os
@@ -15,6 +18,7 @@ API_LIST_LIMIT = 180
 API_SEARCH_LIMIT = 80
 API_MEMBER_LIMIT = 80
 API_DOC_LIMIT = 1400
+EXEC_OUTPUT_LIMIT = 16000
 
 
 def emit(payload):
@@ -598,6 +602,77 @@ def command_probe(args):
     return payload
 
 
+def code_from_flags(flags):
+    """Read the user script. -code-b64 is the robust transport (no shell-quoting or
+    flag-parser '-' collisions); -code is accepted as a plain-text fallback."""
+    b64 = flag_value(flags, "code-b64", "codeB64")
+    if b64:
+        try:
+            return base64.b64decode(b64).decode("utf-8")
+        except Exception as exc:
+            raise ValueError(f"invalid -code-b64 payload: {exc}")
+    raw = flag_value(flags, "code")
+    if raw is not None:
+        return str(raw)
+    raise ValueError("exec expects -code-b64 <base64> (the script to run)")
+
+
+def run_user_code(code, ns):
+    """exec the agent's script with stdout captured. Returns (stdout, error, traceback).
+    On error the partial stdout printed before the exception is still returned so the agent
+    sees whatever it managed to print."""
+    buf = io.StringIO()
+    error = None
+    tb = None
+    try:
+        compiled = compile(code, "<run_script>", "exec")
+        with contextlib.redirect_stdout(buf):
+            exec(compiled, ns)
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        tb = traceback.format_exc(limit=8)
+    out = buf.getvalue()
+    if len(out) > EXEC_OUTPUT_LIMIT:
+        out = out[:EXEC_OUTPUT_LIMIT].rstrip() + f"\n...[truncated {len(out) - EXEC_OUTPUT_LIMIT} chars]"
+    return out, error, tb
+
+
+def command_exec(args):
+    flags, positionals = parse_flags(args)
+    if positionals:
+        raise ValueError("script/exec expects flags, e.g. exec -component model/part -code-b64 <base64>")
+    component = flag_value(flags, "component", "target", "part")
+    component_b = flag_value(flags, "component-b", "componentB", "other-component", "other", "b")
+    code = code_from_flags(flags)
+    model, part = split_target(component or "")
+    ns, _source = load_namespace(model, part)
+    if ns.get("result", None) is None:
+        raise ValueError("part.py must define a global result before running a script")
+    ns_b = None
+    model_b = None
+    part_b = None
+    if component_b:
+        model_b, part_b = split_target(component_b)
+        ns_b, _source_b = load_namespace(model_b, part_b)
+        if ns_b.get("result", None) is None:
+            raise ValueError("componentB part.py must define a global result before running a script")
+    probe_ns = build_probe_namespace(ns, ns_b)
+    stdout, error, tb = run_user_code(code, probe_ns)
+    payload = {
+        "ok": error is None,
+        "script": "exec",
+        "model": model,
+        "part": part,
+        "stdout": stdout,
+    }
+    if model_b and part_b:
+        payload["componentB"] = {"model": model_b, "part": part_b}
+    if error is not None:
+        payload["error"] = error
+        payload["traceback"] = tb
+    return payload
+
+
 def main(argv):
     if not argv:
         return fail("script is required")
@@ -608,10 +683,12 @@ def main(argv):
             emit(command_build(args))
         elif script == "probe":
             emit(command_probe(args))
+        elif script == "exec":
+            emit(command_exec(args))
         elif script == "api":
             emit(command_api(args))
         else:
-            return fail(f"unknown script: {script}", available=["build", "probe", "api"])
+            return fail(f"unknown script: {script}", available=["build", "probe", "exec", "api"])
         return 0
     except Exception as exc:
         return fail(f"{type(exc).__name__}: {exc}", traceback=traceback.format_exc(limit=8))

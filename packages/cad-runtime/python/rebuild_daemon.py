@@ -18,6 +18,9 @@ Protocol (newline JSON bodies):
                          returns the export_runner build-summary dict
                          {ok, model, part, source, resultType, hasResult, bbox,
                           metadataKeys, metadataAnchors, error?}, requested artifact written to `output`.
+  POST /probe         -> body {project, argv}; mirrors aicad-script.py command_probe.
+  POST /exec          -> body {project, argv}; mirrors aicad-script.py command_exec
+                         (runs the agent's script, returns captured stdout).
 """
 import argparse
 import contextlib
@@ -261,6 +264,58 @@ def _probe(req: dict) -> dict:
                 "traceback": traceback.format_exc(limit=8)}
 
 
+def _exec(req: dict) -> dict:
+    """Mirror aicad-script.py command_exec on the warm interpreter + cached namespace:
+    exec the agent's script in the built component namespace and return captured stdout."""
+    project = os.path.abspath(str(req.get("project") or os.getcwd()))
+    aicad_script.PROJECT_ROOT = project
+    aicad_script.MODELS_DIR = os.path.join(project, "models")
+
+    argv = req.get("argv") or []
+    try:
+        flags, positionals = aicad_script.parse_flags(argv)
+        if positionals:
+            raise ValueError("exec expects flags, e.g. -component model/part -code-b64 <base64>")
+        component = aicad_script.flag_value(flags, "component", "target", "part")
+        component_b = aicad_script.flag_value(flags, "component-b", "componentB", "other-component", "other", "b")
+        code = aicad_script.code_from_flags(flags)
+
+        model, part = aicad_script.split_target(component or "")
+        ns, hit_a = _cached_ns(model, part)
+        if ns.get("result", None) is None:
+            raise ValueError("part.py must define a global result before running a script")
+
+        ns_b = None
+        model_b = part_b = None
+        cache_hits = [hit_a]
+        if component_b:
+            model_b, part_b = aicad_script.split_target(component_b)
+            ns_b, hit_b = _cached_ns(model_b, part_b)
+            cache_hits.append(hit_b)
+            if ns_b.get("result", None) is None:
+                raise ValueError("componentB part.py must define a global result before running a script")
+
+        probe_ns = aicad_script.build_probe_namespace(ns, ns_b)
+        stdout, error, tb = aicad_script.run_user_code(code, probe_ns)
+        payload = {
+            "ok": error is None,
+            "script": "exec",
+            "model": model,
+            "part": part,
+            "stdout": stdout,
+            "cached": all(cache_hits),
+        }
+        if model_b and part_b:
+            payload["componentB"] = {"model": model_b, "part": part_b}
+        if error is not None:
+            payload["error"] = error
+            payload["traceback"] = tb
+        return payload
+    except Exception as exc:
+        return {"ok": False, "script": "exec", "error": f"{type(exc).__name__}: {exc}",
+                "traceback": traceback.format_exc(limit=8)}
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -283,7 +338,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         route = self.path.rstrip("/")
-        handlers = {"/build_export": _build_export, "/probe": _probe}
+        handlers = {"/build_export": _build_export, "/probe": _probe, "/exec": _exec}
         handler = handlers.get(route)
         if handler is None:
             self._send(404, {"ok": False, "error": "not found"})
