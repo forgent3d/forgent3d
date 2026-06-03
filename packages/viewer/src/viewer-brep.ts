@@ -4,10 +4,11 @@ import * as THREE from 'three';
 import occtImportJs from 'occt-import-js';
 import { buildSceneFromOcctResult } from './viewer-loaders.js';
 import { createViewerCore } from './viewer-core.js';
+import { createAppearanceController } from './viewer-appearance.js';
 import { createBrepFaceSelectionController } from './viewer-face-selection.js';
 import occtWasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
 import type occtImportJsType from 'occt-import-js';
-import type { BrepFaceSelection } from './types.js';
+import type { BrepFaceSelection, MaterialParams } from './types.js';
 
 export type { BrepFaceRange, BrepFaceReference, SelectorSynthesis } from './viewer-brep-selector.js';
 export { synthesizeSelector } from './viewer-brep-selector.js';
@@ -25,6 +26,7 @@ export type BrepViewerOptions = {
   faceSelection?: boolean;
   featureTags?: Record<string, unknown>;
   assemblyPartLabels?: string[];
+  materialParams?: MaterialParams;
   onSelectedFaceChange?: (selection: BrepFaceSelection | null) => void;
 };
 
@@ -33,6 +35,8 @@ export type BrepLoadOptions = {
   featureTags?: Record<string, unknown>;
   /** Compound child labels from models/<model>/metadata.json for BREP assemblies. */
   assemblyPartLabels?: string[];
+  /** Viewer-only material config from params.json (`__viewer.materials` or `viewer.materials`). */
+  materialParams?: MaterialParams;
 };
 
 export type BrepViewer = {
@@ -41,6 +45,7 @@ export type BrepViewer = {
   refresh(): void;
   setFaceSelectionEnabled(enabled: boolean): void;
   setOnSelectedFaceChange(handler: ((selection: BrepFaceSelection | null) => void) | null): void;
+  setMaterialParams(params?: MaterialParams): void;
   setSelectedFace(faceIndex: number | null): BrepFaceSelection | null;
   getSelectedFace(): BrepFaceSelection | null;
   dispose(): void;
@@ -48,6 +53,7 @@ export type BrepViewer = {
 
 export function createBrepViewer(host: HTMLElement, opts: BrepViewerOptions = {}): BrepViewer {
   const core = createViewerCore(host, { preserveDrawingBuffer: true });
+  const appearance = createAppearanceController({ getCurrentRoot: core.getCurrentRoot });
   const faceSelection = createBrepFaceSelectionController({
     renderer: core.renderer,
     scene: core.scene,
@@ -55,6 +61,7 @@ export function createBrepViewer(host: HTMLElement, opts: BrepViewerOptions = {}
     getCurrentRoot: core.getCurrentRoot
   });
   let requestedFaceSelection = !!opts.faceSelection;
+  let materialParams: MaterialParams = opts.materialParams || {};
   faceSelection.setOnSelectedFaceChange(opts.onSelectedFaceChange || null);
 
   let occtPromise: Promise<OcctModule> | null = null;
@@ -108,6 +115,11 @@ export function createBrepViewer(host: HTMLElement, opts: BrepViewerOptions = {}
     root.updateMatrixWorld(true);
 
     core.replaceRoot(root);
+    const nextMaterialParams = Object.prototype.hasOwnProperty.call(loadOpts, 'materialParams')
+      ? loadOpts.materialParams || {}
+      : materialParams;
+    materialParams = nextMaterialParams;
+    appearance.setMaterialParams(nextMaterialParams);
     faceSelection.setEnabled(requestedFaceSelection);
   }
 
@@ -128,6 +140,10 @@ export function createBrepViewer(host: HTMLElement, opts: BrepViewerOptions = {}
     },
     setOnSelectedFaceChange(handler: ((selection: BrepFaceSelection | null) => void) | null) {
       faceSelection.setOnSelectedFaceChange(handler);
+    },
+    setMaterialParams(params: MaterialParams = {}) {
+      materialParams = params || {};
+      appearance.setMaterialParams(materialParams);
     },
     setSelectedFace: faceSelection.setSelectedFace,
     getSelectedFace: faceSelection.getSelectedFace,

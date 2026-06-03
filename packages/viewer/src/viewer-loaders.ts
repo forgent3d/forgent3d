@@ -17,6 +17,24 @@ type OcctResult = {
   meshes: OcctMesh[];
 };
 
+function occtColorToThreeColor(color: OcctMesh['color']): THREE.Color | null {
+  if (!Array.isArray(color) || color.length < 3) return null;
+  const values = color.slice(0, 3).map((value) => Number(value));
+  if (values.some((value) => !Number.isFinite(value))) return null;
+  const scale = values.some((value) => value > 1) ? 255 : 1;
+  const [r = 0, g = 0, b = 0] = values;
+  return new THREE.Color(
+    THREE.MathUtils.clamp(r / scale, 0, 1),
+    THREE.MathUtils.clamp(g / scale, 0, 1),
+    THREE.MathUtils.clamp(b / scale, 0, 1)
+  );
+}
+
+function createOcctMeshMaterial(mesh: OcctMesh | undefined): THREE.MeshStandardMaterial {
+  const color = occtColorToThreeColor(mesh?.color);
+  return color ? createCadClayMaterial({ color }) : createCadClayMaterial();
+}
+
 type FaceSurfaceType = 'planar' | 'cylindrical' | 'other';
 
 type FaceRange = {
@@ -153,7 +171,7 @@ export function buildSceneFromOcctResult(
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
 
-  const threeMesh = new THREE.Mesh(geometry, createCadClayMaterial());
+  const threeMesh = new THREE.Mesh(geometry, createOcctMeshMaterial(occtResult.meshes[0]));
   threeMesh.userData.faceRanges = faceRanges;
   group.add(threeMesh);
 
@@ -222,7 +240,7 @@ function buildSceneFromOcctMeshes(
     const meshName = String(mesh.name || '').trim();
     const fallbackLabel = String(assemblyPartLabels[meshIndex] || '').trim();
     const partName = fallbackLabel || meshName || `part_${meshIndex}`;
-    const threeMesh = new THREE.Mesh(geometry, createCadClayMaterial());
+    const threeMesh = new THREE.Mesh(geometry, createOcctMeshMaterial(mesh));
     threeMesh.name = partName;
     threeMesh.userData.faceRanges = faceRanges;
     threeMesh.userData.materialPart = {
