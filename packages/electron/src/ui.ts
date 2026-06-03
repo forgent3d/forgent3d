@@ -4,6 +4,7 @@ import { applyDocumentI18n, getLanguage, initRendererI18n, onLanguageChange, set
 import { createFirstModelWizardController } from './ui-first-model-wizard.js';
 import { createParamsEditorController } from './ui-params-editor.js';
 import { createViewerUiController } from './ui-viewer-controls.js';
+import { formatBrepFaceSelection } from '@forgent3d/viewer/brep';
 
 const api = window.aicad;
 
@@ -235,20 +236,11 @@ export function initUI(viewer) {
     const showPanel = enabled && !!selectedBrepFace;
     el.brepFaceSelection?.classList.toggle('hidden', !showPanel);
     if (!showPanel) return;
-    const selector = selectedBrepFace.selector || '';
-    const label = t('selectedBrepFace', { index: selectedBrepFace.index });
     const component = brepFaceComponent(selectedBrepFace);
-    const meta = [
-      selectedBrepFace.surfaceType ? t('surfaceType', { type: selectedBrepFace.surfaceType }) : '',
-      selectedBrepFace.featureTag ? `tag=${selectedBrepFace.featureTag}` : '',
-      selectedBrepFace.directionLabel ? t('faceDirection', { dir: t(`dir_${selectedBrepFace.directionLabel}`) }) : '',
-      component ? t('faceComponent', { name: component }) : '',
-      selectedBrepFace.matchCount > 1 ? t('selectorMatches', { count: selectedBrepFace.matchCount }) : '',
-      selectedBrepFace.disambiguation || ''
-    ].filter(Boolean).join(' · ');
-    if (el.brepFaceSelectionLabel) el.brepFaceSelectionLabel.textContent = label;
-    if (el.brepFaceSelector) el.brepFaceSelector.textContent = selector;
-    if (el.brepFaceSelectionMeta) el.brepFaceSelectionMeta.textContent = meta;
+    const summary = formatBrepFaceSelection(selectedBrepFace, { component, t });
+    if (el.brepFaceSelectionLabel) el.brepFaceSelectionLabel.textContent = summary.label;
+    if (el.brepFaceSelector) el.brepFaceSelector.textContent = summary.selector;
+    if (el.brepFaceSelectionMeta) el.brepFaceSelectionMeta.textContent = summary.meta;
   }
 
   function setFaceSelectionEnabled(enabled) {

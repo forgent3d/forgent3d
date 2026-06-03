@@ -11,6 +11,12 @@ import type { BrepFaceSelection } from './types.js';
 
 export type { BrepFaceRange, BrepFaceReference, SelectorSynthesis } from './viewer-brep-selector.js';
 export { synthesizeSelector } from './viewer-brep-selector.js';
+export type {
+  BrepFaceSelectionTranslate,
+  FormatBrepFaceSelectionOptions,
+  FormattedBrepFaceSelection
+} from './viewer-brep-face-format.js';
+export { formatBrepFaceSelection } from './viewer-brep-face-format.js';
 export type { BrepFaceSelection } from './types.js';
 
 type OcctModule = Awaited<ReturnType<typeof occtImportJsType>>;
@@ -18,12 +24,15 @@ type OcctModule = Awaited<ReturnType<typeof occtImportJsType>>;
 export type BrepViewerOptions = {
   faceSelection?: boolean;
   featureTags?: Record<string, unknown>;
+  assemblyPartLabels?: string[];
   onSelectedFaceChange?: (selection: BrepFaceSelection | null) => void;
 };
 
 export type BrepLoadOptions = {
   /** Per-model feature tags (from metadata.json `features`). Overrides any set at construction. */
   featureTags?: Record<string, unknown>;
+  /** Compound child labels from models/<model>/metadata.json for BREP assemblies. */
+  assemblyPartLabels?: string[];
 };
 
 export type BrepViewer = {
@@ -89,7 +98,10 @@ export function createBrepViewer(host: HTMLElement, opts: BrepViewerOptions = {}
     });
     if (!res.success) throw new Error('OCCT failed to parse BREP');
 
-    const root = buildSceneFromOcctResult(res, { featureTags: loadOpts.featureTags || opts.featureTags || {} });
+    const root = buildSceneFromOcctResult(res, {
+      assemblyPartLabels: loadOpts.assemblyPartLabels?.length ? loadOpts.assemblyPartLabels : opts.assemblyPartLabels || [],
+      featureTags: loadOpts.featureTags || opts.featureTags || {}
+    });
     const box = new THREE.Box3().setFromObject(root);
     const center = box.getCenter(new THREE.Vector3());
     root.position.sub(center);
