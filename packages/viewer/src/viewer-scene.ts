@@ -88,7 +88,7 @@ export function createViewerLighting(
   };
 }
 
-export function createContactShadow(scene: THREE.Scene) {
+export function createContactShadow(scene: THREE.Scene, upAxis: 'y' | 'z' = 'y') {
   const contactShadow = new THREE.Mesh(
     new THREE.PlaneGeometry(1, 1),
     new THREE.ShadowMaterial({
@@ -98,7 +98,9 @@ export function createContactShadow(scene: THREE.Scene) {
       depthWrite: false
     })
   );
-  contactShadow.rotation.x = -Math.PI / 2;
+  // PlaneGeometry lies in the XY plane (normal +Z) — that already is a Z-up ground.
+  // For a Y-up scene, lay it flat onto the XZ plane instead.
+  if (upAxis === 'y') contactShadow.rotation.x = -Math.PI / 2;
   contactShadow.receiveShadow = true;
   contactShadow.visible = false;
   contactShadow.renderOrder = -5;
@@ -113,11 +115,19 @@ export function createContactShadow(scene: THREE.Scene) {
       }
       const size = box.getSize(new THREE.Vector3());
       const center = box.getCenter(new THREE.Vector3());
-      const footprint = Math.max(size.x, size.z, 1);
-      const lift = Math.max(size.y, footprint) * 0.0015;
-      contactShadow.position.set(center.x, box.min.y - lift, center.z);
-      contactShadow.scale.set(footprint * 1.42, footprint * 1.42, 1);
-      contactShadow.material.opacity = THREE.MathUtils.clamp(0.2 + footprint / 5000, 0.2, 0.32);
+      if (upAxis === 'z') {
+        const footprint = Math.max(size.x, size.y, 1);
+        const lift = Math.max(size.z, footprint) * 0.0015;
+        contactShadow.position.set(center.x, center.y, box.min.z - lift);
+        contactShadow.scale.set(footprint * 1.42, footprint * 1.42, 1);
+        contactShadow.material.opacity = THREE.MathUtils.clamp(0.2 + footprint / 5000, 0.2, 0.32);
+      } else {
+        const footprint = Math.max(size.x, size.z, 1);
+        const lift = Math.max(size.y, footprint) * 0.0015;
+        contactShadow.position.set(center.x, box.min.y - lift, center.z);
+        contactShadow.scale.set(footprint * 1.42, footprint * 1.42, 1);
+        contactShadow.material.opacity = THREE.MathUtils.clamp(0.2 + footprint / 5000, 0.2, 0.32);
+      }
       contactShadow.visible = true;
     },
     hide() {

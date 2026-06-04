@@ -8,7 +8,7 @@ import { createAppearanceController } from './viewer-appearance.js';
 import { createBrepFaceSelectionController } from './viewer-face-selection.js';
 import occtWasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
 import type occtImportJsType from 'occt-import-js';
-import type { BrepFaceSelection, MaterialParams } from './types.js';
+import type { BrepFaceSelection, ExplodeState, MaterialParams } from './types.js';
 
 export type { BrepFaceRange, BrepFaceReference, SelectorSynthesis } from './viewer-brep-selector.js';
 export { synthesizeSelector } from './viewer-brep-selector.js';
@@ -28,6 +28,8 @@ export type BrepViewerOptions = {
   assemblyPartLabels?: string[];
   materialParams?: MaterialParams;
   onSelectedFaceChange?: (selection: BrepFaceSelection | null) => void;
+  /** Show an X/Y/Z reference axes gizmo at the model origin (Z-up). */
+  referenceAxes?: boolean;
 };
 
 export type BrepLoadOptions = {
@@ -46,13 +48,16 @@ export type BrepViewer = {
   setFaceSelectionEnabled(enabled: boolean): void;
   setOnSelectedFaceChange(handler: ((selection: BrepFaceSelection | null) => void) | null): void;
   setMaterialParams(params?: MaterialParams): void;
+  setExplodeEnabled(enabled: boolean): ExplodeState;
+  setExplodeFactor(factor: number): ExplodeState;
+  getExplodeState(): ExplodeState;
   setSelectedFace(faceIndex: number | null): BrepFaceSelection | null;
   getSelectedFace(): BrepFaceSelection | null;
   dispose(): void;
 };
 
 export function createBrepViewer(host: HTMLElement, opts: BrepViewerOptions = {}): BrepViewer {
-  const core = createViewerCore(host, { preserveDrawingBuffer: true });
+  const core = createViewerCore(host, { preserveDrawingBuffer: true, referenceAxes: opts.referenceAxes });
   const appearance = createAppearanceController({ getCurrentRoot: core.getCurrentRoot });
   const faceSelection = createBrepFaceSelectionController({
     renderer: core.renderer,
@@ -145,6 +150,9 @@ export function createBrepViewer(host: HTMLElement, opts: BrepViewerOptions = {}
       materialParams = params || {};
       appearance.setMaterialParams(materialParams);
     },
+    setExplodeEnabled: core.setExplodeEnabled,
+    setExplodeFactor: core.setExplodeFactor,
+    getExplodeState: core.getExplodeState,
     setSelectedFace: faceSelection.setSelectedFace,
     getSelectedFace: faceSelection.getSelectedFace,
     dispose

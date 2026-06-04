@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 import { VIEWER_BACKGROUND_COLOR } from './viewer-materials.js';
 import { createContactShadow, createViewerLighting, decorateModelForCadDisplay } from './viewer-scene.js';
+import { createReferenceAxesController } from './viewer-reference-axes.js';
+import { createExplodeController } from './viewer-explode.js';
 import { disposeThreeObject } from './viewer-utils.js';
 
 export type ViewerCoreOptions = {
@@ -11,6 +13,8 @@ export type ViewerCoreOptions = {
   rotateSpeed?: number;
   zoomSpeed?: number;
   panSpeed?: number;
+  /** Show an X/Y/Z reference axes gizmo at the model origin (Z-up). */
+  referenceAxes?: boolean;
 };
 
 export function createViewerCore(host: HTMLElement, opts: ViewerCoreOptions = {}) {
@@ -33,11 +37,16 @@ export function createViewerCore(host: HTMLElement, opts: ViewerCoreOptions = {}
   scene.background = new THREE.Color(VIEWER_BACKGROUND_COLOR);
 
   const camera = new THREE.PerspectiveCamera(opts.fov ?? 45, 1, 0.1, 10000);
-  camera.position.set(...(opts.cameraPosition ?? [140, 100, 140]));
+  // CAD Z-up: loaded BREP/GLB content is Z-up, so the camera's up axis (and the
+  // contact-shadow ground below) must be Z-up to match — same convention as the full viewer.
+  camera.up.set(0, 0, 1);
+  camera.position.set(...(opts.cameraPosition ?? [160, -160, 120]));
 
   let currentRoot: THREE.Object3D | null = null;
   const lighting = createViewerLighting(scene, renderer, () => currentRoot);
-  const contactShadow = createContactShadow(scene);
+  const contactShadow = createContactShadow(scene, 'z');
+  const referenceAxes = opts.referenceAxes ? createReferenceAxesController(scene) : null;
+  const explodeController = createExplodeController({ getCurrentRoot: () => currentRoot });
 
   const controls = new TrackballControls(camera, renderer.domElement);
   controls.rotateSpeed = opts.rotateSpeed ?? 2.4;
@@ -58,8 +67,13 @@ export function createViewerCore(host: HTMLElement, opts: ViewerCoreOptions = {}
   resize();
 
   let raf = 0;
+  let lastFrameTs = performance.now();
   function tick() {
     raf = requestAnimationFrame(tick);
+    const now = performance.now();
+    const dt = Math.min(0.05, Math.max(0, (now - lastFrameTs) / 1000));
+    lastFrameTs = now;
+    explodeController.update(dt);
     controls.update();
     lighting.updateDirectionalLights(camera, controls.target);
     renderer.render(scene, camera);
@@ -74,23 +88,26 @@ export function createViewerCore(host: HTMLElement, opts: ViewerCoreOptions = {}
     if (!Number.isFinite(sphere.radius) || sphere.radius <= 0) return;
     const fovRad = THREE.MathUtils.degToRad(camera.fov);
     const distance = sphere.radius / Math.sin(fovRad / 2);
-    const dir = new THREE.Vector3(0.85, 0.65, 0.85).normalize();
+    const dir = new THREE.Vector3(1, -1, 0.85).normalize();
     camera.position.copy(sphere.center).addScaledVector(dir, distance);
     camera.near = Math.max(distance / 200, 0.1);
     camera.far = Math.max(distance * 100, 1000);
     camera.updateProjectionMatrix();
     controls.target.copy(sphere.center);
     contactShadow.updateForBox(box);
+    referenceAxes?.updateForBox(box);
     lighting.updateShadowCameraForBox(box);
   }
 
   function clear() {
+    explodeController.reset();
     if (currentRoot) {
       scene.remove(currentRoot);
       disposeThreeObject(currentRoot);
       currentRoot = null;
     }
     contactShadow.hide();
+    referenceAxes?.hide();
   }
 
   function replaceRoot(root: THREE.Object3D) {
@@ -98,6 +115,7 @@ export function createViewerCore(host: HTMLElement, opts: ViewerCoreOptions = {}
     scene.add(root);
     currentRoot = root;
     decorateModelForCadDisplay(root);
+    explodeController.rebuildTargets();
     fitView();
   }
 
@@ -107,6 +125,7 @@ export function createViewerCore(host: HTMLElement, opts: ViewerCoreOptions = {}
     controls.dispose();
     clear();
     contactShadow.dispose();
+    referenceAxes?.dispose();
     lighting.dispose();
     renderer.dispose();
     renderer.forceContextLoss?.();
@@ -122,6 +141,9 @@ export function createViewerCore(host: HTMLElement, opts: ViewerCoreOptions = {}
     replaceRoot,
     clear,
     fitView,
+    setExplodeEnabled: explodeController.setEnabled,
+    setExplodeFactor: explodeController.setFactor,
+    getExplodeState: explodeController.getState,
     dispose
   };
 }

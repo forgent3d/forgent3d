@@ -2,11 +2,15 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { applyCadStyleToGlbScene, tagGlbSceneMaterialParts } from './viewer-loaders.js';
 import { createViewerCore } from './viewer-core.js';
+import type { ExplodeState } from './types.js';
 
 export type GlbViewer = {
   load(url: string, opts?: GlbLoadOptions): Promise<void>;
   clear(): void;
   refresh(): void;
+  setExplodeEnabled(enabled: boolean): ExplodeState;
+  setExplodeFactor(factor: number): ExplodeState;
+  getExplodeState(): ExplodeState;
   dispose(): void;
 };
 
@@ -15,8 +19,13 @@ export type GlbLoadOptions = {
   coordinateSystem?: 'cad-z-up' | 'gltf-y-up' | string;
 };
 
-export function createGlbViewer(host: HTMLElement): GlbViewer {
-  const core = createViewerCore(host, { fov: 40 });
+export type GlbViewerOptions = {
+  /** Show an X/Y/Z reference axes gizmo at the model origin (Z-up). */
+  referenceAxes?: boolean;
+};
+
+export function createGlbViewer(host: HTMLElement, opts: GlbViewerOptions = {}): GlbViewer {
+  const core = createViewerCore(host, { fov: 40, referenceAxes: opts.referenceAxes });
 
   async function load(url: string, opts: GlbLoadOptions = {}) {
     const resp = await fetch(url, { cache: 'no-store' });
@@ -47,5 +56,13 @@ export function createGlbViewer(host: HTMLElement): GlbViewer {
     core.replaceRoot(root);
   }
 
-  return { load, clear: core.clear, refresh: core.fitView, dispose: core.dispose };
+  return {
+    load,
+    clear: core.clear,
+    refresh: core.fitView,
+    setExplodeEnabled: core.setExplodeEnabled,
+    setExplodeFactor: core.setExplodeFactor,
+    getExplodeState: core.getExplodeState,
+    dispose: core.dispose
+  };
 }
