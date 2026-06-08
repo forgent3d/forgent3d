@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { applyCadStyleToGlbScene, tagGlbSceneMaterialParts } from './viewer-loaders.js';
 import { createViewerCore } from './viewer-core.js';
-import type { ExplodeState } from './types.js';
+import type { ExplodeState, PreviewMode } from './types.js';
 
 export type GlbViewer = {
   load(url: string, opts?: GlbLoadOptions): Promise<void>;
@@ -11,6 +11,8 @@ export type GlbViewer = {
   setExplodeEnabled(enabled: boolean): ExplodeState;
   setExplodeFactor(factor: number): ExplodeState;
   getExplodeState(): ExplodeState;
+  setPreviewMode(mode: PreviewMode | string): PreviewMode;
+  getPreviewMode(): PreviewMode;
   dispose(): void;
 };
 
@@ -63,6 +65,8 @@ export function createGlbViewer(host: HTMLElement, opts: GlbViewerOptions = {}):
     setExplodeEnabled: core.setExplodeEnabled,
     setExplodeFactor: core.setExplodeFactor,
     getExplodeState: core.getExplodeState,
+    setPreviewMode: core.setPreviewMode,
+    getPreviewMode: core.getPreviewMode,
     dispose: core.dispose
   };
 }

@@ -4,7 +4,9 @@ import { VIEWER_BACKGROUND_COLOR } from './viewer-materials.js';
 import { createContactShadow, createViewerLighting, decorateModelForCadDisplay } from './viewer-scene.js';
 import { createReferenceAxesController } from './viewer-reference-axes.js';
 import { createExplodeController } from './viewer-explode.js';
+import { createPreviewModeController } from './viewer-preview-mode.js';
 import { disposeThreeObject } from './viewer-utils.js';
+import type { PreviewMode } from './types.js';
 
 export type ViewerCoreOptions = {
   fov?: number;
@@ -47,6 +49,10 @@ export function createViewerCore(host: HTMLElement, opts: ViewerCoreOptions = {}
   const contactShadow = createContactShadow(scene, 'z');
   const referenceAxes = opts.referenceAxes ? createReferenceAxesController(scene) : null;
   const explodeController = createExplodeController({ getCurrentRoot: () => currentRoot });
+  const previewController = createPreviewModeController({
+    getCurrentRoot: () => currentRoot,
+    contactShadow
+  });
 
   const controls = new TrackballControls(camera, renderer.domElement);
   controls.rotateSpeed = opts.rotateSpeed ?? 2.4;
@@ -110,13 +116,14 @@ export function createViewerCore(host: HTMLElement, opts: ViewerCoreOptions = {}
     referenceAxes?.hide();
   }
 
-  function replaceRoot(root: THREE.Object3D) {
+  function replaceRoot(root: THREE.Object3D, opts: { refreshPreview?: boolean } = {}) {
     clear();
     scene.add(root);
     currentRoot = root;
     decorateModelForCadDisplay(root);
     explodeController.rebuildTargets();
     fitView();
+    if (opts.refreshPreview !== false) previewController.refresh();
   }
 
   function dispose() {
@@ -144,6 +151,9 @@ export function createViewerCore(host: HTMLElement, opts: ViewerCoreOptions = {}
     setExplodeEnabled: explodeController.setEnabled,
     setExplodeFactor: explodeController.setFactor,
     getExplodeState: explodeController.getState,
+    setPreviewMode: (mode: PreviewMode | string) => previewController.setMode(mode),
+    getPreviewMode: previewController.getMode,
+    refreshPreview: previewController.refresh,
     dispose
   };
 }

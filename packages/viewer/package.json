@@ -1,6 +1,6 @@
 {
   "name": "@forgent3d/viewer",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "Shared browser-only Forgent3D 3D viewer (Three.js + BREP/GLB/STL/MJCF loaders)",
   "type": "module",
   "types": "./src/index.ts",

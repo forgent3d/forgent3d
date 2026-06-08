@@ -8,7 +8,7 @@ import { createAppearanceController } from './viewer-appearance.js';
 import { createBrepFaceSelectionController } from './viewer-face-selection.js';
 import occtWasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
 import type occtImportJsType from 'occt-import-js';
-import type { BrepFaceSelection, ExplodeState, MaterialParams } from './types.js';
+import type { BrepFaceSelection, ExplodeState, MaterialParams, PreviewMode } from './types.js';
 
 export type { BrepFaceRange, BrepFaceReference, SelectorSynthesis } from './viewer-brep-selector.js';
 export { synthesizeSelector } from './viewer-brep-selector.js';
@@ -51,6 +51,8 @@ export type BrepViewer = {
   setExplodeEnabled(enabled: boolean): ExplodeState;
   setExplodeFactor(factor: number): ExplodeState;
   getExplodeState(): ExplodeState;
+  setPreviewMode(mode: PreviewMode | string): PreviewMode;
+  getPreviewMode(): PreviewMode;
   setSelectedFace(faceIndex: number | null): BrepFaceSelection | null;
   getSelectedFace(): BrepFaceSelection | null;
   dispose(): void;
@@ -119,12 +121,13 @@ export function createBrepViewer(host: HTMLElement, opts: BrepViewerOptions = {}
     root.position.sub(center);
     root.updateMatrixWorld(true);
 
-    core.replaceRoot(root);
+    core.replaceRoot(root, { refreshPreview: false });
     const nextMaterialParams = Object.prototype.hasOwnProperty.call(loadOpts, 'materialParams')
       ? loadOpts.materialParams || {}
       : materialParams;
     materialParams = nextMaterialParams;
     appearance.setMaterialParams(nextMaterialParams);
+    core.refreshPreview();
     faceSelection.setEnabled(requestedFaceSelection);
   }
 
@@ -149,10 +152,13 @@ export function createBrepViewer(host: HTMLElement, opts: BrepViewerOptions = {}
     setMaterialParams(params: MaterialParams = {}) {
       materialParams = params || {};
       appearance.setMaterialParams(materialParams);
+      core.refreshPreview();
     },
     setExplodeEnabled: core.setExplodeEnabled,
     setExplodeFactor: core.setExplodeFactor,
     getExplodeState: core.getExplodeState,
+    setPreviewMode: core.setPreviewMode,
+    getPreviewMode: core.getPreviewMode,
     setSelectedFace: faceSelection.setSelectedFace,
     getSelectedFace: faceSelection.getSelectedFace,
     dispose
