@@ -38,6 +38,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 import export_runner as er  # reuse the exact build/export/metadata logic
+import print_check as pc  # kernel-accurate printability analysis on the built result
 
 
 def _load_module(filename: str, modname: str):
@@ -316,6 +317,38 @@ def _exec(req: dict) -> dict:
                 "traceback": traceback.format_exc(limit=8)}
 
 
+def _print_check(req: dict) -> dict:
+    """Kernel-accurate printability analysis on the warm interpreter + cached namespace.
+    Reuses the same built `result` as probe/exec so a print check after a rebuild pays
+    no extra OCP import or model rebuild."""
+    project = os.path.abspath(str(req.get("project") or os.getcwd()))
+    aicad_script.PROJECT_ROOT = project
+    aicad_script.MODELS_DIR = os.path.join(project, "models")
+    try:
+        model = str(req.get("model") or "").strip()
+        part = str(req.get("part") or "").strip()
+        if not model:
+            model, part = aicad_script.split_target(str(req.get("component") or ""))
+        elif not part:
+            model, part = aicad_script.split_target(model)
+
+        ns, hit = _cached_ns(model, part)
+        result = ns.get("result", None)
+        if result is None:
+            result = ns.get("assembly", None)
+        if result is None:
+            raise ValueError("part.py must define a global result before print_check")
+
+        payload = pc.analyze(result, req.get("printer"), req.get("options"))
+        payload["model"] = model
+        payload["part"] = part
+        payload["cached"] = hit
+        return payload
+    except Exception as exc:
+        return {"ok": False, "script": "print_check", "error": f"{type(exc).__name__}: {exc}",
+                "traceback": traceback.format_exc(limit=8)}
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -338,7 +371,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         route = self.path.rstrip("/")
-        handlers = {"/build_export": _build_export, "/probe": _probe, "/exec": _exec}
+        handlers = {"/build_export": _build_export, "/probe": _probe, "/exec": _exec,
+                    "/print_check": _print_check}
         handler = handlers.get(route)
         if handler is None:
             self._send(404, {"ok": False, "error": "not found"})
