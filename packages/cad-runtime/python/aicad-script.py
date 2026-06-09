@@ -340,6 +340,13 @@ def build_probe_namespace(ns, secondary_ns=None):
     except Exception as exc:
         probe_ns["aicad_attach_error"] = str(exc)
     try:
+        import aicad_joints  # type: ignore[import-not-found]
+        probe_ns["aicad_joints"] = aicad_joints
+        for name in getattr(aicad_joints, "__all__", []):
+            probe_ns[name] = getattr(aicad_joints, name)
+    except Exception as exc:
+        probe_ns["aicad_joints_error"] = str(exc)
+    try:
         import build123d as build123d_module
         probe_ns["build123d"] = build123d_module
         for name in ("Axis", "Plane", "Vector", "GeomType"):

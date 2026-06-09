@@ -1,6 +1,6 @@
 {
   "name": "@forgent3d/cad-runtime",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Shared CAD runtime protocol, types, and pure utilities for Forgent3D cloud services.",
   "license": "MIT",
   "author": "Forgent3D",

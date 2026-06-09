@@ -70,7 +70,7 @@ def _warmup() -> None:
     global _BASE_MODULES, _BASE_SYS_PATH
     import build123d  # noqa: F401
     from build123d import export_gltf, Unit  # noqa: F401  (load the GLB export path too)
-    for optional in ("aicad_select", "aicad_attach"):
+    for optional in ("aicad_select", "aicad_attach", "aicad_joints"):
         try:
             __import__(optional)
         except Exception:
