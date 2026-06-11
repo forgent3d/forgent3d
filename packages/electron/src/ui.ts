@@ -292,8 +292,7 @@ export function initUI(viewer) {
 
   function syncShareButton() {
     if (!el.viewShareBtn) return;
-    const visible = !!currentProject && !!activePart;
-    el.viewShareBtn.classList.toggle('hidden', !visible);
+    el.viewShareBtn.classList.add('hidden');
   }
 
   let shareDialogPublished = false;
