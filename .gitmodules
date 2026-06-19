@@ -1,7 +1,0 @@
-[submodule "packages/cloud"]
-	path = packages/cloud
-	url = git@github.com:forgent3d/cloud.git
-
-[submodule "packages/cf-sandbox"]
-	path = packages/cf-sandbox
-	url = git@github.com:forgent3d/cf-sandbox.git
